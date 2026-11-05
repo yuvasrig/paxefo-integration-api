@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PAXAFE Normalized Location Payload",
+  "description": "Standardized location data format for pharmaceutical cold chain tracking",
+  "type": "object",
+  "required": ["device_id", "device_imei", "timestamp", "provider", "type", "latitude", "longitude"],
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "description": "Device identifier",
+      "example": "A571992"
+    },
+    "device_imei": {
+      "type": "string",
+      "description": "Device IMEI or unique hardware identifier",
+      "example": "863257063350583"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Timestamp in epoch milliseconds",
+      "format": "int64",
+      "minimum": 0,
+      "example": 1739215646000
+    },
+    "provider": {
+      "type": "string",
+      "description": "Data provider name",
+      "enum": ["Paxafe", "Tive", "TagnTrac", "Others", "Elpro", "kn", "peli", "tempmate"],
+      "example": "Tive"
+    },
+    "type": {
+      "type": "string",
+      "description": "Device type",
+      "enum": ["Passive", "Active", "ELD", "AIS", "ADS"],
+      "example": "Active"
+    },
+    "latitude": {
+      "type": "number",
+      "description": "Latitude coordinate",
+      "minimum": -90,
+      "maximum": 90,
+      "example": 40.810562
+    },
+    "longitude": {
+      "type": "number",
+      "description": "Longitude coordinate",
+      "minimum": -180,
+      "maximum": 180,
+      "example": -73.879285
+    },
+    "altitude": {
+      "type": ["number", "null"],
+      "description": "Altitude in meters (2 decimal points)",
+      "example": null
+    },
+    "location_accuracy": {
+      "type": ["integer", "null"],
+      "description": "Location accuracy in meters (integer)",
+      "example": 23
+    },
+    "location_accuracy_category": {
+      "type": ["string", "null"],
+      "description": "Location accuracy category",
+      "enum": ["High", "Medium", "Low", null],
+      "example": "High"
+    },
+    "location_source": {
+      "type": ["string", "null"],
+      "description": "Source of location data (GPS, WiFi, Cellular)",
+      "example": "WiFi"
+    },
+    "address": {
+      "type": ["object", "null"],
+      "description": "Physical address information",
+      "properties": {
+        "street": {
+          "type": ["string", "null"],
+          "description": "Street address"
+        },
+        "locality": {
+          "type": ["string", "null"],
+          "description": "City or locality"
+        },
+        "state": {
+          "type": ["string", "null"],
+          "description": "State or province"
+        },
+        "country": {
+          "type": ["string", "null"],
+          "description": "Country"
+        },
+        "postal_code": {
+          "type": ["string", "null"],
+          "description": "Postal or ZIP code"
+        },
+        "full_address": {
+          "type": ["string", "null"],
+          "description": "Complete formatted address",
+          "example": "114 Hunts Point Market, Bronx, NY 10474, USA"
+        }
+      }
+    },
+    "battery_level": {
+      "type": ["integer", "null"],
+      "description": "Battery percentage (integer 0-100)",
+      "minimum": 0,
+      "maximum": 100,
+      "example": 65
+    },
+    "cellular_dbm": {
+      "type": ["number", "null"],
+      "description": "Cellular signal strength in dBm (2 decimal points)",
+      "example": -100.00
+    },
+    "cellular_network_type": {
+      "type": ["string", "null"],
+      "description": "Cellular network technology type",
+      "example": null
+    },
+    "cellular_operator": {
+      "type": ["string", "null"],
+      "description": "Cellular network operator",
+      "example": null
+    },
+    "wifi_access_points": {
+      "type": ["integer", "null"],
+      "description": "Number of WiFi access points detected",
+      "example": 5
+    }
+  },
+  "examples": [
+    {
+      "device_id": "A571992",
+      "device_imei": "863257063350583",
+      "timestamp": 1739215646000,
+      "provider": "Tive",
+      "type": "Active",
+      "latitude": 40.810562,
+      "longitude": -73.879285,
+      "altitude": null,
+      "location_accuracy": 23,
+      "location_accuracy_category": "High",
+      "location_source": "WiFi",
+      "address": {
+        "street": null,
+        "locality": "Bronx",
+        "state": "NY",
+        "country": "USA",
+        "postal_code": "10474",
+        "full_address": "114 Hunts Point Market, Bronx, NY 10474, USA"
+      },
+      "battery_level": 65,
+      "cellular_dbm": -100.00,
+      "cellular_network_type": null,
+      "cellular_operator": null,
+      "wifi_access_points": 5
+    }
+  ]
+}
+
+
+
+

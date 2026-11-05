@@ -1,0 +1,647 @@
+{
+  "description": "Sample Tive payloads for testing your integration",
+  "payloads": [
+    {
+      "name": "Standard Temperature Shipment",
+      "description": "Normal shipment with all sensor data - cold chain pharma delivery",
+      "payload": {
+        "EntityName": "A571992",
+        "EntryTimeEpoch": 1739215646000,
+        "EntryTimeUtc": "2025-02-10T19:27:26Z",
+        "Cellular": {
+          "SignalStrength": "Poor",
+          "Dbm": -100
+        },
+        "Temperature": {
+          "Celsius": 10.078125,
+          "Fahrenheit": 50.140625
+        },
+        "ProbeTemperature": {
+          "Celsius": 9.9375,
+          "Fahrenheit": 49.8875
+        },
+        "Humidity": {
+          "Percentage": 38.70000076293945
+        },
+        "Accelerometer": {
+          "G": 0.9901862198596787,
+          "X": -0.5625,
+          "Y": -0.4375,
+          "Z": 0.6875
+        },
+        "Light": {
+          "Lux": 0
+        },
+        "Battery": {
+          "Percentage": 65,
+          "Estimation": "N/A",
+          "IsCharging": false
+        },
+        "Shipment": {
+          "Id": "CL-13686/PHARMA-SHIP/COLD-LOGISTICS",
+          "Description": null,
+          "DeviceId": "866088073468439",
+          "ShipFrom": {
+            "Latitude": 26.09891,
+            "Longitude": -98.18494,
+            "FormattedAddress": "1460 E Hi Line Rd, Pharr, TX 78577, USA"
+          },
+          "ShipTo": {
+            "Latitude": 40.815468,
+            "Longitude": -73.8805,
+            "FormattedAddress": "772 Edgewater Rd, Bronx, NY 10474, USA"
+          },
+          "Carrier": "EXCALIBUR"
+        },
+        "AccountId": 478,
+        "DeviceId": "863257063350583",
+        "DeviceName": "A571992",
+        "ShipmentId": "CL-13686/PHARMA-SHIP/COLD-LOGISTICS",
+        "PublicShipmentId": "40X614N4WC",
+        "Location": {
+          "Latitude": 40.810562,
+          "Longitude": -73.879285,
+          "FormattedAddress": "114 Hunts Point Market, Bronx, NY 10474, USA",
+          "LocationMethod": "wifi",
+          "Accuracy": {
+            "Meters": 23,
+            "Kilometers": 0.023,
+            "Miles": 0.014291572942945556
+          },
+          "GeolocationSourceName": "skyhook",
+          "CellTowerUsedCount": 1,
+          "WifiAccessPointUsedCount": 5
+        }
+      }
+    },
+    {
+      "name": "Device A571992 Reading",
+      "description": "Reading from device A571992 with core fields only",
+      "payload": {
+        "EntryTimeEpoch": 1739215646000,
+        "EntityName": "A571992",
+        "DeviceId": "863257063350583",
+        "DeviceName": "A571992",
+        "Temperature": { "Celsius": 10.0 },
+        "ProbeTemperature": { "Celsius": 10.125, "Fahrenheit": 50.225 },
+        "Location": { "Latitude": 95.0, "Longitude": -73.0 }
+      }
+    },
+    {
+      "name": "GPS Location Shipment",
+      "description": "Shipment using GPS for location instead of WiFi",
+      "payload": {
+        "EntityName": "B234567",
+        "EntryTimeEpoch": 1739302046000,
+        "EntryTimeUtc": "2025-02-11T19:27:26Z",
+        "Cellular": {
+          "SignalStrength": "Good",
+          "Dbm": -75
+        },
+        "Temperature": {
+          "Celsius": 4.5,
+          "Fahrenheit": 40.1
+        },
+        "ProbeTemperature": {
+          "Celsius": 3.875,
+          "Fahrenheit": 38.975
+        },
+        "Humidity": {
+          "Percentage": 55.3
+        },
+        "Accelerometer": {
+          "G": 1.012,
+          "X": 0.125,
+          "Y": -0.250,
+          "Z": 0.980
+        },
+        "Light": {
+          "Lux": 125.5
+        },
+        "Battery": {
+          "Percentage": 82,
+          "Estimation": "Weeks",
+          "IsCharging": false
+        },
+        "Shipment": {
+          "Id": "INV-45678/VACCINE-BATCH",
+          "Description": "COVID Vaccine Shipment",
+          "DeviceId": "866088073468440",
+          "ShipFrom": {
+            "Latitude": 42.3601,
+            "Longitude": -71.0589,
+            "FormattedAddress": "Boston, MA 02101, USA"
+          },
+          "ShipTo": {
+            "Latitude": 33.7490,
+            "Longitude": -84.3880,
+            "FormattedAddress": "Atlanta, GA 30303, USA"
+          },
+          "Carrier": "FEDEX-COLD"
+        },
+        "AccountId": 478,
+        "DeviceId": "866088073468440",
+        "DeviceName": "B234567",
+        "ShipmentId": "INV-45678/VACCINE-BATCH",
+        "PublicShipmentId": "7YK832MNP1",
+        "Location": {
+          "Latitude": 37.7749,
+          "Longitude": -122.4194,
+          "FormattedAddress": "San Francisco, CA 94102, USA",
+          "LocationMethod": "gps",
+          "Accuracy": {
+            "Meters": 5,
+            "Kilometers": 0.005,
+            "Miles": 0.003
+          },
+          "GeolocationSourceName": "gnss",
+          "CellTowerUsedCount": 0,
+          "WifiAccessPointUsedCount": 0
+        }
+      }
+    },
+    {
+      "name": "Vaccine Shipment Checkpoint",
+      "description": "GPS reading from the vaccine batch shipment",
+      "payload": {
+        "EntityName": "B234567",
+        "EntryTimeEpoch": 1739305646000,
+        "EntryTimeUtc": "2025-02-11T20:27:26Z",
+        "Cellular": {
+          "SignalStrength": "Good",
+          "Dbm": -74
+        },
+        "Temperature": {
+          "Celsius": 4.625,
+          "Fahrenheit": 40.325
+        },
+        "ProbeTemperature": {
+          "Celsius": 327.67,
+          "Fahrenheit": 621.806
+        },
+        "Humidity": {
+          "Percentage": 55.0
+        },
+        "Accelerometer": {
+          "G": 1.010,
+          "X": 0.125,
+          "Y": -0.250,
+          "Z": 0.976
+        },
+        "Light": {
+          "Lux": 0
+        },
+        "Battery": {
+          "Percentage": 82,
+          "Estimation": "Weeks",
+          "IsCharging": false
+        },
+        "Shipment": {
+          "Id": "INV-45678/VACCINE-BATCH",
+          "Description": "COVID Vaccine Shipment",
+          "DeviceId": "866088073468440",
+          "ShipFrom": {
+            "Latitude": 42.3601,
+            "Longitude": -71.0589,
+            "FormattedAddress": "Boston, MA 02101, USA"
+          },
+          "ShipTo": {
+            "Latitude": 33.7490,
+            "Longitude": -84.3880,
+            "FormattedAddress": "Atlanta, GA 30303, USA"
+          },
+          "Carrier": "FEDEX-COLD"
+        },
+        "AccountId": 478,
+        "DeviceId": "866088073468440",
+        "DeviceName": "B234567",
+        "ShipmentId": "INV-45678/VACCINE-BATCH",
+        "PublicShipmentId": "7YK832MNP1",
+        "Location": {
+          "Latitude": 37.5407,
+          "Longitude": -77.4360,
+          "FormattedAddress": "Richmond, VA 23219, USA",
+          "LocationMethod": "gps",
+          "Accuracy": {
+            "Meters": 5,
+            "Kilometers": 0.005,
+            "Miles": 0.003
+          },
+          "GeolocationSourceName": "gnss",
+          "CellTowerUsedCount": 0,
+          "WifiAccessPointUsedCount": 0
+        }
+      }
+    },
+    {
+      "name": "Device Name Only",
+      "description": "Payload identified by DeviceName",
+      "payload": {
+        "EntryTimeEpoch": 1739215646000,
+        "DeviceName": "A571992",
+        "Temperature": { "Celsius": 10.0 },
+        "ProbeTemperature": { "Celsius": 10.0, "Fahrenheit": 50.0 },
+        "Location": { "Latitude": 40.0, "Longitude": -73.0 }
+      }
+    },
+    {
+      "name": "Biologics Replenishment Shipment",
+      "description": "Shipment between distribution centers using GPS",
+      "payload": {
+        "EntityName": "E567890",
+        "EntryTimeEpoch": 1739561246,
+        "EntryTimeUtc": "2025-02-14T19:27:26Z",
+        "Cellular": {
+          "SignalStrength": "Good",
+          "Dbm": -78
+        },
+        "Temperature": {
+          "Celsius": 5.25,
+          "Fahrenheit": 41.45
+        },
+        "ProbeTemperature": {
+          "Celsius": 5.0,
+          "Fahrenheit": 41.0
+        },
+        "Humidity": {
+          "Percentage": 47.2
+        },
+        "Accelerometer": {
+          "G": 1.003,
+          "X": 0.031,
+          "Y": -0.062,
+          "Z": 1.001
+        },
+        "Light": {
+          "Lux": 0
+        },
+        "Battery": {
+          "Percentage": 74,
+          "Estimation": "Weeks",
+          "IsCharging": false
+        },
+        "Shipment": {
+          "Id": "PO-88213/BIOLOGICS-LANE",
+          "Description": "Biologics replenishment",
+          "DeviceId": "866088073468443",
+          "ShipFrom": {
+            "Latitude": 39.7684,
+            "Longitude": -86.1581,
+            "FormattedAddress": "Indianapolis, IN 46204, USA"
+          },
+          "ShipTo": {
+            "Latitude": 35.1495,
+            "Longitude": -90.0490,
+            "FormattedAddress": "Memphis, TN 38103, USA"
+          },
+          "Carrier": "COLDLINE-FREIGHT"
+        },
+        "AccountId": 478,
+        "DeviceId": "866088073468443",
+        "DeviceName": "E567890",
+        "ShipmentId": "PO-88213/BIOLOGICS-LANE",
+        "PublicShipmentId": "3MQ7R2TX8K",
+        "Location": {
+          "Latitude": 37.9716,
+          "Longitude": -87.5711,
+          "FormattedAddress": "Evansville, IN 47708, USA",
+          "LocationMethod": "gps",
+          "Accuracy": {
+            "Meters": 8,
+            "Kilometers": 0.008,
+            "Miles": 0.005
+          },
+          "GeolocationSourceName": "gnss",
+          "CellTowerUsedCount": 0,
+          "WifiAccessPointUsedCount": 0
+        }
+      }
+    },
+    {
+      "name": "Cellular Location Only",
+      "description": "Shipment using cell tower triangulation",
+      "payload": {
+        "EntityName": "C345678",
+        "EntryTimeEpoch": 1739388446000,
+        "EntryTimeUtc": "2025-02-12T19:27:26Z",
+        "Cellular": {
+          "SignalStrength": "Fair",
+          "Dbm": -90
+        },
+        "Temperature": {
+          "Celsius": -18.5,
+          "Fahrenheit": -1.3
+        },
+        "ProbeTemperature": {
+          "Celsius": -32768,
+          "Fahrenheit": -58950.4
+        },
+        "Humidity": {
+          "Percentage": 25.0
+        },
+        "Accelerometer": {
+          "G": 0.995,
+          "X": 0.0,
+          "Y": 0.0,
+          "Z": 0.995
+        },
+        "Light": {
+          "Lux": 0
+        },
+        "Battery": {
+          "Percentage": 45,
+          "Estimation": "Days",
+          "IsCharging": false
+        },
+        "Shipment": null,
+        "AccountId": 478,
+        "DeviceId": "866088073468441",
+        "DeviceName": "C345678",
+        "ShipmentId": null,
+        "PublicShipmentId": null,
+        "Location": {
+          "Latitude": 51.5074,
+          "Longitude": -0.1278,
+          "FormattedAddress": "London, UK",
+          "LocationMethod": "cell",
+          "Accuracy": {
+            "Meters": 500,
+            "Kilometers": 0.5,
+            "Miles": 0.31
+          },
+          "GeolocationSourceName": "cell-triangulation",
+          "CellTowerUsedCount": 3,
+          "WifiAccessPointUsedCount": 0
+        }
+      }
+    },
+    {
+      "name": "Standard Temperature Shipment Update",
+      "description": "Later reading from the standard temperature shipment",
+      "payload": {
+        "EntityName": "A571992",
+        "EntryTimeEpoch": 1739216546000,
+        "EntryTimeUtc": "2025-02-10T19:42:26Z",
+        "Cellular": {
+          "SignalStrength": "Poor",
+          "Dbm": "-100"
+        },
+        "Temperature": {
+          "Celsius": "10.5",
+          "Fahrenheit": "50.9"
+        },
+        "ProbeTemperature": {
+          "Celsius": 10.25,
+          "Fahrenheit": 50.45
+        },
+        "Humidity": {
+          "Percentage": 39.1
+        },
+        "Accelerometer": {
+          "G": 0.991,
+          "X": -0.5,
+          "Y": -0.438,
+          "Z": 0.75
+        },
+        "Light": {
+          "Lux": 0
+        },
+        "Battery": {
+          "Percentage": 64,
+          "Estimation": "N/A",
+          "IsCharging": false
+        },
+        "Shipment": {
+          "Id": "CL-13686/PHARMA-SHIP/COLD-LOGISTICS",
+          "Description": null,
+          "DeviceId": "866088073468439",
+          "ShipFrom": {
+            "Latitude": 26.09891,
+            "Longitude": -98.18494,
+            "FormattedAddress": "1460 E Hi Line Rd, Pharr, TX 78577, USA"
+          },
+          "ShipTo": {
+            "Latitude": 40.815468,
+            "Longitude": -73.8805,
+            "FormattedAddress": "772 Edgewater Rd, Bronx, NY 10474, USA"
+          },
+          "Carrier": "EXCALIBUR"
+        },
+        "AccountId": 478,
+        "DeviceId": "863257063350583",
+        "DeviceName": "A571992",
+        "ShipmentId": "CL-13686/PHARMA-SHIP/COLD-LOGISTICS",
+        "PublicShipmentId": "40X614N4WC",
+        "Location": {
+          "Latitude": 40.81091,
+          "Longitude": -73.87902,
+          "FormattedAddress": "114 Hunts Point Market, Bronx, NY 10474, USA",
+          "LocationMethod": "wifi",
+          "Accuracy": {
+            "Meters": 25,
+            "Kilometers": 0.025,
+            "Miles": 0.016
+          },
+          "GeolocationSourceName": "skyhook",
+          "CellTowerUsedCount": 1,
+          "WifiAccessPointUsedCount": 5
+        }
+      }
+    },
+    {
+      "name": "Device A571992 Follow-up Reading",
+      "description": "Second reading from device A571992 with core fields only",
+      "payload": {
+        "EntryTimeEpoch": 1739215646000,
+        "EntityName": "A571992",
+        "DeviceId": "863257063350583",
+        "DeviceName": "A571992",
+        "Temperature": { "Celsius": 10.0 },
+        "ProbeTemperature": { "Celsius": 9.875, "Fahrenheit": 49.775 },
+        "Location": { "Latitude": 40.0, "Longitude": -200.0 }
+      }
+    },
+    {
+      "name": "Clinical Supply Shipment",
+      "description": "Clinical trial supply shipment using WiFi location",
+      "payload": {
+        "EntityName": "F678901",
+        "EntryTimeEpoch": 1739734046000,
+        "EntryTimeUtc": "2025-02-16T19:27:26Z",
+        "Cellular": {
+          "SignalStrength": "Fair",
+          "Dbm": -88
+        },
+        "Temperature": {
+          "Celsius": 6.125,
+          "Fahrenheit": 43.025
+        },
+        "ProbeTemperature": {
+          "Celsius": 6.0,
+          "Fahrenheit": 42.8
+        },
+        "Humidity": {
+          "Percentage": 41.0
+        },
+        "Accelerometer": {
+          "G": 0.998,
+          "X": -0.063,
+          "Y": 0.016,
+          "Z": 0.996
+        },
+        "Light": {
+          "Lux": 3.2
+        },
+        "Battery": {
+          "Percentage": 58,
+          "Estimation": "Weeks",
+          "IsCharging": false
+        },
+        "Shipment": {
+          "Id": "MW-20441/CLINICAL-SUPPLY",
+          "Description": "Clinical trial supply",
+          "DeviceId": "866088073468444",
+          "ShipFrom": {
+            "Latitude": 41.8781,
+            "Longitude": -87.6298,
+            "FormattedAddress": "Chicago, IL 60602, USA"
+          },
+          "ShipTo": {
+            "Latitude": 44.9778,
+            "Longitude": -93.2650,
+            "FormattedAddress": "Minneapolis, MN 55401, USA"
+          },
+          "Carrier": "MIDWEST-REEFER"
+        },
+        "AccountId": 999,
+        "DeviceId": "866088073468444",
+        "DeviceName": "F678901",
+        "ShipmentId": "MW-20441/CLINICAL-SUPPLY",
+        "PublicShipmentId": "9PL4WD6ZQ2",
+        "Location": {
+          "Latitude": 43.0731,
+          "Longitude": -89.4012,
+          "FormattedAddress": "Madison, WI 53703, USA",
+          "LocationMethod": "wifi",
+          "Accuracy": {
+            "Meters": 31,
+            "Kilometers": 0.031,
+            "Miles": 0.019
+          },
+          "GeolocationSourceName": "skyhook",
+          "CellTowerUsedCount": 1,
+          "WifiAccessPointUsedCount": 6
+        }
+      }
+    },
+    {
+      "name": "Minimal Data Payload",
+      "description": "Payload with core fields only",
+      "payload": {
+        "EntryTimeEpoch": 1739474846000,
+        "EntityName": "D456789",
+        "DeviceId": "866088073468442",
+        "DeviceName": "D456789",
+        "Temperature": {
+          "Celsius": 22.0,
+          "Fahrenheit": 71.6
+        },
+        "ProbeTemperature": {
+          "Celsius": null,
+          "Fahrenheit": null
+        },
+        "Location": {
+          "Latitude": 35.6762,
+          "Longitude": 139.6503,
+          "LocationMethod": null,
+          "Accuracy": null
+        }
+      }
+    },
+    {
+      "name": "Vaccine Shipment Southbound",
+      "description": "Later GPS reading from the vaccine batch shipment",
+      "payload": {
+        "EntityName": "B234567",
+        "EntryTimeEpoch": 1739647646000,
+        "EntryTimeUtc": "2025-02-15T14:27:26Z",
+        "Cellular": {
+          "SignalStrength": "Good",
+          "Dbm": -72
+        },
+        "Temperature": {
+          "Celsius": 4.75,
+          "Fahrenheit": 40.55
+        },
+        "ProbeTemperature": {
+          "Celsius": 4.625,
+          "Fahrenheit": 40.325
+        },
+        "Humidity": {
+          "Percentage": 54.8
+        },
+        "Accelerometer": {
+          "G": 1.008,
+          "X": 0.094,
+          "Y": -0.188,
+          "Z": 0.984
+        },
+        "Light": {
+          "Lux": 0
+        },
+        "Battery": {
+          "Percentage": 76,
+          "Estimation": "Weeks",
+          "IsCharging": false
+        },
+        "Shipment": {
+          "Id": "INV-45678/VACCINE-BATCH",
+          "Description": "COVID Vaccine Shipment",
+          "DeviceId": "866088073468440",
+          "ShipFrom": {
+            "Latitude": 42.3601,
+            "Longitude": -71.0589,
+            "FormattedAddress": "Boston, MA 02101, USA"
+          },
+          "ShipTo": {
+            "Latitude": 33.7490,
+            "Longitude": -84.3880,
+            "FormattedAddress": "Atlanta, GA 30303, USA"
+          },
+          "Carrier": "FEDEX-COLD"
+        },
+        "AccountId": 478,
+        "DeviceId": "866088073468440",
+        "DeviceName": "B234567",
+        "ShipmentId": "INV-45678/VACCINE-BATCH",
+        "PublicShipmentId": "7YK832MNP1",
+        "Location": {
+          "Latitude": 35.2271,
+          "Longitude": -80.8431,
+          "FormattedAddress": "Charlotte, NC 28202, USA",
+          "LocationMethod": "gps",
+          "Accuracy": {
+            "Meters": 6,
+            "Kilometers": 0.006,
+            "Miles": 0.004
+          },
+          "GeolocationSourceName": "gnss",
+          "CellTowerUsedCount": 0,
+          "WifiAccessPointUsedCount": 0
+        }
+      }
+    },
+    {
+      "name": "Entity and Device Name",
+      "description": "Payload identified by EntityName and DeviceName",
+      "payload": {
+        "EntryTimeEpoch": 1739215646000,
+        "EntityName": "A571992",
+        "DeviceName": "Ship33CABOL",
+        "Temperature": { "Celsius": 10.0 },
+        "ProbeTemperature": { "Celsius": 10.0, "Fahrenheit": 50.0 },
+        "Location": { "Latitude": 40.0, "Longitude": -73.0 }
+      }
+    }
+  ]
+}

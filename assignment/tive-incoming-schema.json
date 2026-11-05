@@ -1,0 +1,328 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tive Device Telemetry Payload",
+  "description": "Webhook payload from Tive IoT tracking devices for cold chain monitoring",
+  "type": "object",
+  "required": ["DeviceId", "DeviceName", "EntryTimeEpoch", "Temperature", "Location"],
+  "properties": {
+    "EntityName": {
+      "type": "string",
+      "description": "Entity name, can be customized by users.",
+      "example": "A571992"
+    },
+    "EntryTimeEpoch": {
+      "type": "integer",
+      "description": "Timestamp in epoch milliseconds since January 1, 1970",
+      "minimum": 0,
+      "example": 1739215646000
+    },
+    "EntryTimeUtc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp in UTC ISO format",
+      "example": "2025-02-10T19:27:26Z"
+    },
+    "Cellular": {
+      "type": ["object", "null"],
+      "description": "Cellular signal strength information",
+      "properties": {
+        "SignalStrength": {
+          "type": ["string", "null"],
+          "enum": ["No signal", "Poor", "Fair", "Good", null],
+          "description": "Categorical signal strength"
+        },
+        "Dbm": {
+          "type": ["number", "null"],
+          "description": "Signal strength in decibel-milliwatts",
+          "minimum": -150,
+          "maximum": -50
+        }
+      }
+    },
+    "Temperature": {
+      "type": "object",
+      "description": "Primary temperature readings from device sensor",
+      "required": ["Celsius"],
+      "properties": {
+        "Celsius": {
+          "type": ["number", "null"],
+          "description": "Temperature in Celsius"
+        },
+        "Fahrenheit": {
+          "type": ["number", "null"],
+          "description": "Temperature in Fahrenheit (calculated from Celsius)"
+        }
+      }
+    },
+    "ProbeTemperature": {
+      "type": ["object", "null"],
+      "description": "External probe temperature sensor readings",
+      "properties": {
+        "Celsius": {
+          "type": ["number", "null"],
+          "description": "Probe temperature in Celsius"
+        },
+        "Fahrenheit": {
+          "type": ["number", "null"],
+          "description": "Probe temperature in Fahrenheit"
+        }
+      }
+    },
+    "Humidity": {
+      "type": ["object", "null"],
+      "description": "Humidity measurements",
+      "properties": {
+        "Percentage": {
+          "type": ["number", "null"],
+          "description": "Humidity percentage",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "Accelerometer": {
+      "type": ["object", "null"],
+      "description": "Acceleration measurements on all three axes",
+      "properties": {
+        "G": {
+          "type": ["number", "null"],
+          "description": "Gravitational force magnitude"
+        },
+        "X": {
+          "type": ["number", "null"],
+          "description": "X-axis acceleration (normalized -1 to 1)"
+        },
+        "Y": {
+          "type": ["number", "null"],
+          "description": "Y-axis acceleration (normalized -1 to 1)"
+        },
+        "Z": {
+          "type": ["number", "null"],
+          "description": "Z-axis acceleration (normalized -1 to 1)"
+        }
+      }
+    },
+    "Light": {
+      "type": ["object", "null"],
+      "description": "Light intensity measurements",
+      "properties": {
+        "Lux": {
+          "type": ["number", "null"],
+          "description": "Light intensity in lux",
+          "minimum": 0
+        }
+      }
+    },
+    "Battery": {
+      "type": ["object", "null"],
+      "description": "Battery status and charge information",
+      "properties": {
+        "Percentage": {
+          "type": ["integer", "null"],
+          "description": "Battery percentage (0-100)",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "Estimation": {
+          "type": ["string", "null"],
+          "enum": ["N/A", "Days", "Weeks", "Months", null],
+          "description": "Battery life estimation"
+        },
+        "IsCharging": {
+          "type": ["boolean", "null"],
+          "description": "Flag indicating if battery is charging"
+        }
+      }
+    },
+    "Shipment": {
+      "type": ["object", "null"],
+      "description": "Shipment information associated with the device",
+      "properties": {
+        "Id": {
+          "type": ["string", "null"],
+          "description": "Shipment identifier"
+        },
+        "Description": {
+          "type": ["string", "null"],
+          "description": "Shipment description"
+        },
+        "DeviceId": {
+          "type": ["string", "null"],
+          "description": "Device ID associated with shipment"
+        },
+        "ShipFrom": {
+          "type": ["object", "null"],
+          "properties": {
+            "Latitude": { "type": ["number", "null"] },
+            "Longitude": { "type": ["number", "null"] },
+            "FormattedAddress": { "type": ["string", "null"] }
+          }
+        },
+        "ShipTo": {
+          "type": ["object", "null"],
+          "properties": {
+            "Latitude": { "type": ["number", "null"] },
+            "Longitude": { "type": ["number", "null"] },
+            "FormattedAddress": { "type": ["string", "null"] }
+          }
+        },
+        "Carrier": {
+          "type": ["string", "null"],
+          "description": "Carrier name"
+        }
+      }
+    },
+    "AccountId": {
+      "type": "integer",
+      "description": "Account identifier for data segregation"
+    },
+    "DeviceId": {
+      "type": "string",
+      "description": "Device identifier (15-digit tracker IMEI)",
+      "pattern": "^[0-9]{15}$",
+      "example": "863257063350583"
+    },
+    "DeviceName": {
+      "type": "string",
+      "description": "Device name programmed into device memory.",
+      "example": "A571992"
+    },
+    "ShipmentId": {
+      "type": ["string", "null"],
+      "description": "Shipment identifier"
+    },
+    "PublicShipmentId": {
+      "type": ["string", "null"],
+      "description": "Public shipment identifier (10-char alphanumeric)"
+    },
+    "Location": {
+      "type": "object",
+      "description": "Current device location information",
+      "required": ["Latitude", "Longitude"],
+      "properties": {
+        "Latitude": {
+          "type": "number",
+          "description": "Latitude coordinate",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "Longitude": {
+          "type": "number",
+          "description": "Longitude coordinate",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "FormattedAddress": {
+          "type": ["string", "null"],
+          "description": "Human-readable address"
+        },
+        "LocationMethod": {
+          "type": ["string", "null"],
+          "enum": ["gps", "wifi", "cell", null],
+          "description": "Method used to determine location"
+        },
+        "Accuracy": {
+          "type": ["object", "null"],
+          "properties": {
+            "Meters": {
+              "type": ["number", "null"],
+              "description": "Location accuracy in meters"
+            },
+            "Kilometers": {
+              "type": ["number", "null"],
+              "description": "Location accuracy in kilometers"
+            },
+            "Miles": {
+              "type": ["number", "null"],
+              "description": "Location accuracy in miles"
+            }
+          }
+        },
+        "GeolocationSourceName": {
+          "type": ["string", "null"],
+          "description": "Source of geolocation data"
+        },
+        "CellTowerUsedCount": {
+          "type": ["integer", "null"],
+          "description": "Number of cell towers used for location"
+        },
+        "WifiAccessPointUsedCount": {
+          "type": ["integer", "null"],
+          "description": "Number of WiFi access points used for location"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "EntityName": "A571992",
+      "EntryTimeEpoch": 1739215646000,
+      "EntryTimeUtc": "2025-02-10T19:27:26Z",
+      "Cellular": {
+        "SignalStrength": "Poor",
+        "Dbm": -100
+      },
+      "Temperature": {
+        "Celsius": 10.078125,
+        "Fahrenheit": 50.140625
+      },
+      "ProbeTemperature": null,
+      "Humidity": {
+        "Percentage": 38.7
+      },
+      "Accelerometer": {
+        "G": 0.990186,
+        "X": -0.5625,
+        "Y": -0.4375,
+        "Z": 0.6875
+      },
+      "Light": {
+        "Lux": 0
+      },
+      "Battery": {
+        "Percentage": 65,
+        "Estimation": "N/A",
+        "IsCharging": false
+      },
+      "Shipment": {
+        "Id": "CL-13686/PHARMA-SHIP/COLD-LOGISTICS",
+        "Description": null,
+        "DeviceId": "866088073468439",
+        "ShipFrom": {
+          "Latitude": 26.09891,
+          "Longitude": -98.18494,
+          "FormattedAddress": "1460 E Hi Line Rd, Pharr, TX 78577, USA"
+        },
+        "ShipTo": {
+          "Latitude": 40.815468,
+          "Longitude": -73.8805,
+          "FormattedAddress": "772 Edgewater Rd, Bronx, NY 10474, USA"
+        },
+        "Carrier": "EXCALIBUR"
+      },
+      "AccountId": 478,
+      "DeviceId": "863257063350583",
+      "DeviceName": "A571992",
+      "ShipmentId": "CL-13686/PHARMA-SHIP/COLD-LOGISTICS",
+      "PublicShipmentId": "40X614N4WC",
+      "Location": {
+        "Latitude": 40.810562,
+        "Longitude": -73.879285,
+        "FormattedAddress": "114 Hunts Point Market, Bronx, NY 10474, USA",
+        "LocationMethod": "wifi",
+        "Accuracy": {
+          "Meters": 23,
+          "Kilometers": 0.023,
+          "Miles": 0.014
+        },
+        "GeolocationSourceName": "skyhook",
+        "CellTowerUsedCount": 1,
+        "WifiAccessPointUsedCount": 5
+      }
+    }
+  ]
+}
+
+
+
+
