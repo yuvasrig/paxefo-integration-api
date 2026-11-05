@@ -1,0 +1,28 @@
+# Render blueprint: Integration API + free Postgres, same region.
+databases:
+  - name: paxafe-db
+    plan: free
+    region: oregon
+    databaseName: paxafe
+    user: paxafe
+
+services:
+  - type: web
+    name: paxafe-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: paxafe-db
+          property: connectionString   # internal URL
+      - key: ROLE
+        value: all
+      - key: INGEST_MODE
+        value: sync
+      - key: LOG_LEVEL
+        value: info

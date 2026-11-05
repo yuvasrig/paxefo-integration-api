@@ -1,0 +1,29 @@
+# Local stack. M0: API only; Postgres is wired in for M2.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: paxafe
+      POSTGRES_PASSWORD: paxafe
+      POSTGRES_DB: paxafe
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paxafe"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://paxafe:paxafe@db:5432/paxafe?sslmode=disable
+      ROLE: all
+      INGEST_MODE: sync
+      LOG_LEVEL: info
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
