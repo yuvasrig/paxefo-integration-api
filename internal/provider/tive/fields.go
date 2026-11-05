@@ -92,3 +92,17 @@ func (r *reader) str(path string) (string, bool) {
 	}
 	return s, true
 }
+
+// quietNum is num without the INVALID_TYPE flag, for stored-only data that PAXAFE output never shows.
+func (r *reader) quietNum(path string) *float64 {
+	v, _ := r.doc.Get(path)
+	n, ok := v.(json.Number)
+	if !ok {
+		return nil
+	}
+	f, err := n.Float64()
+	if err != nil || math.IsInf(f, 0) {
+		return nil
+	}
+	return &f
+}

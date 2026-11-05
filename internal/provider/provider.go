@@ -23,6 +23,28 @@ const (
 // ErrInvalidJSON marks a body that is not a single JSON object (HTTP 400, F3-R1).
 var ErrInvalidJSON = errors.New("invalid JSON")
 
+// Shipment is the shipment context a payload carries; it is stored beside the readings, not emitted as PAXAFE.
+type Shipment struct {
+	ID          string
+	PublicID    string
+	Carrier     string
+	Description string
+	FromLat     *float64
+	FromLon     *float64
+	FromAddress string
+	ToLat       *float64
+	ToLon       *float64
+	ToAddress   string
+}
+
+// Aux holds provider data that PAXAFE output omits but we store for audit and later use.
+type Aux struct {
+	ProbeTemperature *float64
+	SensorExtras     map[string]any
+	LocationExtras   map[string]any
+	Shipment         *Shipment
+}
+
 // Result is the outcome of transforming one payload.
 type Result struct {
 	Status           string
@@ -30,6 +52,7 @@ type Result struct {
 	Location         *paxafe.LocationRecord
 	Flags            []rules.Flag
 	Errors           []rules.Problem
+	Aux              Aux
 	TransformVersion string
 	RulesVersion     string
 }

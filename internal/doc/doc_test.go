@@ -110,3 +110,28 @@ func TestClone(t *testing.T) {
 		t.Fatal("arrays must be copied equal")
 	}
 }
+
+// F4-R5: the payload hash ignores key order and whitespace but not content.
+func TestCanonicalHash_F4R5(t *testing.T) {
+	a := CanonicalHash([]byte(`{"a":1,"b":{"x":2,"y":[1,2]}}`))
+	b := CanonicalHash([]byte("{ \"b\" : { \"y\":[1, 2], \"x\":2 },\n \"a\":1 }"))
+	if a != b {
+		t.Fatal("same content in a different layout must hash the same")
+	}
+	for name, other := range map[string]string{
+		"different value":  `{"a":2,"b":{"x":2,"y":[1,2]}}`,
+		"different number": `{"a":1.0,"b":{"x":2,"y":[1,2]}}`,
+		"different array":  `{"a":1,"b":{"x":2,"y":[2,1]}}`,
+		"extra key":        `{"a":1,"b":{"x":2,"y":[1,2]},"c":null}`,
+	} {
+		if CanonicalHash([]byte(other)) == a {
+			t.Fatalf("%s must change the hash", name)
+		}
+	}
+	if CanonicalHash([]byte(`{not json`)) == CanonicalHash([]byte(`{not json `)) {
+		t.Fatal("invalid JSON hashes its raw bytes")
+	}
+	if len(a) != 64 {
+		t.Fatalf("hash length %d", len(a))
+	}
+}

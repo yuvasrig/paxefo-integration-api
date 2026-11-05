@@ -76,6 +76,7 @@ func (p *Provider) Transform(d doc.Doc, sc rules.Scope) (provider.Result, error)
 		errs = append(errs, rules.Problem{Code: rules.CodeNoUsableData, Message: "no usable temperature and no valid coordinates"})
 	}
 
+	res.Aux = buildAux(rd, probe)
 	res.Flags = append(append(append(res.Flags, ruled.Flags...), rd.flags...), extra...)
 	res.Errors = errs
 	if len(errs) > 0 {
