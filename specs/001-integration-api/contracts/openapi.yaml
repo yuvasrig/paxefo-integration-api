@@ -1,0 +1,424 @@
+openapi: 3.0.3
+info:
+  title: PAXAFE Tive Integration API
+  version: 0.1.0
+  description: |
+    Receives Tive tracker payloads, stores the raw payload, and transforms them into PAXAFE sensor and
+    location records. Scope: milestones M1–M4 (sync ingest). Source of truth: DESIGN.md §12.
+    Async mode, queue, alerts and reconciliation endpoints are designed but not part of this contract.
+servers:
+  - url: https://paxafe-api.onrender.com
+  - url: http://localhost:8080
+security:
+  - ApiKey: []
+
+paths:
+  /api/v1/webhook/tive:
+    post:
+      operationId: ingestTive
+      summary: Ingest one Tive payload
+      description: |
+        The raw payload is committed before any 2xx. `/api/webhook/tive` is an alias for the same handler.
+        When several statuses apply, precedence is rejected > conflict > duplicate > flagged > accepted.
+        A request id may be supplied in `X-Request-ID`; it is echoed back.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TivePayload' }
+      responses:
+        '200':
+          description: Processed (accepted, flagged, duplicate or conflict)
+          headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResponse' }
+        '400': { $ref: '#/components/responses/InvalidJson' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '422':
+          description: Unusable record (rejected); raw payload is still stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResponse' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500':
+          description: Failure after the raw payload was saved; event status `failed`, recoverable via replay
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResponse' }
+  /api/webhook/tive:
+    post:
+      operationId: ingestTiveAlias
+      summary: Alias of /api/v1/webhook/tive (path named in the exercise)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TivePayload' }
+      responses:
+        '200': { description: Same as /api/v1/webhook/tive, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
+        '400': { $ref: '#/components/responses/InvalidJson' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '422': { description: Unusable record, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { description: Failure after raw save, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
+
+  /api/v1/events/{id}:
+    get:
+      operationId: getEvent
+      summary: Raw event, outcome, flags and PAXAFE output
+      description: |
+        Visible to the tenant that owns the event and to the tenant whose key submitted it
+        (events routed to `common-pool` remain readable by their sender).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, example: evt_01JABCDEF } }
+      responses:
+        '200':
+          description: Event found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/events/{id}/replay:
+    post:
+      operationId: replayEvent
+      summary: Re-run a failed or rejected event from its stored raw payload
+      description: |
+        Idempotent: readings are inserted with ON CONFLICT. The raw payload is never modified.
+        Returns the same envelope as the webhook with the new outcome.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: rules_version, in: query, required: false, schema: { type: string }, description: 'Compare outcome under another ruleset version (M4+).' }
+      responses:
+        '200':
+          description: Replayed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Event is already in a terminal accepted state; nothing to replay
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/readings:
+    get:
+      operationId: listReadings
+      summary: Sensor and location readings for a device (cursor-paginated)
+      parameters:
+        - { name: device_id, in: query, required: true, schema: { type: string, example: A571992 } }
+        - { name: from, in: query, required: false, schema: { type: integer, format: int64 }, description: Epoch ms, inclusive }
+        - { name: to, in: query, required: false, schema: { type: integer, format: int64 }, description: Epoch ms, exclusive }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 100, maximum: 1000 } }
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Page of readings, newest first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadingsPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/rules:
+    get:
+      operationId: getRules
+      summary: Active ruleset and version
+      responses:
+        '200':
+          description: Active rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string, example: 2026-11-05.1 }
+                  rules: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness
+      security: []
+      responses:
+        '200':
+          description: Process is up
+          content: { application/json: { schema: { type: object, properties: { status: { type: string, example: ok } } } } }
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Readiness (database, migration version, storage backend, ingest mode)
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  migration_version: { type: integer }
+                  storage_backend: { type: string, enum: [postgres, timescale] }
+                  ingest_mode: { type: string, enum: [sync, async] }
+        '503': { description: Not ready (database unreachable) }
+  /metrics:
+    get:
+      operationId: metrics
+      summary: Prometheus metrics
+      security: []
+      responses:
+        '200': { description: Prometheus text format, content: { text/plain: { schema: { type: string } } } }
+  /docs:
+    get:
+      operationId: docs
+      summary: Redoc API documentation
+      security: []
+      responses:
+        '200': { description: HTML, content: { text/html: { schema: { type: string } } } }
+  /openapi.yaml:
+    get:
+      operationId: openapi
+      summary: This contract
+      security: []
+      responses:
+        '200': { description: YAML, content: { application/yaml: { schema: { type: string } } } }
+
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: 'Format pxk_test_<base62>. Bound to a tenant; expired or revoked keys return 401.'
+
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+  headers:
+    RequestId:
+      schema: { type: string }
+      description: Echo of the supplied or generated request id
+    RetryAfter:
+      schema: { type: integer }
+      description: Seconds to wait before retrying
+
+  responses:
+    InvalidJson:
+      description: Body is not valid JSON; raw bytes are still stored
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/IngestResponse' }
+    Unauthorized:
+      description: Missing, invalid, expired or revoked API key
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    TooLarge:
+      description: Body larger than 256 KB; nothing saved
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimited:
+      description: Per-tenant rate limit exceeded; nothing saved
+      headers: { Retry-After: { $ref: '#/components/headers/RetryAfter' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Unknown id, or not visible to this tenant
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    TivePayload:
+      type: object
+      description: |
+        Tive webhook payload. Validated leniently: see assignment/tive-incoming-schema.json for the
+        nominal shape, DESIGN.md §5 for what is rejected versus flagged. Unknown extra fields are accepted.
+      additionalProperties: true
+      properties:
+        EntityName: { type: string }
+        EntryTimeEpoch: { type: integer, format: int64, example: 1739215646000 }
+        EntryTimeUtc: { type: string, format: date-time }
+        DeviceId: { type: string, pattern: '^[0-9]{15}$' }
+        DeviceName: { type: string }
+        AccountId: { type: integer, example: 478 }
+        Temperature: { type: object }
+        ProbeTemperature: { type: object, nullable: true }
+        Humidity: { type: object, nullable: true }
+        Accelerometer: { type: object, nullable: true }
+        Light: { type: object, nullable: true }
+        Battery: { type: object, nullable: true }
+        Cellular: { type: object, nullable: true }
+        Shipment: { type: object, nullable: true }
+        Location: { type: object }
+
+    IngestResponse:
+      type: object
+      required: [event_id, request_id, status, flags, errors]
+      properties:
+        event_id: { type: string, example: evt_01JABCDEF }
+        request_id: { type: string, example: req_01JABCDEF }
+        status:
+          type: string
+          enum: [accepted, flagged, duplicate, conflict, rejected, failed]
+        sensor:
+          allOf: [ { $ref: '#/components/schemas/SensorRecord' } ]
+          nullable: true
+        location:
+          allOf: [ { $ref: '#/components/schemas/LocationRecord' } ]
+          nullable: true
+        flags:
+          type: array
+          items: { $ref: '#/components/schemas/Flag' }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/Problem' }
+
+    Flag:
+      type: object
+      required: [code, severity]
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_COORDINATES
+            - SENSOR_FAULT
+            - OUT_OF_RANGE
+            - COERCED_TYPE
+            - TIMESTAMP_SECONDS
+            - TIMESTAMP_MISMATCH
+            - DEVICE_RESOLVED_BY_NAME
+            - IDENTITY_MISMATCH
+            - TEMPERATURE_FALLBACK
+            - TEMPERATURE_CONVERTED
+            - UNKNOWN_ACCOUNT
+            - ACCOUNT_ID_MISSING
+            - DUPLICATE_CONFLICT
+        severity: { type: string, enum: [info, warn, error] }
+        field: { type: string, example: Location.Latitude }
+        value: { description: Original value as sent }
+        new_value: { description: Replacement value, for fixes }
+        action: { type: string, enum: [nullified, fixed, location_skipped, flagged, kept] }
+        rule_id: { type: string, example: LAT-RANGE }
+
+    Problem:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [INVALID_JSON, NO_DEVICE_IDENTITY, NO_TIMESTAMP, TIMESTAMP_FUTURE, NO_USABLE_DATA, TENANT_MISMATCH, UNAUTHORIZED, PAYLOAD_TOO_LARGE, RATE_LIMITED, NOT_FOUND, INTERNAL]
+        field: { type: string }
+        message: { type: string }
+
+    ErrorResponse:
+      type: object
+      required: [request_id, errors]
+      properties:
+        request_id: { type: string }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/Problem' }
+
+    SensorRecord:
+      type: object
+      description: Conforms to assignment/px-sensor-schema.json
+      required: [device_id, device_imei, timestamp, provider, type, temperature]
+      properties:
+        device_id: { type: string }
+        device_imei: { type: string }
+        timestamp: { type: integer, format: int64 }
+        provider: { type: string, enum: [Tive] }
+        type: { type: string, enum: [Active] }
+        temperature: { type: number, nullable: true }
+        humidity: { type: number, nullable: true }
+        light_level: { type: number, nullable: true }
+        accelerometer:
+          type: object
+          nullable: true
+          properties:
+            x: { type: number, nullable: true }
+            y: { type: number, nullable: true }
+            z: { type: number, nullable: true }
+            magnitude: { type: number, nullable: true }
+        tilt: { type: object, nullable: true }
+        box_open: { type: boolean, nullable: true }
+
+    LocationRecord:
+      type: object
+      description: Conforms to assignment/px-location-schema.json
+      required: [device_id, device_imei, timestamp, provider, type, latitude, longitude]
+      properties:
+        device_id: { type: string }
+        device_imei: { type: string }
+        timestamp: { type: integer, format: int64 }
+        provider: { type: string, enum: [Tive] }
+        type: { type: string, enum: [Active] }
+        latitude: { type: number }
+        longitude: { type: number }
+        altitude: { type: number, nullable: true }
+        location_accuracy: { type: integer, nullable: true }
+        location_accuracy_category: { type: string, enum: [High, Medium, Low], nullable: true }
+        location_source: { type: string, nullable: true, example: WiFi }
+        address:
+          type: object
+          nullable: true
+          properties:
+            street: { type: string, nullable: true }
+            locality: { type: string, nullable: true }
+            state: { type: string, nullable: true }
+            country: { type: string, nullable: true }
+            postal_code: { type: string, nullable: true }
+            full_address: { type: string, nullable: true }
+        battery_level: { type: integer, nullable: true, minimum: 0, maximum: 100 }
+        cellular_dbm: { type: number, nullable: true }
+        cellular_network_type: { type: string, nullable: true }
+        cellular_operator: { type: string, nullable: true }
+        wifi_access_points: { type: integer, nullable: true }
+
+    EventDetail:
+      type: object
+      required: [event_id, status, received_at]
+      properties:
+        event_id: { type: string }
+        request_id: { type: string }
+        status: { type: string, enum: [accepted, flagged, duplicate, conflict, rejected, failed] }
+        received_at: { type: string, format: date-time }
+        processed_at: { type: string, format: date-time, nullable: true }
+        transform_version: { type: string }
+        rules_version: { type: string }
+        raw_payload: { type: object, description: The payload exactly as received }
+        sensor: { allOf: [ { $ref: '#/components/schemas/SensorRecord' } ], nullable: true }
+        location: { allOf: [ { $ref: '#/components/schemas/LocationRecord' } ], nullable: true }
+        flags: { type: array, items: { $ref: '#/components/schemas/Flag' } }
+        errors: { type: array, items: { $ref: '#/components/schemas/Problem' } }
+
+    ReadingsPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              timestamp: { type: integer, format: int64 }
+              event_id: { type: string }
+              sensor: { allOf: [ { $ref: '#/components/schemas/SensorRecord' } ], nullable: true }
+              location: { allOf: [ { $ref: '#/components/schemas/LocationRecord' } ], nullable: true }
+              quality_flags: { type: array, items: { $ref: '#/components/schemas/Flag' } }
+        next_cursor: { type: string, nullable: true }

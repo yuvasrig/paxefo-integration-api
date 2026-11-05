@@ -1,0 +1,26 @@
+# Default ruleset — source of truth: DESIGN.md section 5.1.
+# Embedded in the binary; override with RULES_PATH. Rules run in file order
+# (coercion first, so later rules see numbers). Each rule's `code` is the flag it emits.
+version: 2026-11-05.1
+rules:
+  - { id: NUMERIC-STRING,   code: COERCED_TYPE,        field: "*",                      when: { numeric_string: true },                         action: fix, strategy: coerce_number, severity: info }
+  - { id: NO-IDENTITY,      code: NO_DEVICE_IDENTITY,  field: DeviceId,                 when: { invalid_imei: true, unresolved_by: DeviceName }, action: reject }
+  - { id: NAME-RESOLVED,    code: DEVICE_RESOLVED_BY_NAME, field: DeviceId,             when: { invalid_imei: true, resolved_by: DeviceName },  action: fix, strategy: resolve_device_by_name, severity: info }
+  - { id: TS-SECONDS,       code: TIMESTAMP_SECONDS,   field: EntryTimeEpoch,           when: { lt: 1.0e12 },                                   action: fix, strategy: scale, params: { factor: 1000 }, severity: warn }
+  - { id: TS-FUTURE,        code: TIMESTAMP_FUTURE,    field: EntryTimeEpoch,           when: { after_now: 5m },                                action: reject }
+  - { id: TS-UTC-MISMATCH,  code: TIMESTAMP_MISMATCH,  field: EntryTimeEpoch,           when: { differs_from: EntryTimeUtc, tolerance: 1s },    action: flag, severity: warn }
+  - { id: TEMP-F-ONLY,      code: TEMPERATURE_CONVERTED, field: Temperature.Celsius,    when: { is_null: true, sibling_present: Temperature.Fahrenheit }, action: fix, strategy: fahrenheit_to_celsius, severity: info }
+  - { id: TEMP-SENTINEL,    code: SENSOR_FAULT,        field: Temperature.Celsius,      when: { in: [-32768, 327.67, 32767] },                  action: nullify, severity: warn }
+  - { id: PROBE-SENTINEL,   code: SENSOR_FAULT,        field: ProbeTemperature.Celsius, when: { in: [-32768, 327.67, 32767] },                  action: nullify, severity: warn }
+  - { id: HUMIDITY-RANGE,   code: OUT_OF_RANGE,        field: Humidity.Percentage,      when: { outside: [0, 100] },                            action: nullify, severity: warn }
+  - { id: LUX-NEGATIVE,     code: OUT_OF_RANGE,        field: Light.Lux,                when: { lt: 0 },                                        action: nullify, severity: warn }
+  - { id: BATTERY-RANGE,    code: OUT_OF_RANGE,        field: Battery.Percentage,       when: { outside: [0, 100] },                            action: nullify, severity: warn }
+  - { id: LAT-RANGE,        code: INVALID_COORDINATES, field: Location.Latitude,        when: { outside: [-90, 90] },                           action: drop_section, section: location, severity: error }
+  - { id: LON-RANGE,        code: INVALID_COORDINATES, field: Location.Longitude,       when: { outside: [-180, 180] },                         action: drop_section, section: location, severity: error }
+  - { id: ENTITY-NAME-MISMATCH,     code: IDENTITY_MISMATCH, field: EntityName,         when: { present: true, differs_from: DeviceName },      action: flag, severity: warn }
+  - { id: SHIPMENT-DEVICE-MISMATCH, code: IDENTITY_MISMATCH, field: Shipment.DeviceId,  when: { present: true, differs_from: DeviceId },        action: flag, severity: warn }
+overrides: []
+# Example override (not active by default — it would change expected results for #7):
+#  - scope: { tenant: acme-pharma }
+#    rules:
+#      - { id: NUMERIC-STRING, action: reject }
