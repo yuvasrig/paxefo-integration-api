@@ -119,13 +119,13 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 
 | ID | Flow | Trigger | Outcome | Samples |
 |---|---|---|---|---|
-| F1 | Ingest, happy path | Valid payload | Raw saved; sensor + location rows; 200 with PAXAFE output (sync) / 202 (async) | #0, #9 |
-| F2 | Ingest, partial or flagged | Some fields invalid | Bad fields nulled + flagged; valid half saved | #1, #3, #5, #6, #7, #8, #10 |
-| F3 | Ingest, rejected | Unusable record; bad JSON | Raw saved `rejected` + reasons; 422 (400 for bad JSON) | #12 |
-| F4 | Duplicate / conflict | Same `(device_imei, ts)` | Same hash: 200 `duplicate`, no write. Different hash: first kept, conflict stored + flagged | #0 vs #1, #1 vs #8 |
+| F1 | Ingest, happy path | Valid payload | Raw saved; sensor + location rows; 200 with PAXAFE output (sync) / 202 (async) | #2, #10, #11 |
+| F2 | Ingest, partial or flagged | Some fields invalid | Bad fields nulled + flagged; valid half saved | #0, #3, #5, #6, #7 |
+| F3 | Ingest, rejected | Unusable record; tenant mismatch; bad JSON | Raw saved `rejected` + reasons; 422 (400 for bad JSON) | #9, #12 |
+| F4 | Duplicate / conflict | Same `(device_imei, ts)` | Same hash: 200 `duplicate`, no write. Different hash: first kept, conflict stored + flagged | #0 vs #1, #4, #8; any sample re-sent |
 | F5 | Device resolution | IMEI missing or names disagree | Resolve by `DeviceName`, else reject; mismatch flagged | #4, #12, #0, #7 |
 | F6 | Edge rejection | Bad key, body > 256 KB, rate limit, backpressure | 401 / 413 / 429 / 503 + `Retry-After`; nothing saved | — |
-| F7 | Failure + replay | Error after raw save | Event `failed`; `POST /api/events/{id}/replay` reruns idempotently | — |
+| F7 | Failure + replay | Error after raw save | Event `failed`; `POST /api/v1/events/{id}/replay` reruns idempotently | — |
 | F8 | Query | GET readings / events / alerts / queue / reconciliation | Tenant-scoped (RLS), cursor-paginated | — |
 | F9 | Async processing | Jobs pending | Workers claim batches, process, delete jobs; retries with backoff | — |
 | F10 | Pool scaling | Controller tick (5 s) | Pool resized from depth + lag | — |
@@ -135,12 +135,12 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 
 ### 4.1 Ingest pipeline (both modes)
 1. Middleware: request ID, auth (key → tenant, authoritative), body ≤ 256 KB, per-tenant rate limit, backpressure check (async). Every DB transaction runs `SET LOCAL app.tenant_id` so row-level security applies.
-1a. Tenant check: payload `AccountId` must map to the key's tenant via `tenant_sources`; otherwise reject `TENANT_MISMATCH` (422).
-2. **Tx 1:** insert `raw_events` (payload, hash, tenant_id, received_at, request/trace context) + insert one `ingest_ledger` row (insert-only, no shared counter row) (+ insert `ingest_jobs` row in async mode). Commit.
+1a. Tenant check: if payload `AccountId` is present, it must map to the key's tenant via `tenant_sources`; otherwise reject `TENANT_MISMATCH` (422). If `AccountId` is absent, the key's tenant is used and an info flag `ACCOUNT_ID_MISSING` is added (5 of 13 samples omit it).
+2. **Tx 1:** insert `raw_events` (payload, hash = SHA-256 of canonical JSON (keys sorted, no insignificant whitespace) so key order or formatting never creates a false conflict, tenant_id, received_at, request/trace context) + insert one `ingest_ledger` row (insert-only, no shared counter row) (+ insert `ingest_jobs` row in async mode). Commit.
 3. Mode comes from the tenant's config (`ingest_mode`, default from env). Sync: run steps 4–6 in-request. Async: return 202 `{event_id}`.
 4. Parse + validate (provider), resolve device (F5), normalize timestamp.
 5. Transform to PAXAFE sensor/location (pure), apply quality + domain rules, validate output against PAXAFE JSON schemas.
-6. **Tx 2:** insert normalized rows (`ON CONFLICT (device_imei, ts) DO NOTHING`, conflict handling per F4), upsert device (`last_*` only if newer) and shipment, insert `event_outcomes` row (status, flags, expected_outputs, transform_version). Async: delete job in the same tx.
+6. **Tx 2:** insert normalized rows (`ON CONFLICT (tenant_id, device_imei, ts) DO NOTHING`, conflict handling per F4), upsert device (`last_*` only if newer) and shipment, insert `event_outcomes` row (status, flags, expected_outputs, transform_version). Async: delete job in the same tx.
 
 `raw_events` is never updated. Status lives in `event_outcomes`.
 
@@ -149,17 +149,19 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 ## 5. Validation and data quality
 
 **Reject (422) when any holds:**
-1. No usable device identity: `DeviceId` missing/not 15 digits AND `DeviceName` not found in `devices` for this tenant.
+1. No usable device identity: `DeviceId` missing/not 15 digits AND `DeviceName` not found in `devices` for this tenant. Resolution uses `DeviceName` only — never `EntityName`, which is user-editable (sample #12).
 2. No usable timestamp, or more than 5 min in the future.
 3. Neither half valid: no usable temperature AND no valid coordinates.
-4. Payload `AccountId` not mapped to the API key's tenant (`TENANT_MISMATCH`).
+4. Payload `AccountId` present and not mapped to the API key's tenant (`TENANT_MISMATCH`).
+
+Reject reason codes (in `errors[]`): `NO_DEVICE_IDENTITY`, `NO_TIMESTAMP`, `TIMESTAMP_FUTURE`, `NO_USABLE_DATA`, `TENANT_MISMATCH`, `INVALID_JSON` (400). Flags raised before the rejection are still returned (e.g. #12's `IDENTITY_MISMATCH`).
 
 **Otherwise accept, with flags** `{code, field, value, action}`:
 
 | Code | Severity | Trigger | Action |
 |---|---|---|---|
 | `INVALID_COORDINATES` | error | Lat ∉ [-90,90] or lon ∉ [-180,180] | Location record skipped |
-| `SENSOR_FAULT` | warn | Value ∈ {-32768, 327.67, 32767} | Field → null |
+| `SENSOR_FAULT` | warn | `Temperature.Celsius` or `ProbeTemperature.Celsius` ∈ {-32768, 327.67, 32767} | Field → null |
 | `OUT_OF_RANGE` | warn | Humidity ∉ [0,100], lux < 0, battery ∉ [0,100] | Field → null |
 | `COERCED_TYPE` | info | Number sent as string | Parsed, kept |
 | `TIMESTAMP_SECONDS` | warn | `EntryTimeEpoch` < 1e12 | × 1000 |
@@ -167,12 +169,18 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 | `DEVICE_RESOLVED_BY_NAME` | info | No IMEI; found by name | IMEI filled |
 | `IDENTITY_MISMATCH` | warn | `EntityName` ≠ `DeviceName`, or `Shipment.DeviceId` ≠ `DeviceId` | Kept as sent |
 | `TEMPERATURE_FALLBACK` | info | Device temp missing/faulty; probe used | `temperature_source=probe` |
-| `TENANT_MISMATCH` | error | Payload `AccountId` not mapped to key's tenant | Reject 422 |
+| `TEMPERATURE_CONVERTED` | info | `Temperature.Celsius` null, Fahrenheit present | Celsius = (F − 32) × 5/9 |
+| `TENANT_MISMATCH` | error | Payload `AccountId` present and not mapped to key's tenant | Reject 422 |
+| `ACCOUNT_ID_MISSING` | info | No `AccountId` in payload | Key's tenant used |
 | `DUPLICATE_CONFLICT` | warn | Same key, different content | First kept; conflict stored |
-| `TEMP_EXCURSION` | warn | Outside shipment band (default 2–8 °C) | Flag only |
-| `IMPOSSIBLE_TRAVEL` | warn | Speed vs time-nearest neighbors > 1000 km/h | Flag only |
+| `TEMP_EXCURSION` | warn | Outside shipment band (default 2–8 °C) | Flag only — *designed, not built in M0–M7* |
+| `IMPOSSIBLE_TRAVEL` | warn | Speed vs time-nearest neighbors > 1000 km/h | Flag only — *designed, not built in M0–M7* |
 
 Unknown extra fields are accepted (kept in raw).
+
+**Status precedence** (one `status` per event): `rejected` > `conflict` > `duplicate` > `flagged` > `accepted`. `flagged` means at least one `warn` or `error` flag; `info` flags alone (e.g. `COERCED_TYPE`, `ACCOUNT_ID_MISSING`, `DEVICE_RESOLVED_BY_NAME`) keep the event `accepted`. All flags are returned regardless of status.
+
+**Where flags come from:** most flags are produced by rules (§5.1). These are produced elsewhere because they need context the rules engine does not have: `TEMPERATURE_FALLBACK` (transform), `TENANT_MISMATCH` and `ACCOUNT_ID_MISSING` (ingest, tenant check), `DUPLICATE_CONFLICT` (store), `TEMP_EXCURSION` / `IMPOSSIBLE_TRAVEL` (domain).
 
 ### 5.1 Rules engine (config-driven fix / drop / reject)
 
@@ -189,25 +197,38 @@ All validation and quality behavior above is expressed as **rules in config**; t
 
 **Strategies (registry):** `scale`, `coerce_number`, `fahrenheit_to_celsius`, `normalize_enum`, `derive_magnitude`, `resolve_device_by_name`.
 
+Each rule carries the flag `code` it emits, so rule IDs (config) and flag codes (API) stay linked. Rules run in file order (coercion first, so later rules see numbers).
+
 ```yaml
-version: 2026-11-04.1
+version: 2026-11-05.1
 rules:
-  - { id: TS-SECONDS,     field: EntryTimeEpoch,           when: { lt: 1.0e12 },                      action: fix, strategy: scale, params: { factor: 1000 }, severity: warn }
-  - { id: PROBE-SENTINEL, field: ProbeTemperature.Celsius, when: { in: [-32768, 327.67, 32767] },     action: nullify, severity: warn }
-  - { id: TEMP-F-ONLY,    field: Temperature.Celsius,      when: { is_null: true, sibling_present: Temperature.Fahrenheit }, action: fix, strategy: fahrenheit_to_celsius, severity: info }
-  - { id: LAT-RANGE,      field: Location.Latitude,        when: { outside: [-90, 90] },              action: drop_section, section: location, severity: error }
-  - { id: NUMERIC-STRING, field: "*",                      when: { numeric_string: true },            action: fix, strategy: coerce_number, severity: info }
-  - { id: NO-IDENTITY,    field: DeviceId,                 when: { missing: true, unresolved_by: DeviceName }, action: reject }
-overrides:
-  - scope: { tenant: reviewer }
-    rules:
-      - { id: NUMERIC-STRING, action: reject }
+  - { id: NUMERIC-STRING,   code: COERCED_TYPE,        field: "*",                      when: { numeric_string: true },                         action: fix, strategy: coerce_number, severity: info }
+  - { id: NO-IDENTITY,      code: NO_DEVICE_IDENTITY,  field: DeviceId,                 when: { invalid_imei: true, unresolved_by: DeviceName }, action: reject }
+  - { id: NAME-RESOLVED,    code: DEVICE_RESOLVED_BY_NAME, field: DeviceId,             when: { invalid_imei: true, resolved_by: DeviceName },  action: fix, strategy: resolve_device_by_name, severity: info }
+  - { id: TS-SECONDS,       code: TIMESTAMP_SECONDS,   field: EntryTimeEpoch,           when: { lt: 1.0e12 },                                   action: fix, strategy: scale, params: { factor: 1000 }, severity: warn }
+  - { id: TS-FUTURE,        code: TIMESTAMP_FUTURE,    field: EntryTimeEpoch,           when: { after_now: 5m },                                action: reject }
+  - { id: TS-UTC-MISMATCH,  code: TIMESTAMP_MISMATCH,  field: EntryTimeEpoch,           when: { differs_from: EntryTimeUtc, tolerance: 1s },    action: flag, severity: warn }
+  - { id: TEMP-F-ONLY,      code: TEMPERATURE_CONVERTED, field: Temperature.Celsius,    when: { is_null: true, sibling_present: Temperature.Fahrenheit }, action: fix, strategy: fahrenheit_to_celsius, severity: info }
+  - { id: TEMP-SENTINEL,    code: SENSOR_FAULT,        field: Temperature.Celsius,      when: { in: [-32768, 327.67, 32767] },                  action: nullify, severity: warn }
+  - { id: PROBE-SENTINEL,   code: SENSOR_FAULT,        field: ProbeTemperature.Celsius, when: { in: [-32768, 327.67, 32767] },                  action: nullify, severity: warn }
+  - { id: HUMIDITY-RANGE,   code: OUT_OF_RANGE,        field: Humidity.Percentage,      when: { outside: [0, 100] },                            action: nullify, severity: warn }
+  - { id: LUX-NEGATIVE,     code: OUT_OF_RANGE,        field: Light.Lux,                when: { lt: 0 },                                        action: nullify, severity: warn }
+  - { id: BATTERY-RANGE,    code: OUT_OF_RANGE,        field: Battery.Percentage,       when: { outside: [0, 100] },                            action: nullify, severity: warn }
+  - { id: LAT-RANGE,        code: INVALID_COORDINATES, field: Location.Latitude,        when: { outside: [-90, 90] },                           action: drop_section, section: location, severity: error }
+  - { id: LON-RANGE,        code: INVALID_COORDINATES, field: Location.Longitude,       when: { outside: [-180, 180] },                         action: drop_section, section: location, severity: error }
+  - { id: ENTITY-NAME-MISMATCH,     code: IDENTITY_MISMATCH, field: EntityName,         when: { present: true, differs_from: DeviceName },      action: flag, severity: warn }
+  - { id: SHIPMENT-DEVICE-MISMATCH, code: IDENTITY_MISMATCH, field: Shipment.DeviceId,  when: { present: true, differs_from: DeviceId },        action: flag, severity: warn }
+overrides: []
+# Example override (not active by default — it would change expected results for #7):
+#  - scope: { tenant: acme-pharma }
+#    rules:
+#      - { id: NUMERIC-STRING, action: reject }
 ```
 
 - Pipeline position: parse → `rules.Apply` → required-field check → transform → domain checks → output schema validation.
 - `rules.Apply(payload, ruleset, scope) → (payload', flags, rejection)` is pure; one table-driven test per rule ID; golden tests pin the default ruleset on all 13 samples.
 - Loaded at startup: embedded default, overridden by `RULES_PATH`; schema-validated; fail fast on unknown strategy, unsafe action on protected field, or duplicate ID. No hot reload.
-- `GET /api/rules` shows the active version; `POST /api/events/{id}/replay?rules_version=` compares outcomes before switching.
+- `GET /api/v1/rules` shows the active version; `POST /api/v1/events/{id}/replay?rules_version=` compares outcomes before switching.
 - Deferred: per-tenant rules in the DB with an admin UI.
 
 ---
@@ -236,16 +257,18 @@ Full precision stored; rounding only when emitting PAXAFE JSON.
 | `latitude`, `longitude` | `Location.*` | Range-checked; invalid → no record |
 | `altitude` | — | null |
 | `location_accuracy` | `Location.Accuracy.Meters` | Integer |
-| `location_accuracy_category` | derived | High < 50 m, Medium < 500 m, else Low (config) |
+| `location_accuracy_category` | derived | High < 50 m, Medium < 500 m, else Low (config); boundaries exclusive (500 m → Low, sample #6); null when accuracy is null |
 | `location_source` | `LocationMethod` | gps→GPS, wifi→WiFi, cell→Cellular |
 | `address.full_address` | `FormattedAddress` | Always kept |
-| `address.street/locality/state/postal_code/country` | parsed | Best effort; null when unsure |
+| `address.street/locality/state/postal_code/country` | parsed | Conservative: split on commas, parse only the tail `<locality>, <ST> <postal>, <country>` (US form) or `<locality>, <country>` (2 parts); `street` always null (matches the PAXAFE schema example); any field not matched → null |
 | `battery_level` | `Battery.Percentage` | Integer 0–100 |
 | `cellular_dbm` | `Cellular.Dbm` | 2 dp |
 | `cellular_network_type`, `cellular_operator` | — | null |
 | `wifi_access_points` | `Location.WifiAccessPointUsedCount` | Integer |
 
 Kept outside PAXAFE output: probe temperature, shipment data, `AccountId`, signal category, battery estimation.
+
+**Rounding:** half away from zero (Go `math.Round(x·10ⁿ)/10ⁿ`), not banker's rounding — the schema examples require it (-0.5625 → -0.563, 0.6875 → 0.688, 10.078125 → 10.08).
 
 ---
 
@@ -259,7 +282,7 @@ Kept outside PAXAFE output: probe temperature, shipment data, `AccountId`, signa
 | `ingest_ledger` | Independent ack record | `id`, `raw_event_id`, `tenant_id`, `acked_at` | Insert-only (no hot counter row); index `(tenant_id, acked_at)`; reconciler counts per window |
 | `sensor_readings` | Normalized sensor | `tenant_id`, `device_imei`, `ts`, `device_id`, `temperature`, `temperature_source`, `probe_temperature`, `humidity`, `light_lux`, `accel_x/y/z/g`, `quality_flags`, `raw_event_id` FK, `transform_version` | Unique `(tenant_id, device_imei, ts)`; index `(tenant_id, device_id, ts DESC)` |
 | `location_readings` | Normalized location | `tenant_id`, `device_imei`, `ts`, `lat`, `lon`, `accuracy_m`, `accuracy_category`, `source`, address cols, `battery_pct`, `cellular_dbm`, `wifi_aps`, `quality_flags`, `raw_event_id` FK, `transform_version` | Unique `(tenant_id, device_imei, ts)`; index `(tenant_id, device_id, ts DESC)` |
-| `reading_conflicts` | Second versions of a key | `tenant_id`, `device_imei`, `ts`, `raw_event_id`, `first_raw_event_id`, `diff` JSONB | Index `(device_imei, ts)` |
+| `reading_conflicts` | Second versions of a key | `tenant_id`, `device_imei`, `ts`, `raw_event_id`, `first_raw_event_id`, `diff` JSONB | Index `(tenant_id, device_imei, ts)` |
 | `devices` | Identity registry per tenant | `tenant_id`, `imei`, `device_name`, `valid_from`, `valid_to`, `first_seen`, `last_seen`, `last_lat/lon/ts` | Unique `(tenant_id, imei, valid_from)`; one open assignment per IMEI (tracker reuse moves it between tenants); `last_*` updated only if newer |
 | `shipments` | Shipment context | `tenant_id`, `shipment_id` (unique per tenant), `public_id`, `carrier`, from/to, `temp_min_c`, `temp_max_c` | — |
 | `api_keys` | Auth | `key_hash` (SHA-256), `prefix`, `tenant_id`, `name`, `created_at`, `expires_at`, `revoked_at` | Unique `key_hash` |
@@ -283,7 +306,7 @@ Fail fast at startup if the extension is missing. `/readyz` reports the backend.
 
 | Concern | Design |
 |---|---|
-| Tenant resolution | API key → tenant is authoritative. Payload `AccountId` must map to that tenant in `tenant_sources`, else 422 `TENANT_MISMATCH` |
+| Tenant resolution | API key → tenant is authoritative. If present, payload `AccountId` must map to that tenant in `tenant_sources`, else 422 `TENANT_MISMATCH`; if absent, the key's tenant is used + `ACCOUNT_ID_MISSING` (info) |
 | Device identity | Scoped per tenant with validity windows, so a reused tracker's history stays with the right customer |
 | Keys and indexes | Every unique key and index leads with `tenant_id` |
 | Limits | Rate limit and quota per tenant (from plan/config); 429 is tenant-scoped |
@@ -397,7 +420,7 @@ Every 5 min (scheduler role), per tenant, over the window [now−20 min, now−2
 | R5 | Every raw event without an outcome has a job (async) | Lost enqueue | Recreate job |
 | R6 | Counts per status sum to raw total | Silent drop | Alert with the gap |
 
-Terminal statuses: accepted, flagged, rejected, duplicate, conflict, dead. Auto-heal capped at 100 actions/run; beyond → alert. Each run writes `reconciliation_runs`. Metric `reconciliation_discrepancies_total{rule}`; alert when > 0. `GET /api/reconciliation?from=&to=` returns a completeness report (daily summary = audit evidence).
+Terminal statuses: accepted, flagged, rejected, duplicate, conflict, dead. Auto-heal capped at 100 actions/run; beyond → alert. Each run writes `reconciliation_runs`. Metric `reconciliation_discrepancies_total{rule}`; alert when > 0. `GET /api/v1/reconciliation?from=&to=` returns a completeness report (daily summary = audit evidence).
 
 **End-to-end (sender):** the sender tags each request with `X-Request-ID`, records it, and after a scenario queries the API to report: *N sent · N acknowledged · N processed · R rejected (expected) · 0 missing.*
 
@@ -470,6 +493,7 @@ All endpoints except probes/metrics require `X-API-Key`; all queries are tenant-
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/v1/webhook/tive` | Ingest one Tive payload |
+| POST | `/api/webhook/tive` | Alias of the above — the exact path named in EXERCISE.md; same handler |
 | GET | `/api/v1/readings?device_id=&from=&to=&cursor=` | Sensor + location readings |
 | GET | `/api/v1/events/{id}` | Raw event, outcome, flags, PAXAFE output |
 | POST | `/api/v1/events/{id}/replay` | Re-run a failed/dead/rejected event |
@@ -496,6 +520,8 @@ All endpoints except probes/metrics require `X-API-Key`; all queries are tenant-
 | 429 | Rate limit (`Retry-After`) | — |
 | 503 | Backpressure (`Retry-After`) | — |
 | 500 | Failure after raw save | `failed` |
+
+When several apply, `status` follows the precedence in §5 (`rejected` > `conflict` > `duplicate` > `flagged` > `accepted`).
 
 Body:
 ```json
@@ -721,21 +747,25 @@ Live-change workflow: change the spec → change the test → change the code.
 
 ## 19. Sample payload traps (all must have tests)
 
-| # | Trap | Expected |
-|---|---|---|
-| 0 | Clean; `Shipment.DeviceId` ≠ `DeviceId` | accepted + `IDENTITY_MISMATCH` |
-| 1 | Lat 95.0; same key as #0, different content | sensor saved, location skipped; conflict vs #0 |
-| 2 | Clean GPS | accepted |
-| 3 | Probe 327.67; SF→Richmond VA in 1 h vs #2 | `SENSOR_FAULT`, `IMPOSSIBLE_TRAVEL` |
-| 4 | No `DeviceId` | resolved by name (if known) else reject |
-| 5 | Epoch in seconds | `TIMESTAMP_SECONDS` |
-| 6 | Probe -32768; cell location | `SENSOR_FAULT`; source Cellular |
-| 7 | Numeric strings; shipment device mismatch | `COERCED_TYPE`, `IDENTITY_MISMATCH` |
-| 8 | Lon -200.0; same key as #1 | location skipped; duplicate/conflict |
-| 9 | Clean WiFi | accepted |
-| 10 | Nulls in probe/accuracy/method | accepted; null category |
-| 11 | Clean GPS (later) | accepted |
-| 12 | No `DeviceId`; `DeviceName` ≠ `EntityName` | reject (unless name known) + mismatch |
+**Precondition:** samples are sent **in order 0 → 12** to a **fresh tenant** whose `tenant_sources` maps Tive `AccountId` 478 (the `reviewer` tenant after `make seed`). Expected files in `specs/001-integration-api/expected/` describe this first run. **On a re-run** against the same tenant, every sample whose first-run status was `accepted` or `flagged` returns `duplicate` (same hash as the stored reading); all others repeat their first-run status. The smoke script and the sender accept either column.
+
+| # | Trap | HTTP · `status` | Flags / notes |
+|---|---|---|---|
+| 0 | Clean; `Shipment.DeviceId` ≠ `DeviceId`; temp 10.08 | 200 · `flagged` | `IDENTITY_MISMATCH`. Sensor + location saved |
+| 1 | Lat 95.0; no `AccountId`; same `(IMEI, ts)` as #0, different content | 200 · `conflict` | `INVALID_COORDINATES`, `DUPLICATE_CONFLICT`, `ACCOUNT_ID_MISSING`. Location skipped; sensor goes to `reading_conflicts` (#0 kept) |
+| 2 | Clean GPS (note: San Francisco, off the Boston→Atlanta route — the likely real outlier, only catchable by domain checks) | 200 · `accepted` | — |
+| 3 | Probe 327.67; Richmond VA 1 h after #2 in SF | 200 · `flagged` | `SENSOR_FAULT` (probe → null; device temp used, no fallback). `IMPOSSIBLE_TRAVEL` designed, not built |
+| 4 | No `DeviceId`, no `AccountId`; `DeviceName` A571992 known from #0 → same `(IMEI, ts)` as #0 | 200 · `conflict` | `DEVICE_RESOLVED_BY_NAME`, `DUPLICATE_CONFLICT`, `ACCOUNT_ID_MISSING`. If sent to a tenant that has not seen A571992: 422 `NO_DEVICE_IDENTITY` |
+| 5 | Epoch in seconds | 200 · `flagged` | `TIMESTAMP_SECONDS` (scaled value matches `EntryTimeUtc`, so no `TIMESTAMP_MISMATCH`) |
+| 6 | Probe -32768; cell location, 500 m accuracy; `Shipment` null | 200 · `flagged` | `SENSOR_FAULT`; `location_source` Cellular; category Low |
+| 7 | Numeric strings (`Dbm`, `Temperature.*`); shipment device mismatch | 200 · `flagged` | `COERCED_TYPE` (one per field), `IDENTITY_MISMATCH` |
+| 8 | Lon -200.0; no `AccountId`; same `(IMEI, ts)` as #0 | 200 · `conflict` | `INVALID_COORDINATES`, `DUPLICATE_CONFLICT`, `ACCOUNT_ID_MISSING` |
+| 9 | `AccountId` 999 (not mapped to the key's tenant) | 422 · `rejected` | `TENANT_MISMATCH` — the provided sample that exercises tenant isolation |
+| 10 | Nulls in probe/accuracy/method; no `AccountId` | 200 · `accepted` | `ACCOUNT_ID_MISSING` (info). `location_accuracy`, category, source null |
+| 11 | Clean GPS (later, on route) | 200 · `accepted` | — |
+| 12 | No `DeviceId`; `DeviceName` Ship33CABOL unknown; `EntityName` A571992 ≠ `DeviceName` | 422 · `rejected` | `NO_DEVICE_IDENTITY`; `IDENTITY_MISMATCH` returned. Not resolved via `EntityName` (§5) |
+
+`TEMP_EXCURSION` would fire on #0, #6, #7 and #10 with the default 2–8 °C band; domain checks are designed, not built in M0–M7, so expected files contain no domain flags.
 
 ---
 
@@ -772,7 +802,7 @@ Live-change workflow: change the spec → change the test → change the code.
 ## 22. Scale path
 Tive → API (validate, persist raw, ack) → Kafka (partitioned by IMEI) → stateless transform workers (consumer group) → Postgres/TimescaleDB (operational) → CDC (Debezium) → ClickHouse/Snowflake (analytics). Per-device stateful checks (excursion duration, travel) move to a Flink job keyed by device.
 
-**With more time:** HMAC signatures, key management UI, row-level security, distributed rate limiting, second provider, bulk backfill from raw, signed audit log.
+**With more time:** HMAC signatures, key management UI, distributed rate limiting, second provider, bulk backfill from raw, signed audit log.
 
 ---
 
@@ -798,7 +828,8 @@ Do not start the next milestone without my approval. Do not add features outside
 - Go module `github.com/<me>/paxafe-integration-api`, Go 1.23; directory layout per §3.1 (empty packages with doc comments only).
 - `.specify/memory/constitution.md` from §1.3.
 - `specs/001-integration-api/spec.md`: flows F1–F7 and F13 (§4) as EARS requirements with IDs (`F2-R3: WHEN … THE SYSTEM SHALL …`); acceptance criteria as Given/When/Then mapped to sample payloads (§19).
-- `specs/001-integration-api/contracts/`: `mapping.md` (§6), `rules.yaml` default ruleset (§5, §5.1), `quality-flags.md` (§5 table), `openapi.yaml` (§12, M1–M4 endpoints only).
+- `specs/001-integration-api/contracts/`: `mapping.md` (§6), `rules.yaml` default ruleset (§5, §5.1), `quality-flags.md` (§5 table), `openapi.yaml` (§12, M1–M4 endpoints only, including the `/api/webhook/tive` alias).
+- `specs/001-integration-api/data-model.md` (§7, M2 tables only), `plan.md` (module map §3.1, NFRs §14, links to ADRs), `tasks.md` (M1–M5 tasks, test-first, each tagged with requirement IDs). Short — they point into this document rather than copy it.
 - `specs/001-integration-api/expected/`: one JSON file per sample (0–12) with expected HTTP status, `status`, flags, and PAXAFE output — **I review these by hand**.
 - Hello-world `cmd/api/main.go` serving `/healthz`; multi-stage `Dockerfile` (`golang:1.23` → `distroless`); `render.yaml`; `.github/workflows/ci.yml` (vet, golangci-lint, test); `Makefile` (`test`, `lint`, `run`, `up`, `down`).
 
@@ -846,7 +877,7 @@ Do not start the next milestone without my approval. Do not add features outside
 - Row-level security: policies on every tenant table using `current_setting('app.tenant_id')`; app role without `BYPASSRLS`; migration role separate.
 - `internal/store`: `Store` interface + `PGStore` (pgx/v5, pgxpool); `WithTenantTx(ctx, tenantID, fn)` that runs `SET LOCAL app.tenant_id`.
 - Real `DeviceResolver` backed by `devices`.
-- `docker-compose.yml`: Postgres 16 (+ API service); `make seed` creates tenants `reviewer`, `acme-pharma`, `bioco`, maps Tive `AccountId` 478 → `acme-pharma`, prints one key per tenant.
+- `docker-compose.yml`: Postgres 16 (+ API service); `make seed` creates tenants `reviewer`, `acme-pharma`, `bioco`; maps Tive `AccountId` 478 → `reviewer` (so the provided samples work with the reviewer key; 999 stays unmapped), 1001 → `acme-pharma`, 1002 → `bioco` (sender-generated demo traffic); prints one key per tenant.
 
 **Tests (integration, testcontainers-go)**
 - Insert same `(tenant, imei, ts)` twice concurrently → exactly one reading.
@@ -979,3 +1010,14 @@ Do not start the next milestone without my approval. Do not add features outside
 ### After submission (before the interview): M9 rehearsal
 - Explain the design in 5 minutes.
 - Practice live changes: add a PAXAFE field; change accuracy thresholds; add/flip a rule in `rules.yaml`; change duplicate-conflict behavior (200 → 409); add a stub provider; add a validation rule with its test first.
+
+---
+
+## 24. Changelog
+
+- **2026-11-05** — Reconciled with the assignment and samples (before M0):
+  - Reviewer tenant maps `AccountId` 478; #9 (999) is the deliberate `TENANT_MISMATCH` case; absent `AccountId` uses the key's tenant + `ACCOUNT_ID_MISSING`.
+  - §19 rewritten as exact expected results (order 0→12, fresh tenant; re-run behavior stated). #1/#4/#8 are `conflict` (first write wins); domain flags (`IMPOSSIBLE_TRAVEL`, `TEMP_EXCURSION`) marked designed, not built.
+  - Added `/api/webhook/tive` alias; normalized all paths to `/api/v1/`; removed RLS from "with more time".
+  - `rules.yaml` completed (flag `code` per rule, sentinel on device temp, lon/humidity/lux/battery/timestamp/identity rules); status precedence, canonical-JSON hash, rounding mode, address parsing, accuracy boundaries pinned; reading-conflict index and `ON CONFLICT` target lead with `tenant_id`.
+  - M0 scope now lists `data-model.md`, `plan.md`, `tasks.md`.
