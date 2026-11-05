@@ -1,0 +1,69 @@
+{
+  "EntityName": "B234567",
+  "EntryTimeEpoch": 1739647646000,
+  "EntryTimeUtc": "2025-02-15T14:27:26Z",
+  "Cellular": {
+    "SignalStrength": "Good",
+    "Dbm": -72
+  },
+  "Temperature": {
+    "Celsius": 4.75,
+    "Fahrenheit": 40.55
+  },
+  "ProbeTemperature": {
+    "Celsius": 4.625,
+    "Fahrenheit": 40.325
+  },
+  "Humidity": {
+    "Percentage": 54.8
+  },
+  "Accelerometer": {
+    "G": 1.008,
+    "X": 0.094,
+    "Y": -0.188,
+    "Z": 0.984
+  },
+  "Light": {
+    "Lux": 0
+  },
+  "Battery": {
+    "Percentage": 76,
+    "Estimation": "Weeks",
+    "IsCharging": false
+  },
+  "Shipment": {
+    "Id": "INV-45678/VACCINE-BATCH",
+    "Description": "COVID Vaccine Shipment",
+    "DeviceId": "866088073468440",
+    "ShipFrom": {
+      "Latitude": 42.3601,
+      "Longitude": -71.0589,
+      "FormattedAddress": "Boston, MA 02101, USA"
+    },
+    "ShipTo": {
+      "Latitude": 33.749,
+      "Longitude": -84.388,
+      "FormattedAddress": "Atlanta, GA 30303, USA"
+    },
+    "Carrier": "FEDEX-COLD"
+  },
+  "AccountId": 478,
+  "DeviceId": "866088073468440",
+  "DeviceName": "B234567",
+  "ShipmentId": "INV-45678/VACCINE-BATCH",
+  "PublicShipmentId": "7YK832MNP1",
+  "Location": {
+    "Latitude": 35.2271,
+    "Longitude": -80.8431,
+    "FormattedAddress": "Charlotte, NC 28202, USA",
+    "LocationMethod": "gps",
+    "Accuracy": {
+      "Meters": 6,
+      "Kilometers": 0.006,
+      "Miles": 0.004
+    },
+    "GeolocationSourceName": "gnss",
+    "CellTowerUsedCount": 0,
+    "WifiAccessPointUsedCount": 0
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "EntryTimeEpoch": 1739215646000,
+  "EntityName": "A571992",
+  "DeviceId": "863257063350583",
+  "DeviceName": "A571992",
+  "Temperature": {
+    "Celsius": 10.0
+  },
+  "ProbeTemperature": {
+    "Celsius": 9.875,
+    "Fahrenheit": 49.775
+  },
+  "Location": {
+    "Latitude": 40.0,
+    "Longitude": -200.0
+  }
+}

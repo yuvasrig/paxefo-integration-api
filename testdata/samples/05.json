@@ -1,0 +1,69 @@
+{
+  "EntityName": "E567890",
+  "EntryTimeEpoch": 1739561246,
+  "EntryTimeUtc": "2025-02-14T19:27:26Z",
+  "Cellular": {
+    "SignalStrength": "Good",
+    "Dbm": -78
+  },
+  "Temperature": {
+    "Celsius": 5.25,
+    "Fahrenheit": 41.45
+  },
+  "ProbeTemperature": {
+    "Celsius": 5.0,
+    "Fahrenheit": 41.0
+  },
+  "Humidity": {
+    "Percentage": 47.2
+  },
+  "Accelerometer": {
+    "G": 1.003,
+    "X": 0.031,
+    "Y": -0.062,
+    "Z": 1.001
+  },
+  "Light": {
+    "Lux": 0
+  },
+  "Battery": {
+    "Percentage": 74,
+    "Estimation": "Weeks",
+    "IsCharging": false
+  },
+  "Shipment": {
+    "Id": "PO-88213/BIOLOGICS-LANE",
+    "Description": "Biologics replenishment",
+    "DeviceId": "866088073468443",
+    "ShipFrom": {
+      "Latitude": 39.7684,
+      "Longitude": -86.1581,
+      "FormattedAddress": "Indianapolis, IN 46204, USA"
+    },
+    "ShipTo": {
+      "Latitude": 35.1495,
+      "Longitude": -90.049,
+      "FormattedAddress": "Memphis, TN 38103, USA"
+    },
+    "Carrier": "COLDLINE-FREIGHT"
+  },
+  "AccountId": 478,
+  "DeviceId": "866088073468443",
+  "DeviceName": "E567890",
+  "ShipmentId": "PO-88213/BIOLOGICS-LANE",
+  "PublicShipmentId": "3MQ7R2TX8K",
+  "Location": {
+    "Latitude": 37.9716,
+    "Longitude": -87.5711,
+    "FormattedAddress": "Evansville, IN 47708, USA",
+    "LocationMethod": "gps",
+    "Accuracy": {
+      "Meters": 8,
+      "Kilometers": 0.008,
+      "Miles": 0.005
+    },
+    "GeolocationSourceName": "gnss",
+    "CellTowerUsedCount": 0,
+    "WifiAccessPointUsedCount": 0
+  }
+}

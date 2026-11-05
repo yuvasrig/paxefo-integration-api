@@ -1,0 +1,20 @@
+{
+  "EntryTimeEpoch": 1739474846000,
+  "EntityName": "D456789",
+  "DeviceId": "866088073468442",
+  "DeviceName": "D456789",
+  "Temperature": {
+    "Celsius": 22.0,
+    "Fahrenheit": 71.6
+  },
+  "ProbeTemperature": {
+    "Celsius": null,
+    "Fahrenheit": null
+  },
+  "Location": {
+    "Latitude": 35.6762,
+    "Longitude": 139.6503,
+    "LocationMethod": null,
+    "Accuracy": null
+  }
+}

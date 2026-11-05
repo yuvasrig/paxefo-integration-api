@@ -61,6 +61,15 @@ Split `FormattedAddress` on `", "`. Only the tail is interpreted; anything unmat
 
 Probe temperature, `Shipment.*` (→ `shipments`), `AccountId` (tenant routing), `Cellular.SignalStrength`, `Battery.Estimation`, `Battery.IsCharging`, `Location.GeolocationSourceName`, `Location.CellTowerUsedCount`, `Accuracy.Kilometers/Miles`, `PublicShipmentId`, `EntityName`.
 
+## Edge decisions made in M1
+
+- `device_id` is `DeviceName`; if it is absent the IMEI is used (a record is never rejected only for a missing name).
+- Both `Location.Latitude` and `Longitude` absent or `Location` null: no location record, no flag. Only one of them missing, or either out of range: no location record and flag `INVALID_COORDINATES`.
+- A value of the wrong JSON type (not a number or numeric string where a number is expected) becomes null with flag `INVALID_TYPE` (F2-R15). A numeric string is coerced earlier by rule `NUMERIC-STRING`, and only on the numeric-field list (identifiers such as `DeviceId` are never coerced).
+- `location_accuracy_category` uses the unrounded meters (49.6 → High) while `location_accuracy` is the rounded integer (50).
+- Reject checks in the transform: `NO_TIMESTAMP` (missing, non-numeric or ≤ 0), `NO_USABLE_DATA` (no temperature after fallback and no location). A rejected record emits no PAXAFE records but keeps its flags.
+- `transform_version` (`tive-transform/1`) and `rules_version` are returned with every result for the audit trail.
+
 ## Output validation
 
 Every emitted sensor record validates against `assignment/px-sensor-schema.json`, and every location record against `assignment/px-location-schema.json`. A record that fails schema validation is a server bug: event outcome `failed`, HTTP 500, replay after fix.

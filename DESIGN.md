@@ -1023,6 +1023,7 @@ Do not start the next milestone without my approval. Do not add features outside
 
 ## 24. Changelog
 
+- **2026-11-05 (M1)** — Implemented transform core; mapping.md records the edge decisions (device_id fallback, half-missing coordinates).
 - **2026-11-05 (M1 planning)** — Added flag `INVALID_TYPE` (wrong JSON type → null); defined `field: "*"` as the numeric-field list so identifiers are never coerced; golden test reads `expected/` directly (no `-update`).
 
 - **2026-11-05** — Reconciled with the assignment and samples (before M0):

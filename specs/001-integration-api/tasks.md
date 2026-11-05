@@ -3,17 +3,17 @@
 Rule for every task: write the failing test (table-driven, requirement ID in the test name), then the code, then `go vet ./... && go test ./...`. Done = tests pass, IDs covered, DESIGN.md/specs still accurate, short commit. Milestone ends with its exit criteria checked one by one and a tag.
 
 ## M1 — Transform core (`m1-transform`)
-- [ ] T1.1 `provider/tive` tolerant types: numbers as strings, nulls, absent objects record original type. Tests: F2-R4, sample #7, fuzz seed corpus.
-- [ ] T1.2 `Provider` interface (`Name`, `Parse`, `Transform`) + registry. Test: unknown provider name.
-- [ ] T1.3 `rules` loader: embedded default, `RULES_PATH` override, startup validation (unknown strategy, unsafe action on protected field, duplicate ID). Tests: F13-R2.
-- [ ] T1.4 `rules.Apply` per rule ID, one table case each: NUMERIC-STRING (F2-R4), NO-IDENTITY / NAME-RESOLVED (F3-R2, F5-R2), TS-SECONDS (F2-R5), TS-FUTURE (F3-R4), TS-UTC-MISMATCH (F2-R6, #11), TEMP-F-ONLY (F2-R9), TEMP-SENTINEL / PROBE-SENTINEL (F2-R2), HUMIDITY-RANGE / LUX-NEGATIVE / BATTERY-RANGE (F2-R3), LAT-RANGE / LON-RANGE (F2-R1), ENTITY-NAME-MISMATCH / SHIPMENT-DEVICE-MISMATCH (F2-R7). Every fix records rule ID, original, new (F2-R11).
-- [ ] T1.5 Strategies: `scale`, `coerce_number`, `fahrenheit_to_celsius`, `normalize_enum`, `derive_magnitude` (F2-R10).
-- [ ] T1.6 `paxafe` records + rounding at marshal (half away from zero) (F1-R5). Table: -0.5625→-0.563, 0.6875→0.688, 4.625→4.63, 10.078125→10.08.
-- [ ] T1.7 Transform mapping per `contracts/mapping.md`: temperature fallback (F2-R8), accuracy category incl. 500 m→Low (F2-R14), location source, address parsing cases, null handling, no-sensor-record case.
-- [ ] T1.8 Output schema validation against embedded PAXAFE schemas (F1-R6).
-- [ ] T1.9 Required-field/reject checks: NO_TIMESTAMP, NO_USABLE_DATA (F3-R3, F3-R5) with a `DeviceResolver` fake.
-- [ ] T1.10 Golden test: 13 samples → `expected/*.json` (status, flags, records), `-update` flag; fuzz `FuzzParseTransform` 30 s.
-- **Exit:** unit + golden + schema pass; fuzz clean; no I/O in `provider/tive`, `rules`, `paxafe`.
+- [x] T1.1 `provider/tive` tolerant types: numbers as strings, nulls, absent objects record original type. Tests: F2-R4, sample #7, fuzz seed corpus.
+- [x] T1.2 `Provider` interface (`Name`, `Parse`, `Transform`) + registry. Test: unknown provider name.
+- [x] T1.3 `rules` loader: embedded default, `RULES_PATH` override, startup validation (unknown strategy, unsafe action on protected field, duplicate ID). Tests: F13-R2.
+- [x] T1.4 `rules.Apply` per rule ID, one table case each: NUMERIC-STRING (F2-R4), NO-IDENTITY / NAME-RESOLVED (F3-R2, F5-R2), TS-SECONDS (F2-R5), TS-FUTURE (F3-R4), TS-UTC-MISMATCH (F2-R6, #11), TEMP-F-ONLY (F2-R9), TEMP-SENTINEL / PROBE-SENTINEL (F2-R2), HUMIDITY-RANGE / LUX-NEGATIVE / BATTERY-RANGE (F2-R3), LAT-RANGE / LON-RANGE (F2-R1), ENTITY-NAME-MISMATCH / SHIPMENT-DEVICE-MISMATCH (F2-R7). Every fix records rule ID, original, new (F2-R11).
+- [x] T1.5 Strategies: `scale`, `coerce_number`, `fahrenheit_to_celsius`, `normalize_enum`, `derive_magnitude` (F2-R10).
+- [x] T1.6 `paxafe` records + rounding at marshal (half away from zero) (F1-R5). Table: -0.5625→-0.563, 0.6875→0.688, 4.625→4.63, 10.078125→10.08.
+- [x] T1.7 Transform mapping per `contracts/mapping.md`: temperature fallback (F2-R8), accuracy category incl. 500 m→Low (F2-R14), location source, address parsing cases, null handling, no-sensor-record case.
+- [x] T1.8 Output schema validation against embedded PAXAFE schemas (F1-R6).
+- [x] T1.9 Required-field/reject checks: NO_TIMESTAMP, NO_USABLE_DATA (F3-R3, F3-R5) with a `DeviceResolver` fake.
+- [x] T1.10 Golden test: 13 samples → `expected/*.json` (status, flags, records), `-update` flag; fuzz `FuzzParseTransform` 30 s.
+- **Exit (verified 2026-11-05):** unit + golden + schema pass; fuzz 30 s clean (~5M execs); no I/O in pure packages (`internal/purity` test).
 
 ## M2 — Database and store (`m2-store`)
 - [ ] T2.1 goose migrations per `data-model.md`; roles (migration vs app, no BYPASSRLS); RLS policies. Test: RLS isolation (F6-R5).

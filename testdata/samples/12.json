@@ -1,0 +1,16 @@
+{
+  "EntryTimeEpoch": 1739215646000,
+  "EntityName": "A571992",
+  "DeviceName": "Ship33CABOL",
+  "Temperature": {
+    "Celsius": 10.0
+  },
+  "ProbeTemperature": {
+    "Celsius": 10.0,
+    "Fahrenheit": 50.0
+  },
+  "Location": {
+    "Latitude": 40.0,
+    "Longitude": -73.0
+  }
+}

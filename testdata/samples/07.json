@@ -1,0 +1,69 @@
+{
+  "EntityName": "A571992",
+  "EntryTimeEpoch": 1739216546000,
+  "EntryTimeUtc": "2025-02-10T19:42:26Z",
+  "Cellular": {
+    "SignalStrength": "Poor",
+    "Dbm": "-100"
+  },
+  "Temperature": {
+    "Celsius": "10.5",
+    "Fahrenheit": "50.9"
+  },
+  "ProbeTemperature": {
+    "Celsius": 10.25,
+    "Fahrenheit": 50.45
+  },
+  "Humidity": {
+    "Percentage": 39.1
+  },
+  "Accelerometer": {
+    "G": 0.991,
+    "X": -0.5,
+    "Y": -0.438,
+    "Z": 0.75
+  },
+  "Light": {
+    "Lux": 0
+  },
+  "Battery": {
+    "Percentage": 64,
+    "Estimation": "N/A",
+    "IsCharging": false
+  },
+  "Shipment": {
+    "Id": "CL-13686/PHARMA-SHIP/COLD-LOGISTICS",
+    "Description": null,
+    "DeviceId": "866088073468439",
+    "ShipFrom": {
+      "Latitude": 26.09891,
+      "Longitude": -98.18494,
+      "FormattedAddress": "1460 E Hi Line Rd, Pharr, TX 78577, USA"
+    },
+    "ShipTo": {
+      "Latitude": 40.815468,
+      "Longitude": -73.8805,
+      "FormattedAddress": "772 Edgewater Rd, Bronx, NY 10474, USA"
+    },
+    "Carrier": "EXCALIBUR"
+  },
+  "AccountId": 478,
+  "DeviceId": "863257063350583",
+  "DeviceName": "A571992",
+  "ShipmentId": "CL-13686/PHARMA-SHIP/COLD-LOGISTICS",
+  "PublicShipmentId": "40X614N4WC",
+  "Location": {
+    "Latitude": 40.81091,
+    "Longitude": -73.87902,
+    "FormattedAddress": "114 Hunts Point Market, Bronx, NY 10474, USA",
+    "LocationMethod": "wifi",
+    "Accuracy": {
+      "Meters": 25,
+      "Kilometers": 0.025,
+      "Miles": 0.016
+    },
+    "GeolocationSourceName": "skyhook",
+    "CellTowerUsedCount": 1,
+    "WifiAccessPointUsedCount": 5
+  }
+}

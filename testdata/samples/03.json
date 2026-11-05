@@ -1,0 +1,69 @@
+{
+  "EntityName": "B234567",
+  "EntryTimeEpoch": 1739305646000,
+  "EntryTimeUtc": "2025-02-11T20:27:26Z",
+  "Cellular": {
+    "SignalStrength": "Good",
+    "Dbm": -74
+  },
+  "Temperature": {
+    "Celsius": 4.625,
+    "Fahrenheit": 40.325
+  },
+  "ProbeTemperature": {
+    "Celsius": 327.67,
+    "Fahrenheit": 621.806
+  },
+  "Humidity": {
+    "Percentage": 55.0
+  },
+  "Accelerometer": {
+    "G": 1.01,
+    "X": 0.125,
+    "Y": -0.25,
+    "Z": 0.976
+  },
+  "Light": {
+    "Lux": 0
+  },
+  "Battery": {
+    "Percentage": 82,
+    "Estimation": "Weeks",
+    "IsCharging": false
+  },
+  "Shipment": {
+    "Id": "INV-45678/VACCINE-BATCH",
+    "Description": "COVID Vaccine Shipment",
+    "DeviceId": "866088073468440",
+    "ShipFrom": {
+      "Latitude": 42.3601,
+      "Longitude": -71.0589,
+      "FormattedAddress": "Boston, MA 02101, USA"
+    },
+    "ShipTo": {
+      "Latitude": 33.749,
+      "Longitude": -84.388,
+      "FormattedAddress": "Atlanta, GA 30303, USA"
+    },
+    "Carrier": "FEDEX-COLD"
+  },
+  "AccountId": 478,
+  "DeviceId": "866088073468440",
+  "DeviceName": "B234567",
+  "ShipmentId": "INV-45678/VACCINE-BATCH",
+  "PublicShipmentId": "7YK832MNP1",
+  "Location": {
+    "Latitude": 37.5407,
+    "Longitude": -77.436,
+    "FormattedAddress": "Richmond, VA 23219, USA",
+    "LocationMethod": "gps",
+    "Accuracy": {
+      "Meters": 5,
+      "Kilometers": 0.005,
+      "Miles": 0.003
+    },
+    "GeolocationSourceName": "gnss",
+    "CellTowerUsedCount": 0,
+    "WifiAccessPointUsedCount": 0
+  }
+}

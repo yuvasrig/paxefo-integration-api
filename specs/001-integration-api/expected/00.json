@@ -10,7 +10,8 @@
       "severity": "warn",
       "field": "Shipment.DeviceId",
       "rule_id": "SHIPMENT-DEVICE-MISMATCH",
-      "action": "kept"
+      "action": "kept",
+      "value": "866088073468439"
     }
   ],
   "errors": [],

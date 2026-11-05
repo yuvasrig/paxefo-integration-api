@@ -1,0 +1,69 @@
+{
+  "EntityName": "F678901",
+  "EntryTimeEpoch": 1739734046000,
+  "EntryTimeUtc": "2025-02-16T19:27:26Z",
+  "Cellular": {
+    "SignalStrength": "Fair",
+    "Dbm": -88
+  },
+  "Temperature": {
+    "Celsius": 6.125,
+    "Fahrenheit": 43.025
+  },
+  "ProbeTemperature": {
+    "Celsius": 6.0,
+    "Fahrenheit": 42.8
+  },
+  "Humidity": {
+    "Percentage": 41.0
+  },
+  "Accelerometer": {
+    "G": 0.998,
+    "X": -0.063,
+    "Y": 0.016,
+    "Z": 0.996
+  },
+  "Light": {
+    "Lux": 3.2
+  },
+  "Battery": {
+    "Percentage": 58,
+    "Estimation": "Weeks",
+    "IsCharging": false
+  },
+  "Shipment": {
+    "Id": "MW-20441/CLINICAL-SUPPLY",
+    "Description": "Clinical trial supply",
+    "DeviceId": "866088073468444",
+    "ShipFrom": {
+      "Latitude": 41.8781,
+      "Longitude": -87.6298,
+      "FormattedAddress": "Chicago, IL 60602, USA"
+    },
+    "ShipTo": {
+      "Latitude": 44.9778,
+      "Longitude": -93.265,
+      "FormattedAddress": "Minneapolis, MN 55401, USA"
+    },
+    "Carrier": "MIDWEST-REEFER"
+  },
+  "AccountId": 999,
+  "DeviceId": "866088073468444",
+  "DeviceName": "F678901",
+  "ShipmentId": "MW-20441/CLINICAL-SUPPLY",
+  "PublicShipmentId": "9PL4WD6ZQ2",
+  "Location": {
+    "Latitude": 43.0731,
+    "Longitude": -89.4012,
+    "FormattedAddress": "Madison, WI 53703, USA",
+    "LocationMethod": "wifi",
+    "Accuracy": {
+      "Meters": 31,
+      "Kilometers": 0.031,
+      "Miles": 0.019
+    },
+    "GeolocationSourceName": "skyhook",
+    "CellTowerUsedCount": 1,
+    "WifiAccessPointUsedCount": 6
+  }
+}

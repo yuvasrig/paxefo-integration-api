@@ -10,7 +10,8 @@
       "severity": "info",
       "field": "DeviceId",
       "rule_id": "NAME-RESOLVED",
-      "action": "fixed"
+      "action": "fixed",
+      "new_value": "863257063350583"
     },
     {
       "code": "ACCOUNT_ID_MISSING",

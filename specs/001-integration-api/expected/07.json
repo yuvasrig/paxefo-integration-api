@@ -11,7 +11,8 @@
       "field": "Cellular.Dbm",
       "rule_id": "NUMERIC-STRING",
       "value": "-100",
-      "action": "fixed"
+      "action": "fixed",
+      "new_value": -100
     },
     {
       "code": "COERCED_TYPE",
@@ -19,7 +20,8 @@
       "field": "Temperature.Celsius",
       "rule_id": "NUMERIC-STRING",
       "value": "10.5",
-      "action": "fixed"
+      "action": "fixed",
+      "new_value": 10.5
     },
     {
       "code": "COERCED_TYPE",
@@ -27,14 +29,16 @@
       "field": "Temperature.Fahrenheit",
       "rule_id": "NUMERIC-STRING",
       "value": "50.9",
-      "action": "fixed"
+      "action": "fixed",
+      "new_value": 50.9
     },
     {
       "code": "IDENTITY_MISMATCH",
       "severity": "warn",
       "field": "Shipment.DeviceId",
       "rule_id": "SHIPMENT-DEVICE-MISMATCH",
-      "action": "kept"
+      "action": "kept",
+      "value": "866088073468439"
     }
   ],
   "errors": [],

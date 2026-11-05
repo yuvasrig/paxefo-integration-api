@@ -1,0 +1,54 @@
+{
+  "EntityName": "C345678",
+  "EntryTimeEpoch": 1739388446000,
+  "EntryTimeUtc": "2025-02-12T19:27:26Z",
+  "Cellular": {
+    "SignalStrength": "Fair",
+    "Dbm": -90
+  },
+  "Temperature": {
+    "Celsius": -18.5,
+    "Fahrenheit": -1.3
+  },
+  "ProbeTemperature": {
+    "Celsius": -32768,
+    "Fahrenheit": -58950.4
+  },
+  "Humidity": {
+    "Percentage": 25.0
+  },
+  "Accelerometer": {
+    "G": 0.995,
+    "X": 0.0,
+    "Y": 0.0,
+    "Z": 0.995
+  },
+  "Light": {
+    "Lux": 0
+  },
+  "Battery": {
+    "Percentage": 45,
+    "Estimation": "Days",
+    "IsCharging": false
+  },
+  "Shipment": null,
+  "AccountId": 478,
+  "DeviceId": "866088073468441",
+  "DeviceName": "C345678",
+  "ShipmentId": null,
+  "PublicShipmentId": null,
+  "Location": {
+    "Latitude": 51.5074,
+    "Longitude": -0.1278,
+    "FormattedAddress": "London, UK",
+    "LocationMethod": "cell",
+    "Accuracy": {
+      "Meters": 500,
+      "Kilometers": 0.5,
+      "Miles": 0.31
+    },
+    "GeolocationSourceName": "cell-triangulation",
+    "CellTowerUsedCount": 3,
+    "WifiAccessPointUsedCount": 0
+  }
+}
