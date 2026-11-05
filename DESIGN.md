@@ -135,7 +135,11 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 
 ### 4.1 Ingest pipeline (both modes)
 1. Middleware: request ID, auth (key → tenant, authoritative), body ≤ 256 KB, per-tenant rate limit, backpressure check (async). Every DB transaction runs `SET LOCAL app.tenant_id` so row-level security applies.
-1a. Tenant check: if payload `AccountId` is present, it must map to the key's tenant via `tenant_sources`; otherwise reject `TENANT_MISMATCH` (422). If `AccountId` is absent, the key's tenant is used and an info flag `ACCOUNT_ID_MISSING` is added (5 of 13 samples omit it).
+1a. Tenant routing (data is never dropped for an unknown tenant):
+   - `AccountId` absent → the key's tenant is used; info flag `ACCOUNT_ID_MISSING` (5 of 13 samples omit it).
+   - `AccountId` maps (via `tenant_sources`) to the key's tenant → normal.
+   - `AccountId` not mapped to any tenant → the record is stored under the reserved **`common-pool`** tenant; warn flag `UNKNOWN_ACCOUNT`; processed like any other record (200 `flagged`). `raw_events.submitted_by_tenant_id` records which key sent it (see §7.2).
+   - `AccountId` maps to a *different* known tenant → reject `TENANT_MISMATCH` (422): a key must never write into another customer's tenant.
 2. **Tx 1:** insert `raw_events` (payload, hash = SHA-256 of canonical JSON (keys sorted, no insignificant whitespace) so key order or formatting never creates a false conflict, tenant_id, received_at, request/trace context) + insert one `ingest_ledger` row (insert-only, no shared counter row) (+ insert `ingest_jobs` row in async mode). Commit.
 3. Mode comes from the tenant's config (`ingest_mode`, default from env). Sync: run steps 4–6 in-request. Async: return 202 `{event_id}`.
 4. Parse + validate (provider), resolve device (F5), normalize timestamp.
@@ -152,7 +156,7 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 1. No usable device identity: `DeviceId` missing/not 15 digits AND `DeviceName` not found in `devices` for this tenant. Resolution uses `DeviceName` only — never `EntityName`, which is user-editable (sample #12).
 2. No usable timestamp, or more than 5 min in the future.
 3. Neither half valid: no usable temperature AND no valid coordinates.
-4. Payload `AccountId` present and not mapped to the API key's tenant (`TENANT_MISMATCH`).
+4. Payload `AccountId` maps to a known tenant other than the API key's (`TENANT_MISMATCH`). An *unmapped* `AccountId` is not a rejection: it goes to `common-pool` (§4.1 1a).
 
 Reject reason codes (in `errors[]`): `NO_DEVICE_IDENTITY`, `NO_TIMESTAMP`, `TIMESTAMP_FUTURE`, `NO_USABLE_DATA`, `TENANT_MISMATCH`, `INVALID_JSON` (400). Flags raised before the rejection are still returned (e.g. #12's `IDENTITY_MISMATCH`).
 
@@ -170,7 +174,8 @@ Reject reason codes (in `errors[]`): `NO_DEVICE_IDENTITY`, `NO_TIMESTAMP`, `TIME
 | `IDENTITY_MISMATCH` | warn | `EntityName` ≠ `DeviceName`, or `Shipment.DeviceId` ≠ `DeviceId` | Kept as sent |
 | `TEMPERATURE_FALLBACK` | info | Device temp missing/faulty; probe used | `temperature_source=probe` |
 | `TEMPERATURE_CONVERTED` | info | `Temperature.Celsius` null, Fahrenheit present | Celsius = (F − 32) × 5/9 |
-| `TENANT_MISMATCH` | error | Payload `AccountId` present and not mapped to key's tenant | Reject 422 |
+| `TENANT_MISMATCH` | error | Payload `AccountId` maps to a different known tenant than the key's | Reject 422 |
+| `UNKNOWN_ACCOUNT` | warn | Payload `AccountId` not mapped to any tenant | Stored under `common-pool` |
 | `ACCOUNT_ID_MISSING` | info | No `AccountId` in payload | Key's tenant used |
 | `DUPLICATE_CONFLICT` | warn | Same key, different content | First kept; conflict stored |
 | `TEMP_EXCURSION` | warn | Outside shipment band (default 2–8 °C) | Flag only — *designed, not built in M0–M7* |
@@ -180,7 +185,7 @@ Unknown extra fields are accepted (kept in raw).
 
 **Status precedence** (one `status` per event): `rejected` > `conflict` > `duplicate` > `flagged` > `accepted`. `flagged` means at least one `warn` or `error` flag; `info` flags alone (e.g. `COERCED_TYPE`, `ACCOUNT_ID_MISSING`, `DEVICE_RESOLVED_BY_NAME`) keep the event `accepted`. All flags are returned regardless of status.
 
-**Where flags come from:** most flags are produced by rules (§5.1). These are produced elsewhere because they need context the rules engine does not have: `TEMPERATURE_FALLBACK` (transform), `TENANT_MISMATCH` and `ACCOUNT_ID_MISSING` (ingest, tenant check), `DUPLICATE_CONFLICT` (store), `TEMP_EXCURSION` / `IMPOSSIBLE_TRAVEL` (domain).
+**Where flags come from:** most flags are produced by rules (§5.1). These are produced elsewhere because they need context the rules engine does not have: `TEMPERATURE_FALLBACK` (transform), `TENANT_MISMATCH`, `UNKNOWN_ACCOUNT` and `ACCOUNT_ID_MISSING` (ingest, tenant routing), `DUPLICATE_CONFLICT` (store), `TEMP_EXCURSION` / `IMPOSSIBLE_TRAVEL` (domain).
 
 ### 5.1 Rules engine (config-driven fix / drop / reject)
 
@@ -276,8 +281,8 @@ Kept outside PAXAFE output: probe temperature, shipment data, `AccountId`, signa
 
 | Table | Purpose | Key columns | Constraints / indexes |
 |---|---|---|---|
-| `raw_events` | Immutable archive of every payload | `id`, `tenant_id`, `provider`, `payload` JSONB, `payload_hash`, `received_at`, `request_id`, `trace_context` | Append-only; index `(tenant_id, received_at DESC)` |
-| `event_outcomes` | Processing result per raw event | `raw_event_id` PK/FK, `tenant_id`, `status` (accepted, flagged, rejected, duplicate, conflict, failed, dead), `reasons` JSONB, `flags` JSONB, `expected_outputs` {sensor, location}, `transform_version`, `rules_version`, `processed_at`, `attempts` | Index `(status, processed_at)` |
+| `raw_events` | Immutable archive of every payload | `id`, `tenant_id` (owning tenant; `common-pool` for unmapped accounts), `submitted_by_tenant_id` (the API key's tenant), `provider`, `payload` JSONB, `payload_hash`, `received_at`, `request_id`, `trace_context` | Append-only; index `(tenant_id, received_at DESC)` |
+| `event_outcomes` | Processing result per raw event | `raw_event_id` PK/FK, `tenant_id`, `submitted_by_tenant_id`, `status` (accepted, flagged, rejected, duplicate, conflict, failed, dead), `reasons` JSONB, `flags` JSONB, `expected_outputs` {sensor, location}, `transform_version`, `rules_version`, `processed_at`, `attempts` | Index `(status, processed_at)` |
 | `ingest_jobs` | Lean work queue (async) | `raw_event_id` PK/FK, `tenant_id`, `status` (pending, processing), `attempts`, `next_attempt_at`, `locked_at`, `locked_by` | Partial index `(tenant_id, next_attempt_at) WHERE status='pending'`; rows deleted on completion |
 | `ingest_ledger` | Independent ack record | `id`, `raw_event_id`, `tenant_id`, `acked_at` | Insert-only (no hot counter row); index `(tenant_id, acked_at)`; reconciler counts per window |
 | `sensor_readings` | Normalized sensor | `tenant_id`, `device_imei`, `ts`, `device_id`, `temperature`, `temperature_source`, `probe_temperature`, `humidity`, `light_lux`, `accel_x/y/z/g`, `quality_flags`, `raw_event_id` FK, `transform_version` | Unique `(tenant_id, device_imei, ts)`; index `(tenant_id, device_id, ts DESC)` |
@@ -306,7 +311,8 @@ Fail fast at startup if the extension is missing. `/readyz` reports the backend.
 
 | Concern | Design |
 |---|---|
-| Tenant resolution | API key → tenant is authoritative. If present, payload `AccountId` must map to that tenant in `tenant_sources`, else 422 `TENANT_MISMATCH`; if absent, the key's tenant is used + `ACCOUNT_ID_MISSING` (info) |
+| Tenant resolution | API key → tenant is the default. `AccountId` absent → key's tenant + `ACCOUNT_ID_MISSING`; mapped to the key's tenant → normal; **unmapped → reserved tenant `common-pool`** + `UNKNOWN_ACCOUNT`; mapped to another known tenant → 422 `TENANT_MISMATCH` |
+| `common-pool` | Seeded, reserved tenant that holds data from provider accounts nobody has claimed yet, so nothing is lost. Normal RLS applies to it. Its readings are visible only to keys bound to `common-pool` (ops key). The *sender* of an event can still look up that event (`GET /api/v1/events/{id}`) because `raw_events` and `event_outcomes` carry `submitted_by_tenant_id` and their read policy is `tenant_id = current OR submitted_by_tenant_id = current`. Readings, devices and shipments stay under `common-pool` only. When an account is later mapped with `tenants map-source`, `tenants reassign --from common-pool --account <id>` moves its history (designed, not built) |
 | Device identity | Scoped per tenant with validity windows, so a reused tracker's history stays with the right customer |
 | Keys and indexes | Every unique key and index leads with `tenant_id` |
 | Limits | Rate limit and quota per tenant (from plan/config); 429 is tenant-scoped |
@@ -737,7 +743,7 @@ Screen: scenario picker, key field, run; results table (time, scenario, HTTP, st
 | Golden | Each sample → `testdata/golden/<n>.json` (output, flags, status); `-update` regenerates | `go test` | CI |
 | Schema conformance | Every emitted record vs PAXAFE schemas | jsonschema | CI |
 | Fuzz | Mutated payloads never panic; output schema-valid | Go fuzzing | CI short, nightly long |
-| Integration | HTTP→DB: cross-tenant isolation (API and RLS layers), `TENANT_MISMATCH`, tracker reuse across tenants, noisy neighbor fairness, idempotency under concurrent retries, raw-first on failure, replay, auth scoping, queue claim/retry/stuck recovery, reconciler fault injection | testcontainers-go, both backends | CI |
+| Integration | HTTP→DB: cross-tenant isolation (API and RLS layers), `TENANT_MISMATCH`, unknown account → `common-pool` (data kept, sender can read the event, other tenants cannot read its readings), tracker reuse across tenants, noisy neighbor fairness, idempotency under concurrent retries, raw-first on failure, replay, auth scoping, queue claim/retry/stuck recovery, reconciler fault injection | testcontainers-go, both backends | CI |
 | Load | Sender load scenario; results in README "Performance" | Sender CLI | Manual |
 | E2E | Sender "provided samples" + completeness against deployed API | Sender CLI | After deploy |
 
@@ -747,7 +753,7 @@ Live-change workflow: change the spec → change the test → change the code.
 
 ## 19. Sample payload traps (all must have tests)
 
-**Precondition:** samples are sent **in order 0 → 12** to a **fresh tenant** whose `tenant_sources` maps Tive `AccountId` 478 (the `reviewer` tenant after `make seed`). Expected files in `specs/001-integration-api/expected/` describe this first run. **On a re-run** against the same tenant, every sample whose first-run status was `accepted` or `flagged` returns `duplicate` (same hash as the stored reading); all others repeat their first-run status. The smoke script and the sender accept either column.
+**Precondition:** samples are sent **in order 0 → 12** to a **fresh tenant** whose `tenant_sources` maps Tive `AccountId` 478 (the `reviewer` tenant after `make seed`) and does not map 999. Expected files in `specs/001-integration-api/expected/` describe this first run. **On a re-run** against the same tenant, every sample whose first-run status was `accepted` or `flagged` returns `duplicate` (same hash as the stored reading); all others repeat their first-run status. The smoke script and the sender accept either column.
 
 | # | Trap | HTTP · `status` | Flags / notes |
 |---|---|---|---|
@@ -760,7 +766,7 @@ Live-change workflow: change the spec → change the test → change the code.
 | 6 | Probe -32768; cell location, 500 m accuracy; `Shipment` null | 200 · `flagged` | `SENSOR_FAULT`; `location_source` Cellular; category Low |
 | 7 | Numeric strings (`Dbm`, `Temperature.*`); shipment device mismatch | 200 · `flagged` | `COERCED_TYPE` (one per field), `IDENTITY_MISMATCH` |
 | 8 | Lon -200.0; no `AccountId`; same `(IMEI, ts)` as #0 | 200 · `conflict` | `INVALID_COORDINATES`, `DUPLICATE_CONFLICT`, `ACCOUNT_ID_MISSING` |
-| 9 | `AccountId` 999 (not mapped to the key's tenant) | 422 · `rejected` | `TENANT_MISMATCH` — the provided sample that exercises tenant isolation |
+| 9 | `AccountId` 999 (unmapped), otherwise clean WiFi | 200 · `flagged` | `UNKNOWN_ACCOUNT`. Stored under `common-pool`, not `reviewer`; `GET /api/v1/events/{id}` works with the reviewer key, `GET /readings` for this device does not |
 | 10 | Nulls in probe/accuracy/method; no `AccountId` | 200 · `accepted` | `ACCOUNT_ID_MISSING` (info). `location_accuracy`, category, source null |
 | 11 | Clean GPS (later, on route) | 200 · `accepted` | — |
 | 12 | No `DeviceId`; `DeviceName` Ship33CABOL unknown; `EntityName` A571992 ≠ `DeviceName` | 422 · `rejected` | `NO_DEVICE_IDENTITY`; `IDENTITY_MISMATCH` returned. Not resolved via `EntityName` (§5) |
@@ -877,7 +883,7 @@ Do not start the next milestone without my approval. Do not add features outside
 - Row-level security: policies on every tenant table using `current_setting('app.tenant_id')`; app role without `BYPASSRLS`; migration role separate.
 - `internal/store`: `Store` interface + `PGStore` (pgx/v5, pgxpool); `WithTenantTx(ctx, tenantID, fn)` that runs `SET LOCAL app.tenant_id`.
 - Real `DeviceResolver` backed by `devices`.
-- `docker-compose.yml`: Postgres 16 (+ API service); `make seed` creates tenants `reviewer`, `acme-pharma`, `bioco`; maps Tive `AccountId` 478 → `reviewer` (so the provided samples work with the reviewer key; 999 stays unmapped), 1001 → `acme-pharma`, 1002 → `bioco` (sender-generated demo traffic); prints one key per tenant.
+- `docker-compose.yml`: Postgres 16 (+ API service); `make seed` creates tenants `common-pool` (reserved; + an ops key), `reviewer`, `acme-pharma`, `bioco`; maps Tive `AccountId` 478 → `reviewer` (so the provided samples work with the reviewer key; 999 stays unmapped → `common-pool`), 1001 → `acme-pharma`, 1002 → `bioco` (sender-generated demo traffic); prints one key per tenant.
 
 **Tests (integration, testcontainers-go)**
 - Insert same `(tenant, imei, ts)` twice concurrently → exactly one reading.
@@ -898,14 +904,14 @@ Do not start the next milestone without my approval. Do not add features outside
 
 **Scope**
 - `internal/auth`: key format `pxk_test_<base62>`; SHA-256 lookup; expired/revoked → 401; key → tenant in context.
-- `internal/ingest` (sync mode only): pipeline §4.1 — tx1 (raw event + ledger row) commit → parse → tenant check (`AccountId` via `tenant_sources`, else `TENANT_MISMATCH`) → rules → transform → tx2 (readings, conflicts, device/shipment upserts with "only if newer", outcome with `expected_outputs`, `transform_version`, `rules_version`).
+- `internal/ingest` (sync mode only): pipeline §4.1 — tx1 (raw event + ledger row) commit → parse → tenant routing (§4.1 1a: `AccountId` via `tenant_sources` → own tenant, `common-pool` if unmapped, `TENANT_MISMATCH` if another tenant's) → rules → transform → tx2 (readings, conflicts, device/shipment upserts with "only if newer", outcome with `expected_outputs`, `transform_version`, `rules_version`).
 - Duplicate handling: same hash → 200 `duplicate`, no write; different hash → first kept, row in `reading_conflicts`, 200 `conflict` + `DUPLICATE_CONFLICT` flag.
 - Failure after tx1 → outcome `failed`, 500; `POST /api/v1/events/{id}/replay` re-runs idempotently.
 - `internal/httpapi`: routes `POST /api/v1/webhook/tive`, `GET /api/v1/events/{id}`, `POST /api/v1/events/{id}/replay`, `GET /api/v1/readings` (device_id, from, to, cursor); response envelope and status codes per §12; body limit 256 KB; per-tenant token-bucket rate limit (in-memory).
 
 **Tests**
 - HTTP integration: all 13 samples through the real endpoint → match `expected/`.
-- 401 (missing/invalid/expired key), 413, 400 (bad JSON), 422 (reject + `TENANT_MISMATCH`), 429.
+- 401 (missing/invalid/expired key), 413, 400 (bad JSON), 422 (reject + `TENANT_MISMATCH` using an account mapped to another tenant), 429; unmapped `AccountId` → 200 `flagged`, stored under `common-pool`.
 - Raw-first: inject a failure in tx2 → raw event exists, outcome `failed`, replay succeeds.
 - Cross-tenant: tenant A key cannot read tenant B event/readings.
 
@@ -1016,7 +1022,8 @@ Do not start the next milestone without my approval. Do not add features outside
 ## 24. Changelog
 
 - **2026-11-05** — Reconciled with the assignment and samples (before M0):
-  - Reviewer tenant maps `AccountId` 478; #9 (999) is the deliberate `TENANT_MISMATCH` case; absent `AccountId` uses the key's tenant + `ACCOUNT_ID_MISSING`.
+  - Reviewer tenant maps `AccountId` 478; absent `AccountId` uses the key's tenant + `ACCOUNT_ID_MISSING`.
+  - Unknown tenants no longer reject: an unmapped `AccountId` (#9, 999) is stored under the reserved `common-pool` tenant with `UNKNOWN_ACCOUNT` (200 `flagged`). `TENANT_MISMATCH` (422) remains only for an account mapped to a *different* known tenant.
   - §19 rewritten as exact expected results (order 0→12, fresh tenant; re-run behavior stated). #1/#4/#8 are `conflict` (first write wins); domain flags (`IMPOSSIBLE_TRAVEL`, `TEMP_EXCURSION`) marked designed, not built.
   - Added `/api/webhook/tive` alias; normalized all paths to `/api/v1/`; removed RLS from "with more time".
   - `rules.yaml` completed (flag `code` per rule, sentinel on device temp, lon/humidity/lux/battery/timestamp/identity rules); status precedence, canonical-JSON hash, rounding mode, address parsing, accuracy boundaries pinned; reading-conflict index and `ON CONFLICT` target lead with `tenant_id`.
