@@ -40,15 +40,15 @@ type Ruleset struct {
 
 // Rule is one validation or fix. Rules run in file order.
 type Rule struct {
-	ID       string         `yaml:"id"`
-	Code     string         `yaml:"code"`
-	Field    string         `yaml:"field"`
-	When     When           `yaml:"when"`
-	Action   string         `yaml:"action"`
-	Strategy string         `yaml:"strategy"`
-	Params   map[string]any `yaml:"params"`
-	Section  string         `yaml:"section"`
-	Severity string         `yaml:"severity"`
+	ID       string         `yaml:"id" json:"id"`
+	Code     string         `yaml:"code" json:"code"`
+	Field    string         `yaml:"field" json:"field"`
+	When     When           `yaml:"when" json:"when"`
+	Action   string         `yaml:"action" json:"action"`
+	Strategy string         `yaml:"strategy" json:"strategy,omitempty"`
+	Params   map[string]any `yaml:"params" json:"params,omitempty"`
+	Section  string         `yaml:"section" json:"section,omitempty"`
+	Severity string         `yaml:"severity" json:"severity,omitempty"`
 
 	afterNow  time.Duration
 	tolerance time.Duration
@@ -56,19 +56,19 @@ type Rule struct {
 
 // When holds the conditions of a rule; every condition that is set must hold.
 type When struct {
-	Lt             *float64  `yaml:"lt"`
-	In             []float64 `yaml:"in"`
-	Outside        []float64 `yaml:"outside"`
-	IsNull         *bool     `yaml:"is_null"`
-	SiblingPresent string    `yaml:"sibling_present"`
-	NumericString  *bool     `yaml:"numeric_string"`
-	InvalidIMEI    *bool     `yaml:"invalid_imei"`
-	UnresolvedBy   string    `yaml:"unresolved_by"`
-	ResolvedBy     string    `yaml:"resolved_by"`
-	AfterNow       string    `yaml:"after_now"`
-	DiffersFrom    string    `yaml:"differs_from"`
-	Tolerance      string    `yaml:"tolerance"`
-	Present        *bool     `yaml:"present"`
+	Lt             *float64  `yaml:"lt" json:"lt,omitempty"`
+	In             []float64 `yaml:"in" json:"in,omitempty"`
+	Outside        []float64 `yaml:"outside" json:"outside,omitempty"`
+	IsNull         *bool     `yaml:"is_null" json:"is_null,omitempty"`
+	SiblingPresent string    `yaml:"sibling_present" json:"sibling_present,omitempty"`
+	NumericString  *bool     `yaml:"numeric_string" json:"numeric_string,omitempty"`
+	InvalidIMEI    *bool     `yaml:"invalid_imei" json:"invalid_imei,omitempty"`
+	UnresolvedBy   string    `yaml:"unresolved_by" json:"unresolved_by,omitempty"`
+	ResolvedBy     string    `yaml:"resolved_by" json:"resolved_by,omitempty"`
+	AfterNow       string    `yaml:"after_now" json:"after_now,omitempty"`
+	DiffersFrom    string    `yaml:"differs_from" json:"differs_from,omitempty"`
+	Tolerance      string    `yaml:"tolerance" json:"tolerance,omitempty"`
+	Present        *bool     `yaml:"present" json:"present,omitempty"`
 }
 
 func (w When) empty() bool {
@@ -81,17 +81,17 @@ func (w When) empty() bool {
 // Override changes rules for one scope (currently one tenant).
 type Override struct {
 	Scope struct {
-		Tenant string `yaml:"tenant"`
-	} `yaml:"scope"`
-	Rules []RuleOverride `yaml:"rules"`
+		Tenant string `yaml:"tenant" json:"tenant"`
+	} `yaml:"scope" json:"scope"`
+	Rules []RuleOverride `yaml:"rules" json:"rules"`
 }
 
 // RuleOverride replaces fields of an existing rule.
 type RuleOverride struct {
-	ID       string `yaml:"id"`
-	Action   string `yaml:"action"`
-	Strategy string `yaml:"strategy"`
-	Severity string `yaml:"severity"`
+	ID       string `yaml:"id" json:"id"`
+	Action   string `yaml:"action" json:"action,omitempty"`
+	Strategy string `yaml:"strategy" json:"strategy,omitempty"`
+	Severity string `yaml:"severity" json:"severity,omitempty"`
 }
 
 // Default returns the embedded default ruleset.

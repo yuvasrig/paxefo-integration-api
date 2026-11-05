@@ -94,7 +94,6 @@ paths:
         Returns the same envelope as the webhook with the new outcome.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
-        - { name: rules_version, in: query, required: false, schema: { type: string }, description: 'Compare outcome under another ruleset version (M4+).' }
       responses:
         '200':
           description: Replayed
@@ -104,7 +103,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Event is already in a terminal accepted state; nothing to replay
+          description: Event is already accepted or flagged; nothing to replay
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -322,7 +321,7 @@ components:
       properties:
         code:
           type: string
-          enum: [INVALID_JSON, NO_DEVICE_IDENTITY, NO_TIMESTAMP, TIMESTAMP_FUTURE, NO_USABLE_DATA, TENANT_MISMATCH, UNAUTHORIZED, PAYLOAD_TOO_LARGE, RATE_LIMITED, NOT_FOUND, INTERNAL]
+          enum: [INVALID_JSON, NO_DEVICE_IDENTITY, NO_TIMESTAMP, TIMESTAMP_FUTURE, NO_USABLE_DATA, TENANT_MISMATCH, UNAUTHORIZED, PAYLOAD_TOO_LARGE, RATE_LIMITED, NOT_FOUND, NOT_REPLAYABLE, INVALID_REQUEST, UNAVAILABLE, INTERNAL]
         field: { type: string }
         message: { type: string }
 
@@ -421,5 +420,4 @@ components:
               event_id: { type: string }
               sensor: { allOf: [ { $ref: '#/components/schemas/SensorRecord' } ], nullable: true }
               location: { allOf: [ { $ref: '#/components/schemas/LocationRecord' } ], nullable: true }
-              quality_flags: { type: array, items: { $ref: '#/components/schemas/Flag' } }
         next_cursor: { type: string, nullable: true }

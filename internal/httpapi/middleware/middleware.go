@@ -84,6 +84,7 @@ func Auth(a *auth.Authenticator, log *slog.Logger) func(http.Handler) http.Handl
 				w.Header().Set("Retry-After", "1")
 				WriteProblem(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "authentication is temporarily unavailable")
 			default:
+				AnnotateTenant(r.Context(), p.TenantID)
 				next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))
 			}
 		})

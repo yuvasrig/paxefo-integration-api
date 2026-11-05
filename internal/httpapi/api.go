@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -24,6 +25,11 @@ type API struct {
 	Limiter       *middleware.RateLimiter
 	BodyLimit     int64
 	Log           *slog.Logger
+
+	Rules    *rules.Ruleset                           // served by GET /api/v1/rules
+	Ready    func(context.Context) (ReadyInfo, error) // /readyz
+	Metrics  http.Handler                             // /metrics (nil disables it)
+	Observer middleware.RequestObserver               // request metrics (may be nil)
 }
 
 // Handler returns the router with the middleware chain applied.
@@ -40,8 +46,18 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("GET /api/v1/events/{id}", secured(a.getEvent))
 	mux.Handle("POST /api/v1/events/{id}/replay", secured(a.replay))
 	mux.Handle("GET /api/v1/readings", secured(a.readings))
+	mux.Handle("GET /api/v1/rules", secured(a.getRules))
 
-	return middleware.Chain(mux, middleware.RequestID, middleware.Recover(a.Log))
+	// Unauthenticated: probes, metrics and the API contract.
+	mux.HandleFunc("GET /healthz", a.healthz)
+	mux.HandleFunc("GET /readyz", a.readyz)
+	if a.Metrics != nil {
+		mux.Handle("GET /metrics", a.Metrics)
+	}
+	mux.HandleFunc("GET /openapi.yaml", a.openapi)
+	mux.HandleFunc("GET /docs", a.docs)
+
+	return middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(a.Log, a.Observer), middleware.Recover(a.Log))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -73,6 +89,7 @@ func (a *API) webhook(w http.ResponseWriter, r *http.Request) {
 		middleware.WriteProblem(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "could not save the payload; retry")
 		return
 	}
+	middleware.AnnotateEvent(r.Context(), resp.EventID, resp.Status)
 	writeJSON(w, resp.HTTPStatus, resp)
 }
 

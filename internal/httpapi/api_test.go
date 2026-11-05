@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/httpapi"
 	"github.com/yuvasrig/paxefo-integration-api/internal/httpapi/middleware"
 	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
+	"github.com/yuvasrig/paxefo-integration-api/internal/observability"
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
@@ -53,6 +55,24 @@ type env struct {
 	keys    map[string]string // tenant -> plaintext key
 	limiter *middleware.RateLimiter
 	now     time.Time
+	logs    *syncBuffer
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func newEnv(t *testing.T) *env {
@@ -65,7 +85,7 @@ func newEnv(t *testing.T) *env {
 	if err := pg.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, st: &failingStore{PGStore: pg}, keys: map[string]string{}, now: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)}
+	e := &env{t: t, st: &failingStore{PGStore: pg}, keys: map[string]string{}, now: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC), logs: &syncBuffer{}}
 	for _, id := range []string{"reviewer", "acme-pharma"} {
 		must(t, pg.CreateTenant(ctx, id, id, nil))
 		k, _ := auth.NewKey()
@@ -78,9 +98,20 @@ func newEnv(t *testing.T) *env {
 	rs, err := rules.Default()
 	must(t, err)
 	e.limiter = &middleware.RateLimiter{Rate: 1000, Burst: 1000, Now: func() time.Time { return time.Now() }}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := slog.New(slog.NewJSONHandler(e.logs, nil))
+	metrics := observability.NewMetrics(pg.Pool().Stat)
 	api := &httpapi.API{
-		Ingest:        &ingest.Service{Store: e.st, Provider: tive.New(rs, config.Default()), Now: func() time.Time { return e.now }, Log: log},
+		Ingest:   &ingest.Service{Store: e.st, Provider: tive.New(rs, config.Default()), Now: func() time.Time { return e.now }, Log: log, Observer: metrics},
+		Rules:    rs,
+		Metrics:  metrics.Handler(),
+		Observer: metrics,
+		Ready: func(c context.Context) (httpapi.ReadyInfo, error) {
+			if err := pg.Ping(c); err != nil {
+				return httpapi.ReadyInfo{}, err
+			}
+			v, err := pg.MigrationVersion(c)
+			return httpapi.ReadyInfo{MigrationVersion: v, StorageBackend: "postgres", IngestMode: "sync"}, err
+		},
 		Authenticator: &auth.Authenticator{Keys: pg, Now: func() time.Time { return time.Now() }},
 		Limiter:       e.limiter,
 		BodyLimit:     256 << 10,
