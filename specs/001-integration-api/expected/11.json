@@ -1,0 +1,68 @@
+{
+  "sample_index": 11,
+  "sample_name": "Vaccine Shipment Southbound",
+  "http_status": 200,
+  "status": "flagged",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "TIMESTAMP_MISMATCH",
+      "severity": "warn",
+      "field": "EntryTimeEpoch",
+      "rule_id": "TS-UTC-MISMATCH",
+      "value": 1739647646000,
+      "action": "flagged"
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "B234567",
+    "device_imei": "866088073468440",
+    "timestamp": 1739647646000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 4.75,
+    "humidity": 54.8,
+    "light_level": 0.0,
+    "accelerometer": {
+      "x": 0.094,
+      "y": -0.188,
+      "z": 0.984,
+      "magnitude": 1.008
+    },
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "B234567",
+    "device_imei": "866088073468440",
+    "timestamp": 1739647646000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 35.2271,
+    "longitude": -80.8431,
+    "altitude": null,
+    "location_accuracy": 6,
+    "location_accuracy_category": "High",
+    "location_source": "GPS",
+    "address": {
+      "street": null,
+      "locality": "Charlotte",
+      "state": "NC",
+      "country": "USA",
+      "postal_code": "28202",
+      "full_address": "Charlotte, NC 28202, USA"
+    },
+    "battery_level": 76,
+    "cellular_dbm": -72.0,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": 0
+  },
+  "stored": {
+    "sensor": true,
+    "location": true,
+    "conflict": false
+  },
+  "note": "EntryTimeUtc (14:27:26Z) is 5 h before the epoch (19:27:26Z). Epoch is kept. This sample was assumed clean in DESIGN.md until checked."
+}

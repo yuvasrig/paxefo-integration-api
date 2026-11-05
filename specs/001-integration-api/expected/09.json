@@ -1,0 +1,67 @@
+{
+  "sample_index": 9,
+  "sample_name": "Clinical Supply Shipment",
+  "http_status": 200,
+  "status": "flagged",
+  "owning_tenant": "common-pool",
+  "flags": [
+    {
+      "code": "UNKNOWN_ACCOUNT",
+      "severity": "warn",
+      "field": "AccountId",
+      "value": 999,
+      "action": "kept"
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "F678901",
+    "device_imei": "866088073468444",
+    "timestamp": 1739734046000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 6.13,
+    "humidity": 41.0,
+    "light_level": 3.2,
+    "accelerometer": {
+      "x": -0.063,
+      "y": 0.016,
+      "z": 0.996,
+      "magnitude": 0.998
+    },
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "F678901",
+    "device_imei": "866088073468444",
+    "timestamp": 1739734046000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 43.0731,
+    "longitude": -89.4012,
+    "altitude": null,
+    "location_accuracy": 31,
+    "location_accuracy_category": "High",
+    "location_source": "WiFi",
+    "address": {
+      "street": null,
+      "locality": "Madison",
+      "state": "WI",
+      "country": "USA",
+      "postal_code": "53703",
+      "full_address": "Madison, WI 53703, USA"
+    },
+    "battery_level": 58,
+    "cellular_dbm": -88.0,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": 6
+  },
+  "stored": {
+    "sensor": true,
+    "location": true,
+    "conflict": false
+  },
+  "note": "Stored under tenant common-pool. Event readable with the reviewer key; readings are not."
+}

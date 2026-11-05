@@ -1,0 +1,90 @@
+{
+  "sample_index": 7,
+  "sample_name": "Standard Temperature Shipment Update",
+  "http_status": 200,
+  "status": "flagged",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "COERCED_TYPE",
+      "severity": "info",
+      "field": "Cellular.Dbm",
+      "rule_id": "NUMERIC-STRING",
+      "value": "-100",
+      "action": "fixed"
+    },
+    {
+      "code": "COERCED_TYPE",
+      "severity": "info",
+      "field": "Temperature.Celsius",
+      "rule_id": "NUMERIC-STRING",
+      "value": "10.5",
+      "action": "fixed"
+    },
+    {
+      "code": "COERCED_TYPE",
+      "severity": "info",
+      "field": "Temperature.Fahrenheit",
+      "rule_id": "NUMERIC-STRING",
+      "value": "50.9",
+      "action": "fixed"
+    },
+    {
+      "code": "IDENTITY_MISMATCH",
+      "severity": "warn",
+      "field": "Shipment.DeviceId",
+      "rule_id": "SHIPMENT-DEVICE-MISMATCH",
+      "action": "kept"
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "A571992",
+    "device_imei": "863257063350583",
+    "timestamp": 1739216546000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 10.5,
+    "humidity": 39.1,
+    "light_level": 0.0,
+    "accelerometer": {
+      "x": -0.5,
+      "y": -0.438,
+      "z": 0.75,
+      "magnitude": 0.991
+    },
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "A571992",
+    "device_imei": "863257063350583",
+    "timestamp": 1739216546000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 40.81091,
+    "longitude": -73.87902,
+    "altitude": null,
+    "location_accuracy": 25,
+    "location_accuracy_category": "High",
+    "location_source": "WiFi",
+    "address": {
+      "street": null,
+      "locality": "Bronx",
+      "state": "NY",
+      "country": "USA",
+      "postal_code": "10474",
+      "full_address": "114 Hunts Point Market, Bronx, NY 10474, USA"
+    },
+    "battery_level": 64,
+    "cellular_dbm": -100.0,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": 5
+  },
+  "stored": {
+    "sensor": true,
+    "location": true,
+    "conflict": false
+  }
+}

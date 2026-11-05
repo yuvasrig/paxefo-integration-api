@@ -1,0 +1,37 @@
+{
+  "sample_index": 12,
+  "sample_name": "Entity and Device Name",
+  "http_status": 422,
+  "status": "rejected",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "IDENTITY_MISMATCH",
+      "severity": "warn",
+      "field": "EntityName",
+      "rule_id": "ENTITY-NAME-MISMATCH",
+      "value": "A571992",
+      "action": "kept"
+    },
+    {
+      "code": "ACCOUNT_ID_MISSING",
+      "severity": "info",
+      "field": "AccountId",
+      "action": "kept"
+    }
+  ],
+  "errors": [
+    {
+      "code": "NO_DEVICE_IDENTITY",
+      "field": "DeviceId"
+    }
+  ],
+  "sensor": null,
+  "location": null,
+  "stored": {
+    "sensor": false,
+    "location": false,
+    "conflict": false
+  },
+  "note": "DeviceName Ship33CABOL is unknown and there is no DeviceId. EntityName is never used for resolution."
+}

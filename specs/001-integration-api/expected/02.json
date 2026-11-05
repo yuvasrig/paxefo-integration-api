@@ -1,0 +1,58 @@
+{
+  "sample_index": 2,
+  "sample_name": "GPS Location Shipment",
+  "http_status": 200,
+  "status": "accepted",
+  "owning_tenant": "reviewer",
+  "flags": [],
+  "errors": [],
+  "sensor": {
+    "device_id": "B234567",
+    "device_imei": "866088073468440",
+    "timestamp": 1739302046000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 4.5,
+    "humidity": 55.3,
+    "light_level": 125.5,
+    "accelerometer": {
+      "x": 0.125,
+      "y": -0.25,
+      "z": 0.98,
+      "magnitude": 1.012
+    },
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "B234567",
+    "device_imei": "866088073468440",
+    "timestamp": 1739302046000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "altitude": null,
+    "location_accuracy": 5,
+    "location_accuracy_category": "High",
+    "location_source": "GPS",
+    "address": {
+      "street": null,
+      "locality": "San Francisco",
+      "state": "CA",
+      "country": "USA",
+      "postal_code": "94102",
+      "full_address": "San Francisco, CA 94102, USA"
+    },
+    "battery_level": 82,
+    "cellular_dbm": -75.0,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": 0
+  },
+  "stored": {
+    "sensor": true,
+    "location": true,
+    "conflict": false
+  }
+}

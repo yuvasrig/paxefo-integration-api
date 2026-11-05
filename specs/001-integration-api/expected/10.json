@@ -1,0 +1,53 @@
+{
+  "sample_index": 10,
+  "sample_name": "Minimal Data Payload",
+  "http_status": 200,
+  "status": "accepted",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "ACCOUNT_ID_MISSING",
+      "severity": "info",
+      "field": "AccountId",
+      "action": "kept"
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "D456789",
+    "device_imei": "866088073468442",
+    "timestamp": 1739474846000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 22.0,
+    "humidity": null,
+    "light_level": null,
+    "accelerometer": null,
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "D456789",
+    "device_imei": "866088073468442",
+    "timestamp": 1739474846000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 35.6762,
+    "longitude": 139.6503,
+    "altitude": null,
+    "location_accuracy": null,
+    "location_accuracy_category": null,
+    "location_source": null,
+    "address": null,
+    "battery_level": null,
+    "cellular_dbm": null,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": null
+  },
+  "stored": {
+    "sensor": true,
+    "location": true,
+    "conflict": false
+  }
+}

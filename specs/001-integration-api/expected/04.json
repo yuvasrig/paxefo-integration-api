@@ -1,0 +1,67 @@
+{
+  "sample_index": 4,
+  "sample_name": "Device Name Only",
+  "http_status": 200,
+  "status": "conflict",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "DEVICE_RESOLVED_BY_NAME",
+      "severity": "info",
+      "field": "DeviceId",
+      "rule_id": "NAME-RESOLVED",
+      "action": "fixed"
+    },
+    {
+      "code": "ACCOUNT_ID_MISSING",
+      "severity": "info",
+      "field": "AccountId",
+      "action": "kept"
+    },
+    {
+      "code": "DUPLICATE_CONFLICT",
+      "severity": "warn",
+      "field": "(tenant_id,device_imei,ts)",
+      "action": "kept"
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "A571992",
+    "device_imei": "863257063350583",
+    "timestamp": 1739215646000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 10.0,
+    "humidity": null,
+    "light_level": null,
+    "accelerometer": null,
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "A571992",
+    "device_imei": "863257063350583",
+    "timestamp": 1739215646000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 40.0,
+    "longitude": -73.0,
+    "altitude": null,
+    "location_accuracy": null,
+    "location_accuracy_category": null,
+    "location_source": null,
+    "address": null,
+    "battery_level": null,
+    "cellular_dbm": null,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": null
+  },
+  "stored": {
+    "sensor": false,
+    "location": false,
+    "conflict": true
+  },
+  "note": "Requires #0 first (A571992 known). On a tenant that has not seen A571992 the result is 422 NO_DEVICE_IDENTITY."
+}

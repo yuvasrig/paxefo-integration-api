@@ -1,0 +1,67 @@
+{
+  "sample_index": 6,
+  "sample_name": "Cellular Location Only",
+  "http_status": 200,
+  "status": "flagged",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "SENSOR_FAULT",
+      "severity": "warn",
+      "field": "ProbeTemperature.Celsius",
+      "rule_id": "PROBE-SENTINEL",
+      "value": -32768,
+      "action": "nullified"
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "C345678",
+    "device_imei": "866088073468441",
+    "timestamp": 1739388446000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": -18.5,
+    "humidity": 25.0,
+    "light_level": 0.0,
+    "accelerometer": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.995,
+      "magnitude": 0.995
+    },
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "C345678",
+    "device_imei": "866088073468441",
+    "timestamp": 1739388446000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 51.5074,
+    "longitude": -0.1278,
+    "altitude": null,
+    "location_accuracy": 500,
+    "location_accuracy_category": "Low",
+    "location_source": "Cellular",
+    "address": {
+      "street": null,
+      "locality": "London",
+      "state": null,
+      "country": "UK",
+      "postal_code": null,
+      "full_address": "London, UK"
+    },
+    "battery_level": 45,
+    "cellular_dbm": -90.0,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": 0
+  },
+  "stored": {
+    "sensor": true,
+    "location": true,
+    "conflict": false
+  }
+}

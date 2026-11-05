@@ -119,8 +119,8 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 
 | ID | Flow | Trigger | Outcome | Samples |
 |---|---|---|---|---|
-| F1 | Ingest, happy path | Valid payload | Raw saved; sensor + location rows; 200 with PAXAFE output (sync) / 202 (async) | #2, #10, #11 |
-| F2 | Ingest, partial or flagged | Some fields invalid | Bad fields nulled + flagged; valid half saved | #0, #3, #5, #6, #7 |
+| F1 | Ingest, happy path | Valid payload | Raw saved; sensor + location rows; 200 with PAXAFE output (sync) / 202 (async) | #2, #10 |
+| F2 | Ingest, partial or flagged | Some fields invalid | Bad fields nulled + flagged; valid half saved | #0, #3, #5, #6, #7, #11 |
 | F3 | Ingest, rejected | Unusable record; tenant mismatch; bad JSON | Raw saved `rejected` + reasons; 422 (400 for bad JSON) | #9, #12 |
 | F4 | Duplicate / conflict | Same `(device_imei, ts)` | Same hash: 200 `duplicate`, no write. Different hash: first kept, conflict stored + flagged | #0 vs #1, #4, #8; any sample re-sent |
 | F5 | Device resolution | IMEI missing or names disagree | Resolve by `DeviceName`, else reject; mismatch flagged | #4, #12, #0, #7 |
@@ -768,7 +768,7 @@ Live-change workflow: change the spec → change the test → change the code.
 | 8 | Lon -200.0; no `AccountId`; same `(IMEI, ts)` as #0 | 200 · `conflict` | `INVALID_COORDINATES`, `DUPLICATE_CONFLICT`, `ACCOUNT_ID_MISSING` |
 | 9 | `AccountId` 999 (unmapped), otherwise clean WiFi | 200 · `flagged` | `UNKNOWN_ACCOUNT`. Stored under `common-pool`, not `reviewer`; `GET /api/v1/events/{id}` works with the reviewer key, `GET /readings` for this device does not |
 | 10 | Nulls in probe/accuracy/method; no `AccountId` | 200 · `accepted` | `ACCOUNT_ID_MISSING` (info). `location_accuracy`, category, source null |
-| 11 | Clean GPS (later, on route) | 200 · `accepted` | — |
+| 11 | `EntryTimeUtc` 14:27:26Z but epoch is 19:27:26Z (5 h apart); otherwise clean GPS on route | 200 · `flagged` | `TIMESTAMP_MISMATCH`; epoch kept |
 | 12 | No `DeviceId`; `DeviceName` Ship33CABOL unknown; `EntityName` A571992 ≠ `DeviceName` | 422 · `rejected` | `NO_DEVICE_IDENTITY`; `IDENTITY_MISMATCH` returned. Not resolved via `EntityName` (§5) |
 
 `TEMP_EXCURSION` would fire on #0, #6, #7 and #10 with the default 2–8 °C band; domain checks are designed, not built in M0–M7, so expected files contain no domain flags.
@@ -1026,5 +1026,6 @@ Do not start the next milestone without my approval. Do not add features outside
   - Unknown tenants no longer reject: an unmapped `AccountId` (#9, 999) is stored under the reserved `common-pool` tenant with `UNKNOWN_ACCOUNT` (200 `flagged`). `TENANT_MISMATCH` (422) remains only for an account mapped to a *different* known tenant.
   - §19 rewritten as exact expected results (order 0→12, fresh tenant; re-run behavior stated). #1/#4/#8 are `conflict` (first write wins); domain flags (`IMPOSSIBLE_TRAVEL`, `TEMP_EXCURSION`) marked designed, not built.
   - Added `/api/webhook/tive` alias; normalized all paths to `/api/v1/`; removed RLS from "with more time".
+  - Sample check found #11's `EntryTimeUtc` is 5 h off its epoch → `TIMESTAMP_MISMATCH` (previously assumed clean).
   - `rules.yaml` completed (flag `code` per rule, sentinel on device temp, lon/humidity/lux/battery/timestamp/identity rules); status precedence, canonical-JSON hash, rounding mode, address parsing, accuracy boundaries pinned; reading-conflict index and `ON CONFLICT` target lead with `tenant_id`.
   - M0 scope now lists `data-model.md`, `plan.md`, `tasks.md`.

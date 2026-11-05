@@ -1,0 +1,50 @@
+{
+  "sample_index": 8,
+  "sample_name": "Device A571992 Follow-up Reading",
+  "http_status": 200,
+  "status": "conflict",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "INVALID_COORDINATES",
+      "severity": "error",
+      "field": "Location.Longitude",
+      "rule_id": "LON-RANGE",
+      "value": -200.0,
+      "action": "location_skipped"
+    },
+    {
+      "code": "ACCOUNT_ID_MISSING",
+      "severity": "info",
+      "field": "AccountId",
+      "action": "kept"
+    },
+    {
+      "code": "DUPLICATE_CONFLICT",
+      "severity": "warn",
+      "field": "(tenant_id,device_imei,ts)",
+      "action": "kept"
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "A571992",
+    "device_imei": "863257063350583",
+    "timestamp": 1739215646000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 10.0,
+    "humidity": null,
+    "light_level": null,
+    "accelerometer": null,
+    "tilt": null,
+    "box_open": null
+  },
+  "location": null,
+  "stored": {
+    "sensor": false,
+    "location": false,
+    "conflict": true
+  },
+  "note": "Same (imei, ts) as #0 (and #1); compared against the first-kept #0."
+}

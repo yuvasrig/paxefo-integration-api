@@ -1,0 +1,66 @@
+{
+  "sample_index": 0,
+  "sample_name": "Standard Temperature Shipment",
+  "http_status": 200,
+  "status": "flagged",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "IDENTITY_MISMATCH",
+      "severity": "warn",
+      "field": "Shipment.DeviceId",
+      "rule_id": "SHIPMENT-DEVICE-MISMATCH",
+      "action": "kept"
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "A571992",
+    "device_imei": "863257063350583",
+    "timestamp": 1739215646000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 10.08,
+    "humidity": 38.7,
+    "light_level": 0.0,
+    "accelerometer": {
+      "x": -0.563,
+      "y": -0.438,
+      "z": 0.688,
+      "magnitude": 0.99
+    },
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "A571992",
+    "device_imei": "863257063350583",
+    "timestamp": 1739215646000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 40.810562,
+    "longitude": -73.879285,
+    "altitude": null,
+    "location_accuracy": 23,
+    "location_accuracy_category": "High",
+    "location_source": "WiFi",
+    "address": {
+      "street": null,
+      "locality": "Bronx",
+      "state": "NY",
+      "country": "USA",
+      "postal_code": "10474",
+      "full_address": "114 Hunts Point Market, Bronx, NY 10474, USA"
+    },
+    "battery_level": 65,
+    "cellular_dbm": -100.0,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": 5
+  },
+  "stored": {
+    "sensor": true,
+    "location": true,
+    "conflict": false
+  }
+}

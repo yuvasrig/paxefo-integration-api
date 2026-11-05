@@ -1,0 +1,68 @@
+{
+  "sample_index": 5,
+  "sample_name": "Biologics Replenishment Shipment",
+  "http_status": 200,
+  "status": "flagged",
+  "owning_tenant": "reviewer",
+  "flags": [
+    {
+      "code": "TIMESTAMP_SECONDS",
+      "severity": "warn",
+      "field": "EntryTimeEpoch",
+      "rule_id": "TS-SECONDS",
+      "value": 1739561246,
+      "action": "fixed",
+      "new_value": 1739561246000
+    }
+  ],
+  "errors": [],
+  "sensor": {
+    "device_id": "E567890",
+    "device_imei": "866088073468443",
+    "timestamp": 1739561246000,
+    "provider": "Tive",
+    "type": "Active",
+    "temperature": 5.25,
+    "humidity": 47.2,
+    "light_level": 0.0,
+    "accelerometer": {
+      "x": 0.031,
+      "y": -0.062,
+      "z": 1.001,
+      "magnitude": 1.003
+    },
+    "tilt": null,
+    "box_open": null
+  },
+  "location": {
+    "device_id": "E567890",
+    "device_imei": "866088073468443",
+    "timestamp": 1739561246000,
+    "provider": "Tive",
+    "type": "Active",
+    "latitude": 37.9716,
+    "longitude": -87.5711,
+    "altitude": null,
+    "location_accuracy": 8,
+    "location_accuracy_category": "High",
+    "location_source": "GPS",
+    "address": {
+      "street": null,
+      "locality": "Evansville",
+      "state": "IN",
+      "country": "USA",
+      "postal_code": "47708",
+      "full_address": "Evansville, IN 47708, USA"
+    },
+    "battery_level": 74,
+    "cellular_dbm": -78.0,
+    "cellular_network_type": null,
+    "cellular_operator": null,
+    "wifi_access_points": 0
+  },
+  "stored": {
+    "sensor": true,
+    "location": true,
+    "conflict": false
+  }
+}
