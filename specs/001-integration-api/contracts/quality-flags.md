@@ -60,7 +60,7 @@ Reject-only codes (`NO_DEVICE_IDENTITY`, `TIMESTAMP_FUTURE`, `TENANT_MISMATCH`) 
 }
 ```
 
-For `fix` actions, `value` is the original and `new_value` the replacement. `action` is one of `nullified`, `fixed`, `location_skipped`, `flagged`, `kept`.
+For `fix` actions, `value` is the original and `new_value` the replacement. `action` is one of `nullified`, `fixed`, `location_skipped`, `kept`.
 
 ## Duplicate semantics
 

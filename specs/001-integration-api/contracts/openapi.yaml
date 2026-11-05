@@ -313,7 +313,7 @@ components:
         field: { type: string, example: Location.Latitude }
         value: { description: Original value as sent }
         new_value: { description: Replacement value, for fixes }
-        action: { type: string, enum: [nullified, fixed, location_skipped, flagged, kept] }
+        action: { type: string, enum: [nullified, fixed, location_skipped, kept] }
         rule_id: { type: string, example: LAT-RANGE }
 
     Problem:

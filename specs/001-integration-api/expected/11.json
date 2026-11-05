@@ -11,7 +11,7 @@
       "field": "EntryTimeEpoch",
       "rule_id": "TS-UTC-MISMATCH",
       "value": 1739647646000,
-      "action": "flagged"
+      "action": "kept"
     }
   ],
   "errors": [],

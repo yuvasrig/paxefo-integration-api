@@ -40,7 +40,6 @@ const (
 	ActionNullified       = "nullified"
 	ActionFixed           = "fixed"
 	ActionLocationSkipped = "location_skipped"
-	ActionFlagged         = "flagged"
 	ActionKept            = "kept"
 )
 
