@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: paxafe
       POSTGRES_DB: paxafe
     ports:
-      - "5432:5432"
+      - "5433:5432"   # 5433 on the host: a local Postgres often already owns 5432
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U paxafe"]
       interval: 3s
