@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PAXAFE Normalized Sensor Payload",
+  "description": "Standardized sensor data format for pharmaceutical cold chain monitoring",
+  "type": "object",
+  "required": ["device_id", "device_imei", "timestamp", "provider", "type", "temperature"],
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "description": "Device identifier (from DeviceName)",
+      "example": "A571992"
+    },
+    "device_imei": {
+      "type": "string",
+      "description": "Device IMEI or unique hardware identifier",
+      "example": "863257063350583"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Timestamp in epoch milliseconds",
+      "format": "int64",
+      "minimum": 0,
+      "example": 1739215646000
+    },
+    "provider": {
+      "type": "string",
+      "description": "Data provider name",
+      "enum": ["Paxafe", "Tive", "TagnTrac", "Others", "Elpro", "kn", "peli", "tempmate"],
+      "example": "Tive"
+    },
+    "type": {
+      "type": "string",
+      "description": "Device type - Active for real-time trackers",
+      "enum": ["Passive", "Active", "ELD", "AIS", "ADS"],
+      "example": "Active"
+    },
+    "temperature": {
+      "type": ["number", "null"],
+      "description": "Temperature reading in Celsius (2 decimal points)",
+      "example": 10.08
+    },
+    "humidity": {
+      "type": ["number", "null"],
+      "description": "Humidity percentage (1 decimal point)",
+      "example": 38.7
+    },
+    "light_level": {
+      "type": ["number", "null"],
+      "description": "Light level in Lux (1 decimal point)",
+      "example": 0.0
+    },
+    "accelerometer": {
+      "type": ["object", "null"],
+      "description": "Accelerometer readings",
+      "properties": {
+        "x": {
+          "type": ["number", "null"],
+          "description": "X-axis acceleration (3 decimal points)",
+          "example": -0.563
+        },
+        "y": {
+          "type": ["number", "null"],
+          "description": "Y-axis acceleration (3 decimal points)",
+          "example": -0.438
+        },
+        "z": {
+          "type": ["number", "null"],
+          "description": "Z-axis acceleration (3 decimal points)",
+          "example": 0.688
+        },
+        "magnitude": {
+          "type": ["number", "null"],
+          "description": "Acceleration magnitude in G-force (3 decimal points)",
+          "example": 0.990
+        }
+      }
+    },
+    "tilt": {
+      "type": ["object", "null"],
+      "description": "Tilt angles (not typically available from Tive)",
+      "properties": {
+        "x": { "type": ["number", "null"] },
+        "y": { "type": ["number", "null"] },
+        "z": { "type": ["number", "null"] },
+        "tilt": { "type": ["number", "null"] }
+      }
+    },
+    "box_open": {
+      "type": ["boolean", "null"],
+      "description": "Box open/close indicator",
+      "default": null
+    }
+  },
+  "examples": [
+    {
+      "device_id": "A571992",
+      "device_imei": "863257063350583",
+      "timestamp": 1739215646000,
+      "provider": "Tive",
+      "type": "Active",
+      "temperature": 10.08,
+      "humidity": 38.7,
+      "light_level": 0.0,
+      "accelerometer": {
+        "x": -0.563,
+        "y": -0.438,
+        "z": 0.688,
+        "magnitude": 0.990
+      },
+      "tilt": null,
+      "box_open": null
+    }
+  ]
+}
+
+
+
+
