@@ -1,0 +1,42 @@
+// Package tive parses Tive payloads and transforms them to PAXAFE records (DESIGN.md section 6).
+// Pure: no I/O, no clock (time arrives in rules.Scope).
+package tive
+
+import (
+	"fmt"
+
+	"github.com/yuvasrig/paxefo-integration-api/internal/config"
+	"github.com/yuvasrig/paxefo-integration-api/internal/doc"
+	"github.com/yuvasrig/paxefo-integration-api/internal/provider"
+	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
+)
+
+// Name is the provider name stored on events and emitted as PAXAFE "provider".
+const Name = "Tive"
+
+// TransformVersion is stored with every outcome so a row traces to the code that produced it (F7-R5).
+// Bump it whenever the mapping changes.
+const TransformVersion = "tive-transform/1"
+
+// Provider implements provider.Provider for Tive.
+type Provider struct {
+	rules *rules.Ruleset
+	cfg   config.Transform
+}
+
+var _ provider.Provider = (*Provider)(nil)
+
+// New returns a Tive provider using the given ruleset and thresholds.
+func New(rs *rules.Ruleset, cfg config.Transform) *Provider { return &Provider{rules: rs, cfg: cfg} }
+
+// Name implements provider.Provider.
+func (*Provider) Name() string { return Name }
+
+// Parse decodes a body into the payload tree; errors wrap provider.ErrInvalidJSON (F3-R1).
+func (*Provider) Parse(raw []byte) (doc.Doc, error) {
+	d, err := doc.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", provider.ErrInvalidJSON, err)
+	}
+	return d, nil
+}
