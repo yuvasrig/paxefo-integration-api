@@ -1,0 +1,56 @@
+# Data model (M2 scope)
+
+Source: DESIGN.md §7, §7.2. Postgres 16. Every tenant table carries `tenant_id`, every unique key and index leads with it, and every tenant table has a row-level-security policy. The app role has no `BYPASSRLS`; migrations run under a separate role. Timestamps are `timestamptz` in UTC; reading event time `ts` is `bigint` epoch ms (matches PAXAFE).
+
+## Tables
+
+### tenants
+`id` text PK · `name` · `status` · `plan` · `retention_days` · `config` jsonb · `created_at`.
+Seeded: `common-pool` (reserved), `reviewer`, `acme-pharma`, `bioco`.
+
+### tenant_sources
+`tenant_id` FK · `provider` · `provider_account_id` text. **Unique `(provider, provider_account_id)`**. Seed: Tive 478 → `reviewer`, 1001 → `acme-pharma`, 1002 → `bioco`.
+
+### api_keys
+`id` · `key_hash` (SHA-256, unique) · `prefix` · `tenant_id` FK · `name` · `created_at` · `expires_at` · `revoked_at`. Plaintext never stored.
+
+### raw_events (append-only)
+`id` text PK (`evt_…`) · `tenant_id` (owner; `common-pool` for unmapped accounts) · `submitted_by_tenant_id` (key's tenant) · `provider` · `payload` jsonb (raw bytes parsed; invalid JSON stored in `payload_text`) · `payload_hash` · `received_at` · `request_id`.
+Index `(tenant_id, received_at DESC)`, `(submitted_by_tenant_id, received_at DESC)`. No UPDATE/DELETE grants.
+
+### event_outcomes
+`raw_event_id` PK/FK · `tenant_id` · `submitted_by_tenant_id` · `status` (accepted, flagged, rejected, duplicate, conflict, failed) · `reasons` jsonb · `flags` jsonb · `expected_outputs` jsonb `{sensor, location}` · `transform_version` · `rules_version` · `processed_at` · `attempts`.
+Index `(status, processed_at)`. Read policy: `tenant_id = current OR submitted_by_tenant_id = current`.
+
+### ingest_ledger (insert-only)
+`id` · `raw_event_id` FK · `tenant_id` · `acked_at`. Index `(tenant_id, acked_at)`.
+
+### sensor_readings
+`tenant_id` · `device_imei` · `ts` · `device_id` · `temperature` · `temperature_source` (device|probe) · `probe_temperature` · `humidity` · `light_lux` · `accel_x/y/z/g` · `quality_flags` jsonb · `extras` jsonb · `raw_event_id` FK · `transform_version`.
+**Unique `(tenant_id, device_imei, ts)`**; index `(tenant_id, device_id, ts DESC)`. Full precision stored; rounding only on output.
+
+### location_readings
+`tenant_id` · `device_imei` · `ts` · `device_id` · `lat` · `lon` · `accuracy_m` · `accuracy_category` · `source` · `street`, `locality`, `state`, `country`, `postal_code`, `full_address` · `battery_pct` · `cellular_dbm` · `wifi_aps` · `quality_flags` jsonb · `extras` jsonb · `raw_event_id` FK · `transform_version`.
+**Unique `(tenant_id, device_imei, ts)`**; index `(tenant_id, device_id, ts DESC)`.
+
+### reading_conflicts
+`tenant_id` · `device_imei` · `ts` · `raw_event_id` · `first_raw_event_id` · `diff` jsonb · `created_at`. Index `(tenant_id, device_imei, ts)`.
+
+### devices
+`tenant_id` · `imei` · `device_name` · `valid_from` · `valid_to` (null = open) · `first_seen` · `last_seen` · `last_lat` · `last_lon` · `last_ts`.
+Unique `(tenant_id, imei, valid_from)`; at most one open assignment per IMEI across tenants (partial unique index on `imei WHERE valid_to IS NULL`). `last_*` update only when the new `ts` is newer.
+
+### shipments
+`tenant_id` · `shipment_id` · `public_id` · `carrier` · ship-from/to coordinates and addresses · `temp_min_c` · `temp_max_c`. Unique `(tenant_id, shipment_id)`.
+
+## Row-level security
+Policy per table: `USING (tenant_id = current_setting('app.tenant_id', true))` (and the `submitted_by` clause on events/outcomes). `Store.WithTenantTx(ctx, tenantID, fn)` runs `SET LOCAL app.tenant_id` inside the transaction. Unset setting → no rows.
+
+## Not in M0–M7
+`ingest_jobs`, `alerts`, `reconciliation_runs`, Timescale hypertables.
+
+## Invariants
+1. Every normalized row has a `raw_event_id` that exists.
+2. `raw_events` rows are never updated or deleted.
+3. At most one reading per `(tenant_id, device_imei, ts)`.
+4. A conflict row exists iff a second, different payload arrived for an existing key.
