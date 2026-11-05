@@ -19,6 +19,9 @@ import (
 // ErrNotFound is returned when a row does not exist or is not visible to the tenant.
 var ErrNotFound = errors.New("not found")
 
+// ErrBadCursor is returned for a malformed pagination cursor.
+var ErrBadCursor = errors.New("bad cursor")
+
 const appRole = "paxafe_app"
 
 // Options tunes the connection pool.

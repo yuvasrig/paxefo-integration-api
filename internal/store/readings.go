@@ -43,7 +43,7 @@ func (s *PGStore) ListReadings(ctx context.Context, tenantID string, q ReadingsQ
 		parts := strings.SplitN(q.Cursor, ":", 2)
 		ts, err := strconv.ParseInt(parts[0], 10, 64)
 		if err != nil || len(parts) != 2 {
-			return ReadingsPage{}, fmt.Errorf("store: bad cursor %q", q.Cursor)
+			return ReadingsPage{}, fmt.Errorf("store: %w %q", ErrBadCursor, q.Cursor)
 		}
 		curTS, curIMEI = &ts, parts[1]
 	}

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
 )
 
 // These methods touch the registry and auth tables, which are not tenant-scoped, so they use the pool directly.
@@ -129,4 +131,16 @@ func (s *PGStore) RevokeAPIKey(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// LookupKey adapts LookupAPIKey to auth.KeyStore.
+func (s *PGStore) LookupKey(ctx context.Context, hash string) (auth.KeyRecord, error) {
+	k, err := s.LookupAPIKey(ctx, hash)
+	if errors.Is(err, ErrNotFound) {
+		return auth.KeyRecord{}, auth.ErrKeyNotFound
+	}
+	if err != nil {
+		return auth.KeyRecord{}, err
+	}
+	return auth.KeyRecord{ID: k.ID, TenantID: k.TenantID, Name: k.Name, ExpiresAt: k.ExpiresAt, RevokedAt: k.RevokedAt}, nil
 }
