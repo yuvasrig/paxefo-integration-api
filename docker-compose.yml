@@ -1,4 +1,4 @@
-# Local stack. M0: API only; Postgres is wired in for M2.
+# Local stack: Postgres 16 and the API (migrations run at startup).
 services:
   db:
     image: postgres:16

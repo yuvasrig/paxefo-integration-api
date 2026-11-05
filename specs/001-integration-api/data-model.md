@@ -15,11 +15,11 @@ Seeded: `common-pool` (reserved), `reviewer`, `acme-pharma`, `bioco`.
 `id` · `key_hash` (SHA-256, unique) · `prefix` · `tenant_id` FK · `name` · `created_at` · `expires_at` · `revoked_at`. Plaintext never stored.
 
 ### raw_events (append-only)
-`id` text PK (`evt_…`) · `tenant_id` (owner; `common-pool` for unmapped accounts) · `submitted_by_tenant_id` (key's tenant) · `provider` · `payload` jsonb (raw bytes parsed; invalid JSON stored in `payload_text`) · `payload_hash` · `received_at` · `request_id`.
+`id` text PK (`evt_…`) · `tenant_id` (owner; `common-pool` for unmapped accounts) · `submitted_by_tenant_id` (key's tenant) · `provider` · `payload_raw` bytea (the exact bytes received; always stored, even if not JSON) · `payload` jsonb (convenience copy when the bytes are valid JSON and jsonb can hold them) · `payload_hash` (SHA-256 of canonical JSON) · `received_at` · `request_id`.
 Index `(tenant_id, received_at DESC)`, `(submitted_by_tenant_id, received_at DESC)`. No UPDATE/DELETE grants.
 
 ### event_outcomes
-`raw_event_id` PK/FK · `tenant_id` · `submitted_by_tenant_id` · `status` (accepted, flagged, rejected, duplicate, conflict, failed) · `reasons` jsonb · `flags` jsonb · `expected_outputs` jsonb `{sensor, location}` · `transform_version` · `rules_version` · `processed_at` · `attempts`.
+`raw_event_id` PK/FK · `tenant_id` · `submitted_by_tenant_id` · `status` (accepted, flagged, rejected, duplicate, conflict, failed) · `reasons` jsonb · `flags` jsonb · `expected_outputs` jsonb `{sensor, location}` · `transform_version` · `rules_version` · `processed_at` · `attempts` · `error` (message of the last failure).
 Index `(status, processed_at)`. Read policy: `tenant_id = current OR submitted_by_tenant_id = current`.
 
 ### ingest_ledger (insert-only)
@@ -34,16 +34,20 @@ Index `(status, processed_at)`. Read policy: `tenant_id = current OR submitted_b
 **Unique `(tenant_id, device_imei, ts)`**; index `(tenant_id, device_id, ts DESC)`.
 
 ### reading_conflicts
-`tenant_id` · `device_imei` · `ts` · `raw_event_id` · `first_raw_event_id` · `diff` jsonb · `created_at`. Index `(tenant_id, device_imei, ts)`.
+`tenant_id` · `device_imei` · `ts` · `raw_event_id` · `first_raw_event_id` · `diff` jsonb · `created_at`. `raw_event_id` is unique, so replays do not duplicate conflicts. Index `(tenant_id, device_imei, ts)`.
 
 ### devices
 `tenant_id` · `imei` · `device_name` · `valid_from` · `valid_to` (null = open) · `first_seen` · `last_seen` · `last_lat` · `last_lon` · `last_ts`.
-Unique `(tenant_id, imei, valid_from)`; at most one open assignment per IMEI across tenants (partial unique index on `imei WHERE valid_to IS NULL`). `last_*` update only when the new `ts` is newer.
+Unique `(tenant_id, imei, valid_from)`; at most one open assignment per IMEI across tenants (partial unique index on `imei WHERE valid_to IS NULL`). `last_*` update only when the new `ts` is newer. A payload never takes over a device that is open in another tenant (its readings are still stored); moving a tracker is the operator action `Store.ReassignDevice` (no CLI command yet).
 
 ### shipments
 `tenant_id` · `shipment_id` · `public_id` · `carrier` · ship-from/to coordinates and addresses · `temp_min_c` · `temp_max_c`. Unique `(tenant_id, shipment_id)`.
 
 ## Row-level security
+Registry and auth tables (`tenants`, `tenant_sources`, `api_keys`) are not row-level secured because they are read before a tenant is known; the application role may only SELECT from them. All other tables are secured and `FORCE`d.
+
+The store runs `SET LOCAL ROLE paxafe_app` (no `BYPASSRLS`, no UPDATE/DELETE on raw events or readings) inside every tenant transaction. `raw_events` also has a trigger that rejects UPDATE and DELETE for every role. If the migrating database user cannot create roles, `FORCE ROW LEVEL SECURITY` still applies to a non-superuser owner.
+
 Policy per table: `USING (tenant_id = current_setting('app.tenant_id', true))` (and the `submitted_by` clause on events/outcomes). `Store.WithTenantTx(ctx, tenantID, fn)` runs `SET LOCAL app.tenant_id` inside the transaction. Unset setting → no rows.
 
 ## Not in M0–M7

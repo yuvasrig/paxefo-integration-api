@@ -16,33 +16,33 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 - **Exit (verified 2026-11-05):** unit + golden + schema pass; fuzz 30 s clean (~5M execs); no I/O in pure packages (`internal/purity` test).
 
 ## M2 — Database and store (`m2-store`)
-- [ ] T2.1 goose migrations per `data-model.md`; roles (migration vs app, no BYPASSRLS); RLS policies. Test: RLS isolation (F6-R5).
-- [ ] T2.2 `Store` interface + `PGStore`, `WithTenantTx`. Test: unset tenant → no rows.
-- [ ] T2.3 Concurrent insert of the same key → exactly one reading (F4-R1, F4-R4).
-- [ ] T2.4 Conflict recording and device upsert "only if newer" (F4-R3, F5-R1).
-- [ ] T2.5 Real `DeviceResolver`; validity windows; IMEI reuse across tenants (F5-R2, F5-R3, F5-R4).
-- [ ] T2.6 `docker-compose.yml` Postgres 16 + API; `make seed` (tenants incl. `common-pool`, sources, one key each).
-- **Exit:** `docker compose up` + `make seed` from a clean clone; integration tests green locally and in CI; migrations run on Render Postgres.
+- [x] T2.1 goose migrations per `data-model.md`; roles (migration vs app, no BYPASSRLS); RLS policies. Test: RLS isolation (F6-R5).
+- [x] T2.2 `Store` interface + `PGStore`, `WithTenantTx`. Test: unset tenant → no rows.
+- [x] T2.3 Concurrent insert of the same key → exactly one reading (F4-R1, F4-R4).
+- [x] T2.4 Conflict recording and device upsert "only if newer" (F4-R3, F5-R1).
+- [x] T2.5 Real `DeviceResolver`; validity windows; IMEI reuse across tenants (F5-R2, F5-R3, F5-R4).
+- [x] T2.6 `docker-compose.yml` Postgres 16 + API; `make seed` (tenants incl. `common-pool`, sources, one key each).
+- **Exit:** `docker compose up` + `make seed` works (verified locally 2026-11-05); integration tests green locally (CI service container configured, not yet run); migrations on Render Postgres: pending (Render deferred).
 
 ## M3 — Webhook endpoint (`m3-webhook`)
-- [ ] T3.1 `auth`: key format, hash lookup, expiry/revocation (F6-R1, F6-R2).
-- [ ] T3.2 Tenant routing: absent / own / unmapped→`common-pool` / other-tenant→reject (F3-R6, F3-R8, F3-R9).
-- [ ] T3.3 `ingest` tx1 (raw + ledger) then pipeline then tx2; canonical-JSON hash (F1-R2, F4-R5).
-- [ ] T3.4 Duplicate/conflict handling and status precedence (F4-R2, F4-R3, F4-R6).
-- [ ] T3.5 Failure after tx1 → `failed`, 500; replay endpoint, idempotent, 409 when already ok (F7-R1…R4).
-- [ ] T3.6 Handlers: webhook (+ alias), `GET /events/{id}` (owner or submitter), `GET /readings` (cursor), envelope and codes (F1-R1, F1-R7, F7-R6).
-- [ ] T3.7 Body limit 256 KB, per-tenant token bucket (F6-R3, F6-R4); invalid JSON → 400 (F3-R1).
-- [ ] T3.8 HTTP integration: 13 samples in order → match `expected/`; 401/413/400/422/429; cross-tenant read blocked; raw-first fault injection.
-- [ ] T3.9 `scripts/smoke.sh <url> <key>` posts 13 samples, checks statuses (accepts first-run or re-run column).
-- **Exit:** all tests green; smoke passes; every sample response matches `expected/`.
+- [x] T3.1 `auth`: key format, hash lookup, expiry/revocation (F6-R1, F6-R2).
+- [x] T3.2 Tenant routing: absent / own / unmapped→`common-pool` / other-tenant→reject (F3-R6, F3-R8, F3-R9).
+- [x] T3.3 `ingest` tx1 (raw + ledger) then pipeline then tx2; canonical-JSON hash (F1-R2, F4-R5).
+- [x] T3.4 Duplicate/conflict handling and status precedence (F4-R2, F4-R3, F4-R6).
+- [x] T3.5 Failure after tx1 → `failed`, 500; replay endpoint, idempotent, 409 when already ok (F7-R1…R4).
+- [x] T3.6 Handlers: webhook (+ alias), `GET /events/{id}` (owner or submitter), `GET /readings` (cursor), envelope and codes (F1-R1, F1-R7, F7-R6).
+- [x] T3.7 Body limit 256 KB, per-tenant token bucket (F6-R3, F6-R4); invalid JSON → 400 (F3-R1).
+- [x] T3.8 HTTP integration: 13 samples in order → match `expected/`; 401/413/400/422/429; cross-tenant read blocked; raw-first fault injection.
+- [x] T3.9 `scripts/smoke.sh <url> <key>` posts 13 samples, checks statuses (accepts first-run or re-run column).
+- **Exit (verified locally 2026-11-05):** all tests green; `scripts/smoke.sh` passes 13/13 on first run and on re-run against the compose stack; every sample response matches `expected/` (HTTP test).
 
 ## M4 — Ops baseline (`m4-ops`)
-- [ ] T4.1 Middleware: request ID echo, recover, access log fields, 5 s server timeouts (F6-R6, F13-R6). Test: no keys/payloads in logs.
-- [ ] T4.2 `/healthz`, `/readyz` (DB, migration version, backend, mode), `/metrics` (RED, per-stage, flags, rejects, pool, runtime) (F13-R3, R4, R7).
-- [ ] T4.3 Graceful shutdown, 10 s drain (F13-R5).
-- [ ] T4.4 CLI: `keys create|list|revoke`, `tenants create|map-source`.
-- [ ] T4.5 `/docs` (Redoc) + `/openapi.yaml` embedded; `GET /api/v1/rules`.
-- **Exit:** log lines carry request_id, tenant_id, event_id, status, latency_ms; `/metrics` shows histograms after smoke; `/docs` renders.
+- [x] T4.1 Middleware: request ID echo, recover, access log fields, 5 s server timeouts (F6-R6, F13-R6). Test: no keys/payloads in logs.
+- [x] T4.2 `/healthz`, `/readyz` (DB, migration version, backend, mode), `/metrics` (RED, per-stage, flags, rejects, pool, runtime) (F13-R3, R4, R7).
+- [x] T4.3 Graceful shutdown, 10 s drain (F13-R5).
+- [x] T4.4 CLI: `keys create|list|revoke`, `tenants create|map-source`.
+- [x] T4.5 `/docs` (Redoc) + `/openapi.yaml` embedded; `GET /api/v1/rules`.
+- **Exit (verified locally 2026-11-05):** log lines carry request_id, tenant_id, event_id, status, latency_ms and no keys or payloads (tested); `/metrics` shows request and per-stage histograms after the smoke run; `/docs` serves Redoc (page loads Redoc from a CDN).
 
 ## M5 — Deployed (`m5-deployed`)
 - [ ] T5.1 Render env (`DATABASE_URL` internal, `ROLE=all`, `INGEST_MODE=sync`, `LOG_LEVEL=info`), health check `/healthz`.
