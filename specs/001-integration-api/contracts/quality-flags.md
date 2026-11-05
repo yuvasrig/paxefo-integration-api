@@ -32,6 +32,7 @@ Flags raised before the rejection are still returned. A rejected event is stored
 | `SENSOR_FAULT` | warn | `Temperature.Celsius` or `ProbeTemperature.Celsius` ∈ {-32768, 327.67, 32767} | Field → null | rules `TEMP-SENTINEL`, `PROBE-SENTINEL` |
 | `OUT_OF_RANGE` | warn | Humidity ∉ [0, 100], lux < 0, battery ∉ [0, 100] | Field → null | rules `HUMIDITY-RANGE`, `LUX-NEGATIVE`, `BATTERY-RANGE` |
 | `COERCED_TYPE` | info | Number sent as a string | Parsed, kept | rule `NUMERIC-STRING` |
+| `INVALID_TYPE` | warn | Wrong JSON type for a field (not a number or numeric string where a number is expected) | Field → null | transform |
 | `TIMESTAMP_SECONDS` | warn | `EntryTimeEpoch` < 1e12 | × 1000 | rule `TS-SECONDS` |
 | `TIMESTAMP_MISMATCH` | warn | `EntryTimeEpoch` and `EntryTimeUtc` differ by more than 1 s | Epoch kept | rule `TS-UTC-MISMATCH` |
 | `DEVICE_RESOLVED_BY_NAME` | info | No valid IMEI; found by `DeviceName` | IMEI filled | rule `NAME-RESOLVED` |

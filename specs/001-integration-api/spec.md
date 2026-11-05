@@ -41,6 +41,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F2-R11** THE SYSTEM SHALL record, for every fix or nullification, the rule ID, the original value and the new value.
 - **F2-R12** WHEN any flag of severity warn or error is present and the event is not rejected, duplicate or conflict, THE SYSTEM SHALL respond 200 with `status: flagged`.
 - **F2-R13** WHEN only info flags are present, THE SYSTEM SHALL respond `accepted`.
+- **F2-R15** WHEN a field that should be a number is a non-numeric string, an object or an array, THE SYSTEM SHALL set it to null AND add flag `INVALID_TYPE`.
 - **F2-R14** WHEN `Location.Accuracy.Meters` is present, THE SYSTEM SHALL set the accuracy category High if < 50, Medium if < 500, else Low (thresholds configurable).
 
 **Acceptance**
@@ -144,7 +145,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 | Flow | Requirement IDs | Samples | Milestone |
 |---|---|---|---|
 | F1 | F1-R1…R8 | #2, #10 | M1 (transform), M3 (HTTP) |
-| F2 | F2-R1…R14 | #0, #3, #5, #6, #7, #11 | M1 |
+| F2 | F2-R1…R15 | #0, #3, #5, #6, #7, #11 | M1 |
 | F3 | F3-R1…R9 | #9, #12 | M1 (rules), M3 (HTTP, tenants) |
 | F4 | F4-R1…R6 | #1, #4, #8 | M2 (DB), M3 |
 | F5 | F5-R1…R4 | #4, #12 | M2 |

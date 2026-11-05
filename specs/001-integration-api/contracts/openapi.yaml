@@ -299,6 +299,7 @@ components:
             - SENSOR_FAULT
             - OUT_OF_RANGE
             - COERCED_TYPE
+            - INVALID_TYPE
             - TIMESTAMP_SECONDS
             - TIMESTAMP_MISMATCH
             - DEVICE_RESOLVED_BY_NAME

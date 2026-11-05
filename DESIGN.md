@@ -168,6 +168,7 @@ Reject reason codes (in `errors[]`): `NO_DEVICE_IDENTITY`, `NO_TIMESTAMP`, `TIME
 | `SENSOR_FAULT` | warn | `Temperature.Celsius` or `ProbeTemperature.Celsius` ∈ {-32768, 327.67, 32767} | Field → null |
 | `OUT_OF_RANGE` | warn | Humidity ∉ [0,100], lux < 0, battery ∉ [0,100] | Field → null |
 | `COERCED_TYPE` | info | Number sent as string | Parsed, kept |
+| `INVALID_TYPE` | warn | Wrong JSON type for a field (e.g. `"abc"` or an object where a number belongs) | Field → null |
 | `TIMESTAMP_SECONDS` | warn | `EntryTimeEpoch` < 1e12 | × 1000 |
 | `TIMESTAMP_MISMATCH` | warn | Epoch vs `EntryTimeUtc` differ > 1 s | Epoch kept |
 | `DEVICE_RESOLVED_BY_NAME` | info | No IMEI; found by name | IMEI filled |
@@ -185,7 +186,7 @@ Unknown extra fields are accepted (kept in raw).
 
 **Status precedence** (one `status` per event): `rejected` > `conflict` > `duplicate` > `flagged` > `accepted`. `flagged` means at least one `warn` or `error` flag; `info` flags alone (e.g. `COERCED_TYPE`, `ACCOUNT_ID_MISSING`, `DEVICE_RESOLVED_BY_NAME`) keep the event `accepted`. All flags are returned regardless of status.
 
-**Where flags come from:** most flags are produced by rules (§5.1). These are produced elsewhere because they need context the rules engine does not have: `TEMPERATURE_FALLBACK` (transform), `TENANT_MISMATCH`, `UNKNOWN_ACCOUNT` and `ACCOUNT_ID_MISSING` (ingest, tenant routing), `DUPLICATE_CONFLICT` (store), `TEMP_EXCURSION` / `IMPOSSIBLE_TRAVEL` (domain).
+**Where flags come from:** most flags are produced by rules (§5.1). These are produced elsewhere because they need context the rules engine does not have: `TEMPERATURE_FALLBACK` and `INVALID_TYPE` (transform), `TENANT_MISMATCH`, `UNKNOWN_ACCOUNT` and `ACCOUNT_ID_MISSING` (ingest, tenant routing), `DUPLICATE_CONFLICT` (store), `TEMP_EXCURSION` / `IMPOSSIBLE_TRAVEL` (domain).
 
 ### 5.1 Rules engine (config-driven fix / drop / reject)
 
@@ -230,6 +231,7 @@ overrides: []
 #      - { id: NUMERIC-STRING, action: reject }
 ```
 
+- `field: "*"` means every field in the Tive numeric-field list (temperatures C/F, humidity, accelerometer, lux, battery %, dBm, location coordinates/accuracy/counts, `EntryTimeEpoch`, `AccountId`). Identifier strings (`DeviceId`, `DeviceName`, ids) are never coerced.
 - Pipeline position: parse → `rules.Apply` → required-field check → transform → domain checks → output schema validation.
 - `rules.Apply(payload, ruleset, scope) → (payload', flags, rejection)` is pure; one table-driven test per rule ID; golden tests pin the default ruleset on all 13 samples.
 - Loaded at startup: embedded default, overridden by `RULES_PATH`; schema-validated; fail fast on unknown strategy, unsafe action on protected field, or duplicate ID. No hot reload.
@@ -740,7 +742,7 @@ Screen: scenario picker, key field, run; results table (time, scenario, HTTP, st
 | Layer | Scope | Tooling | Runs |
 |---|---|---|---|
 | Unit | `provider/tive`, `paxafe`, `rules`, `domain`, `worker.desired()`; one case per rule ID | `go test` | < 1 s |
-| Golden | Each sample → `testdata/golden/<n>.json` (output, flags, status); `-update` regenerates | `go test` | CI |
+| Golden | Each sample → `specs/001-integration-api/expected/<n>.json` (hand-reviewed; no `-update` flag, so code can never overwrite the expectations). M1 compares records and rules/transform flags; ingest-level flags (`ACCOUNT_ID_MISSING`, `UNKNOWN_ACCOUNT`, `DUPLICATE_CONFLICT`) and conflict/duplicate status are checked in M3 | `go test` | CI |
 | Schema conformance | Every emitted record vs PAXAFE schemas | jsonschema | CI |
 | Fuzz | Mutated payloads never panic; output schema-valid | Go fuzzing | CI short, nightly long |
 | Integration | HTTP→DB: cross-tenant isolation (API and RLS layers), `TENANT_MISMATCH`, unknown account → `common-pool` (data kept, sender can read the event, other tenants cannot read its readings), tracker reuse across tenants, noisy neighbor fairness, idempotency under concurrent retries, raw-first on failure, replay, auth scoping, queue claim/retry/stuck recovery, reconciler fault injection | testcontainers-go, both backends | CI |
@@ -858,7 +860,7 @@ Do not start the next milestone without my approval. Do not add features outside
 - `internal/paxafe`: `SensorRecord`, `LocationRecord` structs; output rounding at marshal time per §6; validation against `px-sensor-schema.json` / `px-location-schema.json` (embedded).
 - Mapping per §6: temperature fallback with `temperature_source`; accuracy category thresholds from config; `location_source` mapping; best-effort address parsing (always keep `full_address`).
 - Device-by-name resolution is an interface (`DeviceResolver`) faked in tests; real implementation comes in M2.
-- `testdata/samples/` (the 13 payloads), `testdata/golden/` (expected outputs from M0); golden test with `-update` flag.
+- `testdata/samples/` (the 13 payloads); golden test against `specs/001-integration-api/expected/` (no `-update` flag).
 
 **Tests**
 - Unit: one table-driven case per rule ID and per mapping rule.
@@ -1020,6 +1022,8 @@ Do not start the next milestone without my approval. Do not add features outside
 ---
 
 ## 24. Changelog
+
+- **2026-11-05 (M1 planning)** — Added flag `INVALID_TYPE` (wrong JSON type → null); defined `field: "*"` as the numeric-field list so identifiers are never coerced; golden test reads `expected/` directly (no `-update`).
 
 - **2026-11-05** — Reconciled with the assignment and samples (before M0):
   - Reviewer tenant maps `AccountId` 478; absent `AccountId` uses the key's tenant + `ACCOUNT_ID_MISSING`.
