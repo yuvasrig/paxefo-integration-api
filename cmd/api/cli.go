@@ -45,6 +45,7 @@ const adminUsage = `usage:
                                                        Without --apply it is a dry run: it reports what would change and writes nothing.
   api replay runs [--limit N]                          applied replays so far (audit)
   api tenants show --tenant T                          print the tenant's config
+  api tenants set-workers --tenant T (--min N --max N | --clear)   the tenant's own worker pool limits
   api tenants set-conflict --tenant T --policy keep_first|keep_last|reject [--http-status 200|409]
                                                        what to do when the same device and time arrive with different content
 `
@@ -193,6 +194,38 @@ func runTenants(ctx context.Context, st *store.PGStore, args []string, out io.Wr
 			cs = store.DefaultConflictSettings()
 		}
 		fmt.Fprintf(out, "config: %s\nconflict policy: %s (HTTP %d)\n", cfg, cs.Policy, cs.HTTPStatus)
+		return nil
+	case "set-workers":
+		fs := newFlags("tenants set-workers", out)
+		tenant := fs.String("tenant", "", "tenant id (required)")
+		min := fs.Int("min", 0, "fewest workers the tenant's pool keeps running")
+		max := fs.Int("max", 0, "most workers the tenant's pool runs")
+		clear := fs.Bool("clear", false, "remove the tenant's limits so it uses WORKERS_MIN and WORKERS_MAX")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if *tenant == "" || (!*clear && *max == 0) {
+			return errors.New("tenants set-workers: --tenant and either --max (with --min) or --clear are required")
+		}
+		var limits *store.WorkerLimits
+		if !*clear {
+			l, err := store.NewWorkerLimits(*min, *max)
+			if err != nil {
+				return fmt.Errorf("tenants set-workers: %w", err)
+			}
+			limits = &l
+		}
+		if err := st.SetTenantWorkers(ctx, *tenant, limits); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("tenants set-workers: tenant %q does not exist", *tenant)
+			}
+			return err
+		}
+		if limits == nil {
+			fmt.Fprintf(out, "tenant %s: worker limits cleared (service defaults)\n", *tenant)
+		} else {
+			fmt.Fprintf(out, "tenant %s: workers %d to %d\n", *tenant, limits.Min, limits.Max)
+		}
 		return nil
 	case "set-conflict":
 		fs := newFlags("tenants set-conflict", out)

@@ -193,9 +193,9 @@ A tenant can be switched to async ingest. The webhook then only stores the paylo
 - **F16-R2** THE SYSTEM SHALL process each queued job exactly as sync ingest would, and SHALL remove the job in the same transaction that writes the outcome.
 - **F16-R3** WHEN processing a job fails, THE SYSTEM SHALL retry it with growing delay, and after `MAX_ATTEMPTS` SHALL mark the event `dead` (raw payload kept, error recorded, replayable) so it never blocks other jobs.
 - **F16-R4** WHEN a tenant already has `QUEUE_MAX_DEPTH` jobs waiting, THE SYSTEM SHALL answer `503` with `Retry-After` and store nothing for that request.
-- **F16-R5** THE SYSTEM SHALL serve tenants fairly: one claim round takes at most a fixed number of jobs per tenant.
+- **F16-R5** THE SYSTEM SHALL give every tenant its own worker pool: a tenant's workers claim only that tenant's jobs, so one tenant's backlog cannot starve or slow another.
 - **F16-R6** THE SYSTEM SHALL never hand one job to two workers (`FOR UPDATE SKIP LOCKED`), and SHALL return jobs held by a worker that died to the queue.
-- **F16-R7** THE SYSTEM SHALL size each process's worker pool from the backlog and the oldest job's age (between `WORKERS_MIN` and `WORKERS_MAX`), growing at once and shrinking slowly, and SHALL finish already claimed jobs on shutdown.
+- **F16-R7** THE SYSTEM SHALL size each tenant's pool in each process from that tenant's backlog and its oldest job's age, between the tenant's own minimum and maximum (`tenants.config.workers`, else `WORKERS_MIN` and `WORKERS_MAX`), growing at once and shrinking slowly; a sync tenant SHALL have no workers; and workers SHALL finish already claimed jobs on shutdown.
 - **F16-R8** THE SYSTEM SHALL report each process's workers through heartbeats, and a replay SHALL leave events that still have a queued job to their worker.
 - **F16-R9** THE SYSTEM SHALL allow the queue limit, worker bounds, lag target, attempts and rate limit to be changed at runtime (table `settings`), taking effect on every instance within `SETTINGS_REFRESH_INTERVAL`.
 
@@ -203,7 +203,7 @@ A tenant can be switched to async ingest. The webhook then only stores the paylo
 - GIVEN an async tenant, THEN a webhook answers 202 and the event is `accepted` or `flagged` once a worker has run; a sync tenant is unchanged.
 - GIVEN a payload that always fails, THEN it ends `dead` after `MAX_ATTEMPTS` and the other jobs finish.
 - GIVEN a full queue, THEN the next webhook gets 503 with `Retry-After` and no raw event is stored.
-- GIVEN many workers claiming at once, THEN no job is claimed twice and a small tenant is not starved by a big one.
+- GIVEN many workers claiming at once, THEN no job is claimed twice; GIVEN a big backlog for one tenant, THEN another tenant's jobs are still processed at once by its own workers and its pool does not grow.
 
 ---
 

@@ -554,3 +554,27 @@ func TestRealMainUsageAndConfigErrors(t *testing.T) {
 		t.Fatalf("no database: %d %q", code, errOut.String())
 	}
 }
+
+func TestTenantsSetWorkers(t *testing.T) {
+	st, _ := openTestStore(t)
+	out, err := run(t, st, "tenants", "create", "--id", "pool-co")
+	if err != nil {
+		t.Fatal(out, err)
+	}
+	if out, err = run(t, st, "tenants", "set-workers", "--tenant", "pool-co", "--min", "1", "--max", "5"); err != nil || !strings.Contains(out, "workers 1 to 5") {
+		t.Fatalf("%q %v", out, err)
+	}
+	if out, err = run(t, st, "tenants", "set-workers", "--tenant", "pool-co", "--clear"); err != nil || !strings.Contains(out, "cleared") {
+		t.Fatalf("%q %v", out, err)
+	}
+	for name, args := range map[string][]string{
+		"no tenant":  {"set-workers", "--max", "3"},
+		"no limits":  {"set-workers", "--tenant", "pool-co"},
+		"min > max":  {"set-workers", "--tenant", "pool-co", "--min", "5", "--max", "2"},
+		"no tenant2": {"set-workers", "--tenant", "ghost", "--max", "2"},
+	} {
+		if _, err := run(t, st, "tenants", args...); err == nil {
+			t.Errorf("%s should fail", name)
+		}
+	}
+}

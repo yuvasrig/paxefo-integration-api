@@ -5,7 +5,7 @@ Source: DESIGN.md §7, §7.2. Postgres 16. Every tenant table carries `tenant_id
 ## Tables
 
 ### tenants
-`id` text PK · `name` · `status` · `plan` · `retention_days` · `config` jsonb · `created_at`. `config.conflict = {policy: keep_first|keep_last|reject, http_status: 200|409}` sets the tenant's conflict handling (default keep_first / 200); set it with `api tenants set-conflict`.
+`id` text PK · `name` · `status` · `plan` · `retention_days` · `config` jsonb · `created_at`. `config.conflict = {policy: keep_first|keep_last|reject, http_status: 200|409}` sets the tenant's conflict handling (default keep_first / 200); set it with `api tenants set-conflict`. `config.ingest_mode` (sync|async) and `config.workers = {min, max}` (the tenant's worker pool limits; `api tenants set-workers`) are the other optional keys.
 Seeded by `api seed`: `reviewer`, `acme-pharma`, `bioco`. The tenant of a request is the API key's; there is no account-to-tenant mapping.
 
 ### api_keys
@@ -58,7 +58,7 @@ Policy per table: `USING (tenant_id = current_setting('app.tenant_id', true))`. 
 
 ## Async ingest (migration 00005)
 - **ingest_jobs**: `raw_event_id` PK · `tenant_id` · `status` (pending|processing) · `attempts` · `enqueued_at` · `next_attempt_at` · `locked_at` · `locked_by` · `last_error`. One row per event waiting for a worker; inserted with the raw event, deleted with the outcome. Workers claim with `FOR UPDATE SKIP LOCKED`. Global (not row-level secured): workers serve every tenant.
-- **worker_heartbeats**: `instance` PK · `role` · `workers` · `in_flight` · `processed_total` · `started_at` · `last_seen`. A process reports every few seconds; rows older than a minute are ignored.
+- **worker_heartbeats**: (`instance`, `tenant_id`) PK, one row per tenant pool a process runs (`tenant_id` empty for a process with no pools yet) · `role` · `workers` · `in_flight` · `processed_total` · `started_at` · `last_seen`. A process reports every few seconds; rows older than a minute are ignored.
 - **settings**: `key` PK · `value` · `updated_by` · `updated_at`. Runtime overrides of the environment defaults.
 - `event_outcomes.status` also allows `dead` (gave up after `MAX_ATTEMPTS`).
 
