@@ -44,6 +44,9 @@ type view struct {
 	YAML       string
 	Validation string
 	Active     rulesInfo
+	RuleRows   []ruleRow
+	Fields     []rules.Field
+	OffRules   int
 	History    []store.RulesetRow
 
 	// config page
@@ -547,50 +550,6 @@ func (c *Console) tenantSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- rules ----
-
-func (c *Console) rulesView(ctx context.Context, yaml string, v view) (view, error) {
-	hist, err := c.Store.RulesetHistory(ctx, 20)
-	if err != nil {
-		return v, err
-	}
-	l := c.Rules.Loaded()
-	v.Title, v.Nav, v.History = "Rules", "rules", hist
-	v.Active = rulesInfo{Version: l.Ruleset.Version, Source: l.Source, LoadedAt: l.LoadedAt, Rules: len(l.Ruleset.Rules)}
-	if yaml == "" {
-		if row, ok, err := c.Store.ActiveRuleset(ctx); err != nil {
-			return v, err
-		} else if ok {
-			yaml = row.YAML
-		} else {
-			yaml = string(rules.DefaultYAML())
-		}
-	}
-	v.YAML = yaml
-	return v, nil
-}
-
-func (c *Console) rulesPage(w http.ResponseWriter, r *http.Request) {
-	yaml := ""
-	if from := r.URL.Query().Get("from"); from != "" { // load an older version into the editor
-		id, _ := strconv.ParseInt(from, 10, 64)
-		hist, err := c.Store.RulesetHistory(r.Context(), 100)
-		if err != nil {
-			c.fail(w, r, "could not read rule history", err)
-			return
-		}
-		for _, h := range hist {
-			if h.ID == id {
-				yaml = h.YAML
-			}
-		}
-	}
-	v, err := c.rulesView(r.Context(), yaml, view{Flash: r.URL.Query().Get("done")})
-	if err != nil {
-		c.fail(w, r, "could not read rules", err)
-		return
-	}
-	c.render(w, r, "rules", v)
-}
 
 func (c *Console) rulesValidate(w http.ResponseWriter, r *http.Request) {
 	yaml := r.FormValue("yaml")

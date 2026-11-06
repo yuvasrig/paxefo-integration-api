@@ -161,6 +161,8 @@ The rules engine is a framework for configurable rules; a default set ships with
 - GIVEN a ruleset whose override enables a rule for tenant A only, THEN tenant A's payload carries the flag and tenant B's does not.
 - GIVEN `api rules reset`, THEN `GET /api/v1/rules` reports the default ruleset again.
 
+- **F14-R9** THE SYSTEM SHALL let an operator switch a rule off and on without losing it, edit a rule's thresholds, action, flag code and severity, add a rule by choosing a field, a check and an action, reorder and delete rules, and override a rule's action or severity for one tenant, all without writing YAML; every such change SHALL be validated as a publish is (guardrails included), SHALL receive a new version automatically, and SHALL be refused with the reason when invalid.
+
 ## F15 — Reprocess stored payloads after a fix (`api replay`)
 
 An operator can fix the rules or a tenant's conflict policy and then apply the fix to payloads that were already received. This is separate from F7 (replay of one failed or rejected event over the API).

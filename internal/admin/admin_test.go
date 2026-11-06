@@ -622,3 +622,212 @@ func TestAlertsShowDeadEventsAndFeedTheNotifier(t *testing.T) {
 	must(t, e.st.BuryJob(ctx, "dead-co", id, "boom"))
 	has(t, e.get("/admin/monitoring/live"), `class="alert warning"`, "Dead events", "dead-co has 1 events that failed every attempt")
 }
+
+// ---- friendly rules page ----
+
+func TestRulesPageReadsInPlainEnglish(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	page := e.get("/admin/rules")
+	has(t, page,
+		"When Humidity (%) is outside 0 to 100, clear the value and flag it OUT_OF_RANGE (warning).",
+		"When Temperature (°C) is exactly one of -32,768, 327.67, 32,767, clear the value and flag it SENSOR_FAULT (warning).",
+		"reject the whole reading (TIMESTAMP_FUTURE)", "within 10 seconds", "Add a rule", "Advanced: edit the rules as YAML")
+}
+
+func (e *env) rule(id string) *rules.Rule { return e.rules.Current().Find(id) }
+
+var versionRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}\.\d+$`)
+
+func TestSwitchARuleOffAndOnKeepsItsAction(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	code, _, hdr := e.post("/admin/rules/toggle", url.Values{"id": {"TEMP-SENTINEL"}, "off": {"1"}})
+	if code != 303 {
+		t.Fatalf("%d", code)
+	}
+	r := e.rule("TEMP-SENTINEL")
+	if !r.Disabled || r.Action != "nullify" {
+		t.Fatalf("off, with its action kept: %+v", r)
+	}
+	if v := e.rules.Current().Version; !versionRe.MatchString(v) {
+		t.Fatalf("the console picks the version: %q", v)
+	}
+	page := e.get(hdr.Get("Location"))
+	has(t, page, "Switched TEMP-SENTINEL off.", "Published as version", "1 switched off", `class="switch is-off"`)
+	e.post("/admin/rules/toggle", url.Values{"id": {"TEMP-SENTINEL"}, "off": {"0"}})
+	if e.rule("TEMP-SENTINEL").Disabled {
+		t.Fatal("switched back on")
+	}
+	hist, _ := e.st.RulesetHistory(ctx, 10)
+	if len(hist) != 2 || hist[0].Version == hist[1].Version {
+		t.Fatalf("every change is a new version: %+v", hist)
+	}
+}
+
+func TestEditARulesThresholdsFromTheForm(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	before := e.rules.Current().Version
+	code, _, _ := e.post("/admin/rules/edit", url.Values{"id": {"HUMIDITY-RANGE"}, "out_min": {"5"}, "out_max": {"95"}, "action": {"nullify"}, "code": {"HUMIDITY_BAD"}, "severity": {"error"}, "section": {"sensor"}})
+	if code != 303 {
+		t.Fatalf("%d", code)
+	}
+	if got := e.rule("HUMIDITY-RANGE").Sentence(); got != "When Humidity (%) is outside 5 to 95, clear the value and flag it HUMIDITY_BAD (error)." {
+		t.Fatal(got)
+	}
+	if e.rules.Current().Version == before {
+		t.Fatal("a change gets a new version")
+	}
+	// Bad input is explained and nothing is published.
+	version := e.rules.Current().Version
+	for name, form := range map[string]url.Values{
+		"not a number": {"id": {"HUMIDITY-RANGE"}, "out_min": {"x"}, "out_max": {"95"}},
+		"half a range": {"id": {"HUMIDITY-RANGE"}, "out_min": {"5"}},
+		"bad list":     {"id": {"TEMP-SENTINEL"}, "in": {"1, two"}},
+		"unknown rule": {"id": {"NOPE"}, "code": {"X"}},
+		"empty code":   {"id": {"HUMIDITY-RANGE"}, "code": {""}, "severity": {"warn"}, "action": {"flag"}},
+		"bad severity": {"id": {"HUMIDITY-RANGE"}, "severity": {"loud"}, "code": {"X"}, "action": {"flag"}},
+	} {
+		_, body, _ := e.post("/admin/rules/edit", form)
+		if !strings.Contains(body, "Nothing was changed") {
+			t.Errorf("%s: %s", name, body)
+		}
+	}
+	if e.rules.Current().Version != version {
+		t.Fatal("a refused change publishes nothing")
+	}
+}
+
+func TestGuardrailsStillApplyToTheForms(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	version := e.rules.Current().Version
+	_, body, _ := e.post("/admin/rules/edit", url.Values{"id": {"TS-FUTURE"}, "action": {"nullify"}, "severity": {"warn"}, "code": {"TIMESTAMP_FUTURE"}})
+	has(t, body, "Nothing was changed", "protected field EntryTimeEpoch cannot be nullified")
+	_, body, _ = e.post("/admin/rules/add", url.Values{"field": {"EntryTimeEpoch"}, "check": {"below"}, "v1": {"5"}, "action": {"drop_section"}, "section": {"sensor"}, "code": {"X"}})
+	has(t, body, "Nothing was changed", "protected field EntryTimeEpoch cannot use drop_section")
+	if e.rules.Current().Version != version {
+		t.Fatal("nothing published")
+	}
+}
+
+func TestAddAndDeleteARuleFromDropdowns(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	n := len(e.rules.Current().Rules)
+	code, _, _ := e.post("/admin/rules/add", url.Values{"field": {"Battery.Percentage"}, "check": {"below"}, "v1": {"10"}, "action": {"flag"}, "code": {"low battery"}, "severity": {"warn"}, "id": {"battery low"}})
+	if code != 303 || len(e.rules.Current().Rules) != n+1 {
+		t.Fatalf("%d, %d rules", code, len(e.rules.Current().Rules))
+	}
+	if got := e.rule("BATTERY-LOW").Sentence(); got != "When Battery (%) is below 10, keep the value and flag it LOW_BATTERY (warning)." {
+		t.Fatal(got)
+	}
+	// Each kind of check builds a valid rule; an unnamed rule gets a name.
+	for name, f := range map[string]url.Values{
+		"outside": {"field": {"Humidity.Percentage"}, "check": {"outside"}, "v1": {"10"}, "v2": {"90"}, "action": {"reject"}, "code": {"HUM"}},
+		"one of":  {"field": {"Light.Lux"}, "check": {"oneof"}, "list": {"-1, 65535"}, "action": {"nullify"}, "code": {"LUX_FAULT"}},
+		"missing": {"field": {"Battery.Percentage"}, "check": {"missing"}, "action": {"flag"}, "code": {"NO_BATTERY"}, "severity": {"info"}},
+		"numtext": {"field": {"Light.Lux"}, "check": {"numtext"}, "action": {"flag"}, "code": {"LUX_TEXT"}},
+		"future":  {"field": {"EntryTimeEpoch"}, "check": {"future"}, "v1": {"30"}, "action": {"reject"}, "code": {"TOO_NEW"}},
+		"differs": {"field": {"EntityName"}, "check": {"differs"}, "other": {"DeviceName"}, "action": {"flag"}, "code": {"NAME_DIFFERS"}},
+		"drop":    {"field": {"Location.Accuracy.Meters"}, "check": {"below"}, "v1": {"0"}, "action": {"drop_section"}, "section": {"location"}, "code": {"BAD_ACC"}},
+		"custom":  {"field_custom": {"Shipment.Carrier"}, "check": {"missing"}, "action": {"flag"}, "code": {"NO_CARRIER"}},
+	} {
+		if code, body, _ := e.post("/admin/rules/add", f); code != 303 {
+			t.Errorf("%s: %d %s", name, code, body)
+		}
+	}
+	if e.rule("CUSTOM-1") == nil || e.rule("CUSTOM-2") == nil {
+		t.Fatal("unnamed rules get CUSTOM-n names")
+	}
+	for name, f := range map[string]url.Values{
+		"no field":     {"check": {"missing"}, "action": {"flag"}},
+		"no check":     {"field": {"Light.Lux"}, "action": {"flag"}},
+		"no action":    {"field": {"Light.Lux"}, "check": {"missing"}},
+		"below no num": {"field": {"Light.Lux"}, "check": {"below"}, "action": {"flag"}},
+		"outside half": {"field": {"Light.Lux"}, "check": {"outside"}, "v1": {"1"}, "action": {"flag"}},
+		"bad list":     {"field": {"Light.Lux"}, "check": {"oneof"}, "list": {"a"}, "action": {"flag"}},
+		"future zero":  {"field": {"EntryTimeEpoch"}, "check": {"future"}, "v1": {"0"}, "action": {"reject"}},
+		"differs none": {"field": {"EntityName"}, "check": {"differs"}, "action": {"flag"}},
+		"duplicate":    {"field": {"Battery.Percentage"}, "check": {"missing"}, "action": {"flag"}, "id": {"BATTERY-LOW"}, "code": {"X"}},
+	} {
+		_, body, _ := e.post("/admin/rules/add", f)
+		if !strings.Contains(body, "not added") && !strings.Contains(body, "Nothing was changed") {
+			t.Errorf("%s should be refused: %s", name, body)
+		}
+	}
+	e.post("/admin/rules/delete", url.Values{"id": {"BATTERY-LOW"}})
+	if e.rule("BATTERY-LOW") != nil {
+		t.Fatal("deleted")
+	}
+	_, body, _ := e.post("/admin/rules/delete", url.Values{"id": {"BATTERY-LOW"}})
+	has(t, body, "Nothing was changed")
+}
+
+func TestMoveARule(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	first, second := e.rules.Current().Rules[0].ID, e.rules.Current().Rules[1].ID
+	e.post("/admin/rules/move", url.Values{"id": {second}, "dir": {"up"}})
+	if e.rules.Current().Rules[0].ID != second || e.rules.Current().Rules[1].ID != first {
+		t.Fatal("moved up")
+	}
+	e.post("/admin/rules/move", url.Values{"id": {second}, "dir": {"down"}})
+	if e.rules.Current().Rules[0].ID != first {
+		t.Fatal("moved down")
+	}
+}
+
+func TestPerTenantRuleOverrides(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "acme-co", "Acme", nil))
+	page := e.get("/admin/rules?tenant=acme-co")
+	has(t, page, "Rules for acme-co", `<span class="muted">same as global</span>`)
+	if strings.Contains(page, "Add a rule") || strings.Contains(page, "Delete this rule") {
+		t.Fatal("a tenant page changes only that tenant: no add or delete")
+	}
+	code, _, hdr := e.post("/admin/rules/override", url.Values{"tenant": {"acme-co"}, "id": {"HUMIDITY-RANGE"}, "action": {"ignore"}, "severity": {""}})
+	if code != 303 || !strings.Contains(hdr.Get("Location"), "tenant=acme-co") {
+		t.Fatalf("%d %q", code, hdr.Get("Location"))
+	}
+	if e.rules.Current().TenantOverride("acme-co", "HUMIDITY-RANGE").Action != "ignore" || e.rules.Current().TenantOverride("other", "HUMIDITY-RANGE").Action != "" {
+		t.Fatal("the override is for acme-co only")
+	}
+	has(t, e.get(hdr.Get("Location")), `<span class="tag flagged">this tenant</span>`, "do nothing", "Saved HUMIDITY-RANGE for acme-co")
+	if e.rule("HUMIDITY-RANGE").Action != "nullify" {
+		t.Fatal("the global rule is unchanged")
+	}
+	// Severity alone, then back to the global rule.
+	e.post("/admin/rules/override", url.Values{"tenant": {"acme-co"}, "id": {"HUMIDITY-RANGE"}, "severity": {"error"}})
+	if ov := e.rules.Current().TenantOverride("acme-co", "HUMIDITY-RANGE"); ov.Action != "" || ov.Severity != "error" {
+		t.Fatalf("%+v", ov)
+	}
+	e.post("/admin/rules/override", url.Values{"tenant": {"acme-co"}, "id": {"HUMIDITY-RANGE"}})
+	if e.rules.Current().TenantOverride("acme-co", "HUMIDITY-RANGE").Severity != "" || len(e.rules.Current().Overrides) != 0 {
+		t.Fatal("same as global removes the override")
+	}
+	if code, _, _ := e.post("/admin/rules/override", url.Values{"tenant": {"ghost"}, "id": {"HUMIDITY-RANGE"}, "action": {"flag"}}); code != 404 {
+		t.Fatalf("unknown tenant: %d", code)
+	}
+	if code, _, _ := e.do("GET", "/admin/rules?tenant=ghost", nil); code != 404 {
+		t.Fatalf("unknown tenant page: %d", code)
+	}
+	_, body, _ := e.post("/admin/rules/override", url.Values{"tenant": {"acme-co"}, "id": {"NOPE"}, "action": {"flag"}})
+	has(t, body, "Nothing was changed")
+}
+
+func TestVersionsNeverCollide(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	seen := map[string]bool{}
+	for i := 0; i < 4; i++ {
+		e.post("/admin/rules/toggle", url.Values{"id": {"LUX-NEGATIVE"}, "off": {map[bool]string{true: "1", false: "0"}[i%2 == 0]}})
+		v := e.rules.Current().Version
+		if seen[v] || !versionRe.MatchString(v) {
+			t.Fatalf("version %q repeats or is malformed", v)
+		}
+		seen[v] = true
+	}
+}

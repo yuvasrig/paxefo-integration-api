@@ -340,10 +340,16 @@ func TestTenantMaxAttemptsOverride(t *testing.T) {
 	e.mgr.Now = func() time.Time { return time.Now().Add(-time.Hour) }
 	stop := e.run(t)
 	defer stop()
-	eventually(t, "acme's job is dead after one attempt", func() bool { return e.status("acme-pharma", a) == "dead" })
-	ev, _ := e.st.GetEvent(ctx, "reviewer", r)
-	if ev.Status == "dead" {
-		t.Fatalf("reviewer keeps retrying (global limit is 5 attempts): %+v", ev)
+	eventually(t, "both poison jobs end dead", func() bool {
+		return e.status("acme-pharma", a) == "dead" && e.status("reviewer", r) == "dead"
+	})
+	// acme gives up at once (its limit is 1 attempt: no retry); reviewer uses the global limit of 5 (4 retries, then dead).
+	// If acme had used the global limit too, there would be 8 retries.
+	if got := e.obs.get("retry"); got != 4 {
+		t.Fatalf("retries = %d, want 4 (reviewer's four; acme's own limit leaves none)", got)
+	}
+	if got := e.obs.get("dead"); got != 2 {
+		t.Fatalf("dead = %d", got)
 	}
 }
 

@@ -39,7 +39,7 @@ func Apply(d doc.Doc, rs *Ruleset, sc Scope) Result {
 	rules := rs.effective(sc.Tenant)
 	for i := range rules {
 		r := &rules[i]
-		if r.Action == actionIgnore {
+		if r.Disabled || r.Action == actionIgnore {
 			continue
 		}
 		paths := []string{r.Field}

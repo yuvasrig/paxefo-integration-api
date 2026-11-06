@@ -61,15 +61,16 @@ type Ruleset struct {
 // so a later rule sees the result of an earlier one (the numeric-string rule runs first for that reason).
 // Adding a check to the service usually means adding a Rule to the ruleset, not writing Go.
 type Rule struct {
-	ID       string         `yaml:"id" json:"id"`                       // unique; recorded on every flag the rule raises
-	Code     string         `yaml:"code" json:"code"`                   // the flag (or reject) code reported; any text, so new rules can introduce their own codes
-	Field    string         `yaml:"field" json:"field"`                 // dotted path in the payload, e.g. Temperature.Celsius; "*" = every numeric field
-	When     When           `yaml:"when" json:"when"`                   // the condition
-	Action   string         `yaml:"action" json:"action"`               // fix, nullify, drop_section, reject, flag or ignore (ignore switches a rule off)
-	Strategy string         `yaml:"strategy" json:"strategy,omitempty"` // for fix: a named strategy from the registry (strategies.go)
-	Params   map[string]any `yaml:"params" json:"params,omitempty"`     // arguments for the strategy
-	Section  string         `yaml:"section" json:"section,omitempty"`   // for drop_section: sensor or location
-	Severity string         `yaml:"severity" json:"severity,omitempty"` // info, warn or error (descriptive; any flag makes an event flagged)
+	ID       string         `yaml:"id" json:"id"`                                 // unique; recorded on every flag the rule raises
+	Code     string         `yaml:"code" json:"code"`                             // the flag (or reject) code reported; any text, so new rules can introduce their own codes
+	Field    string         `yaml:"field" json:"field"`                           // dotted path in the payload, e.g. Temperature.Celsius; "*" = every numeric field
+	When     When           `yaml:"when" json:"when"`                             // the condition
+	Action   string         `yaml:"action" json:"action"`                         // fix, nullify, drop_section, reject, flag or ignore (ignore switches a rule off)
+	Strategy string         `yaml:"strategy" json:"strategy,omitempty"`           // for fix: a named strategy from the registry (strategies.go)
+	Params   map[string]any `yaml:"params" json:"params,omitempty"`               // arguments for the strategy
+	Section  string         `yaml:"section" json:"section,omitempty"`             // for drop_section: sensor or location
+	Severity string         `yaml:"severity" json:"severity,omitempty"`           // info, warn or error (descriptive; any flag makes an event flagged)
+	Disabled bool           `yaml:"disabled,omitempty" json:"disabled,omitempty"` // true switches the rule off but keeps it (and its action) for later
 
 	afterNow time.Duration
 }

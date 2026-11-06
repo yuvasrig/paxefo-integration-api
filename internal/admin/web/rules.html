@@ -1,23 +1,166 @@
 {{define "rules"}}{{template "head" .}}
-<p>Rules in force: version <strong>{{.Active.Version}}</strong> ({{.Active.Rules}} rules) from <strong>{{.Active.Source}}</strong>, loaded {{ago .Active.LoadedAt}} on this instance.
-Rules are data: change them here and every instance adopts the new ruleset without a restart. An invalid ruleset can never replace the working one.</p>
-<form method="post" class="editor">
-  <textarea name="yaml" spellcheck="false" rows="28">{{.YAML}}</textarea>
-  {{if .Validation}}<p class="flash">{{.Validation}}</p>{{end}}
-  <div class="actions">
-    <button formaction="/admin/rules/validate">Validate</button>
-    <button formaction="/admin/rules/publish" class="primary">Publish</button>
-  </div>
-  <p class="muted">Change <code>version:</code> before publishing: it is recorded on every event. Events already stored keep their old result until you replay them (<code>api replay</code>).</p>
+<form method="get" action="/admin/rules" class="inline">
+  <label>Rules for
+    <select name="tenant" data-autosubmit>
+      <option value="" {{if eq .Scope ""}}selected{{end}}>All tenants (global rules)</option>
+      {{range .Tenants}}<option value="{{.Info.ID}}" {{if eq .Info.ID $.Scope}}selected{{end}}>{{.Info.ID}}</option>{{end}}
+    </select>
+  </label>
+  <noscript><button>Show</button></noscript>
 </form>
+
+<p>Rules in force: version <strong>{{.Active.Version}}</strong> · {{.Active.Rules}} rules{{if .OffRules}} ({{.OffRules}} switched off){{end}} · from <strong>{{.Active.Source}}</strong>, loaded {{ago .Active.LoadedAt}} on this instance.
+Every change here is checked, given a new version number automatically and goes live on every instance within {{.Refresh}} seconds, with no restart. A rule that would break a safety guardrail (for example clearing a timestamp) is refused.</p>
+
+{{if .Scope}}
+<p><strong>Rules for {{.Scope}}.</strong> Each rule is the global one unless you change it here: pick a different action or severity for this tenant only, or choose <em>same as global</em>. To change a rule for everyone, or to add one, switch to <a href="/admin/rules">All tenants</a>.</p>
+{{else}}
+<p>Rules run top to bottom, so an earlier rule can prepare a value for a later one. To make a rule behave differently for one tenant, pick that tenant above.</p>
+{{end}}
+
+<div class="scroll">
+<table class="rules">
+  <thead><tr><th>#</th><th>Rule</th><th>What it does</th>{{if .Scope}}<th>For {{.Scope}}</th>{{else}}<th>On</th><th></th>{{end}}</tr></thead>
+  <tbody>
+  {{range .RuleRows}}
+  <tr class="{{if .Disabled}}rule-off{{end}}">
+    <td class="n">{{.Index}}{{if not $.Scope}}
+      <form method="post" action="/admin/rules/move" class="mini"><input type="hidden" name="id" value="{{.ID}}"><button name="dir" value="up" class="link" title="Run earlier" {{if .First}}disabled{{end}}>&uarr;</button><button name="dir" value="down" class="link" title="Run later" {{if .Last}}disabled{{end}}>&darr;</button></form>{{end}}</td>
+    <td><strong>{{.ID}}</strong><br><span class="muted">{{.FieldLabel}}</span></td>
+    <td>
+      <div class="sentence">When {{.Condition}}, {{.Outcome}}.</div>
+      {{if not $.Scope}}
+      <details class="edit"><summary>Edit</summary>
+        <form method="post" action="/admin/rules/edit" class="inline editform">
+          <input type="hidden" name="id" value="{{.ID}}">
+          {{if .HasLt}}<label>Below <input name="lt" value="{{.Lt}}" size="10"></label>{{end}}
+          {{if .HasIn}}<label>Exactly one of <input name="in" value="{{.In}}" size="26"></label>{{end}}
+          {{if .HasOutside}}<label>Outside from <input name="out_min" value="{{.OutMin}}" size="8"></label><label>to <input name="out_max" value="{{.OutMax}}" size="8"></label>{{end}}
+          {{if .HasAfter}}<label>More than (like 5m or 1h) in the future <input name="after_now" value="{{.After}}" size="8"></label>{{end}}
+          {{if .HasFactor}}<label>Multiply by <input name="factor" value="{{.Factor}}" size="8"></label>{{end}}
+          <label>Then <select name="action">
+            <option value="flag" {{if eq .Action "flag"}}selected{{end}}>keep the value and flag it</option>
+            <option value="nullify" {{if eq .Action "nullify"}}selected{{end}}>clear the value and flag it</option>
+            <option value="drop_section" {{if eq .Action "drop_section"}}selected{{end}}>drop the sensor or location record</option>
+            <option value="reject" {{if eq .Action "reject"}}selected{{end}}>reject the whole reading</option>
+            {{if eq .Action "fix"}}<option value="fix" selected>fix it (built-in fix)</option>{{end}}
+            <option value="ignore" {{if eq .Action "ignore"}}selected{{end}}>do nothing</option>
+          </select></label>
+          <label>Record <select name="section"><option value="sensor" {{if eq .Section "sensor"}}selected{{end}}>sensor</option><option value="location" {{if eq .Section "location"}}selected{{end}}>location</option></select></label>
+          <label>Flag code <input name="code" value="{{.Code}}" size="22"></label>
+          <label>Severity <select name="severity">
+            <option value="info" {{if eq .Severity "info"}}selected{{end}}>info</option>
+            <option value="warn" {{if eq .Severity "warn"}}selected{{end}}>warning</option>
+            <option value="error" {{if eq .Severity "error"}}selected{{end}}>error</option>
+          </select></label>
+          <button class="primary">Save</button>
+        </form>
+        <form method="post" action="/admin/rules/delete" data-confirm="Delete the rule {{.ID}}? Events already stored keep their result until you replay them."><input type="hidden" name="id" value="{{.ID}}"><button class="link danger">Delete this rule</button></form>
+      </details>
+      {{end}}
+    </td>
+    {{if $.Scope}}
+    <td>
+      <div class="sentence {{if .EffectiveOff}}muted{{end}}">{{if .HasOverride}}<span class="tag flagged">this tenant</span> {{.EffectiveOutcome}}{{else}}<span class="muted">same as global</span>{{end}}</div>
+      <form method="post" action="/admin/rules/override" class="inline">
+        <input type="hidden" name="tenant" value="{{$.Scope}}"><input type="hidden" name="id" value="{{.ID}}">
+        <label>Action <select name="action">
+          <option value="">same as global</option>
+          <option value="flag" {{if eq .Override.Action "flag"}}selected{{end}}>keep the value and flag it</option>
+          <option value="nullify" {{if eq .Override.Action "nullify"}}selected{{end}}>clear the value and flag it</option>
+          <option value="reject" {{if eq .Override.Action "reject"}}selected{{end}}>reject the whole reading</option>
+          <option value="ignore" {{if eq .Override.Action "ignore"}}selected{{end}}>do nothing (rule off for this tenant)</option>
+        </select></label>
+        <label>Severity <select name="severity">
+          <option value="">same as global</option>
+          <option value="info" {{if eq .Override.Severity "info"}}selected{{end}}>info</option>
+          <option value="warn" {{if eq .Override.Severity "warn"}}selected{{end}}>warning</option>
+          <option value="error" {{if eq .Override.Severity "error"}}selected{{end}}>error</option>
+        </select></label>
+        <button>Save</button>
+      </form>
+    </td>
+    {{else}}
+    <td><form method="post" action="/admin/rules/toggle"><input type="hidden" name="id" value="{{.ID}}"><button name="off" value="{{if .Disabled}}0{{else}}1{{end}}" class="switch {{if .Disabled}}is-off{{else}}is-on{{end}}" title="{{if .Disabled}}Switch on{{else}}Switch off{{end}}">{{if .Disabled}}Off{{else}}On{{end}}</button></form></td>
+    <td></td>
+    {{end}}
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+
+{{if not .Scope}}
+<h2>Add a rule</h2>
+<form method="post" action="/admin/rules/add" class="card">
+  <div class="inline">
+    <label>Check this field
+      <select name="field">
+        <option value="">choose…</option>
+        {{range .Fields}}<option value="{{.Path}}">{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label>or type a payload path <input name="field_custom" placeholder="Shipment.Carrier" size="22"></label>
+  </div>
+  <div class="inline">
+    <label>When it
+      <select name="check">
+        <option value="below">is below a number</option>
+        <option value="outside">is outside a range</option>
+        <option value="oneof">is exactly one of these numbers</option>
+        <option value="missing">is missing</option>
+        <option value="numtext">is text that holds a number</option>
+        <option value="future">is more than N minutes in the future</option>
+        <option value="differs">differs from another field</option>
+      </select>
+    </label>
+    <label>Number / from / minutes <input name="v1" size="10"></label>
+    <label>to <input name="v2" size="10"></label>
+    <label>Numbers (comma separated) <input name="list" size="22" placeholder="-999, 9999"></label>
+    <label>Other field <input name="other" size="18" placeholder="DeviceName"></label>
+  </div>
+  <div class="inline">
+    <label>Then
+      <select name="action">
+        <option value="flag">keep the value and flag it</option>
+        <option value="nullify">clear the value and flag it</option>
+        <option value="drop_section">drop the sensor or location record</option>
+        <option value="reject">reject the whole reading</option>
+      </select>
+    </label>
+    <label>Record to drop <select name="section"><option value="sensor">sensor</option><option value="location">location</option></select></label>
+    <label>Flag code <input name="code" size="22" placeholder="LOW_BATTERY"></label>
+    <label>Severity <select name="severity"><option value="warn">warning</option><option value="info">info</option><option value="error">error</option></select></label>
+    <label>Name (optional) <input name="id" size="16" placeholder="BATTERY-LOW"></label>
+    <button class="primary">Add rule</button>
+  </div>
+  <p class="muted">Only fill in the boxes that fit the check you chose. The rule is added at the end, so it runs after the built-in ones. It is checked before it goes live: a rule that breaks a guardrail is refused with the reason.</p>
+</form>
+{{end}}
+
+<details class="card advanced">
+  <summary>Advanced: edit the rules as YAML</summary>
+  <p class="muted">This is the same ruleset in its file format, for bulk edits or comments. Publishing here needs a new <code>version:</code> by hand; the forms above choose it for you.</p>
+  <form method="post" class="editor">
+    <textarea name="yaml" spellcheck="false" rows="24">{{.YAML}}</textarea>
+    {{if .Validation}}<p class="flash">{{.Validation}}</p>{{end}}
+    <div class="actions">
+      <button formaction="/admin/rules/validate">Validate</button>
+      <button formaction="/admin/rules/publish" class="primary">Publish</button>
+    </div>
+  </form>
+</details>
+
 <form method="post" action="/admin/rules/reset" data-confirm="Go back to the built-in default rules?">
   <button class="danger">Reset to the default rules</button>
 </form>
+<p class="muted">Events already stored keep their old result until you replay them (<a href="/admin/conflicts">Conflicts</a> page, or <code>api replay</code>).</p>
+
 <h2>History</h2>
 <table>
   <thead><tr><th>Version</th><th>Published</th><th>By</th><th></th><th></th></tr></thead>
   <tbody>
-  {{range .History}}<tr><td>{{.Version}}</td><td>{{ts .CreatedAt}}</td><td>{{.CreatedBy}}</td><td>{{if .Active}}<span class="tag accepted">active</span>{{end}}</td><td><a href="/admin/rules?from={{.ID}}">Load into editor</a></td></tr>
+  {{range .History}}<tr><td>{{.Version}}</td><td>{{ts .CreatedAt}}</td><td>{{.CreatedBy}}</td><td>{{if .Active}}<span class="tag accepted">active</span>{{end}}</td><td><a href="/admin/rules?from={{.ID}}">Load into the YAML editor</a></td></tr>
   {{else}}<tr><td colspan="5">Nothing published from here yet; the built-in default is in force.</td></tr>{{end}}
   </tbody>
 </table>
