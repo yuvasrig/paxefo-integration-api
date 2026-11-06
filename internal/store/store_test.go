@@ -167,7 +167,7 @@ func TestConcurrentSameKey_F4R4(t *testing.T) {
 func TestConflictKeepsFirst_F4R3(t *testing.T) {
 	st := newStore(t)
 	first, firstID := process(t, st, "reviewer", sample(t, 0))
-	if first.Status != "flagged" { // sample 0 carries IDENTITY_MISMATCH and TEMP_EXCURSION
+	if first.Status != "flagged" { // sample 0 carries IDENTITY_MISMATCH
 		t.Fatalf("first status %s", first.Status)
 	}
 	for _, n := range []int{1, 8} {

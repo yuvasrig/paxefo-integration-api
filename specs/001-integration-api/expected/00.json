@@ -12,13 +12,6 @@
       "rule_id": "SHIPMENT-DEVICE-MISMATCH",
       "action": "kept",
       "value": "866088073468439"
-    },
-    {
-      "code": "TEMP_EXCURSION",
-      "severity": "warn",
-      "field": "Temperature.Celsius",
-      "value": 10.078125,
-      "action": "kept"
     }
   ],
   "errors": [],
@@ -70,6 +63,5 @@
     "sensor": true,
     "location": true,
     "conflict": false
-  },
-  "note": "TEMP_EXCURSION: 10.08 C is outside 2-8 C and the payload carries a shipment."
+  }
 }

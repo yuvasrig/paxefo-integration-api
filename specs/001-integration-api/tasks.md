@@ -53,7 +53,7 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 ## Change on 2026-11-06: simplifications that supersede the tasks above
 - Tenant from the API key only: no `tenant_sources`, no account routing, no `common-pool`, no `submitted_by`, no `TENANT_MISMATCH` / `UNKNOWN_ACCOUNT` / `ACCOUNT_ID_MISSING`, no `map-source` command.
 - `EntryTimeUtc` is ignored: no `TS-UTC-MISMATCH` rule, no `TIMESTAMP_MISMATCH`.
-- `status` is `flagged` iff any flag; `TEMP_EXCURSION` is built (only when a shipment exists).
+- `status` is `flagged` iff any flag. (`TEMP_EXCURSION` was added and then removed the same day: PAXAFE has no field for it.)
 - `POST /api/webhook/tive` is the primary path; `/api/v1/webhook/tive` is an alias.
 
 ## Change on 2026-11-06 (later): per-tenant conflict policy

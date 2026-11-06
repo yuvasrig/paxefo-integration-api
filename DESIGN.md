@@ -2,7 +2,7 @@
 
 Status: approved for implementation · Owner: Yuvi · Date: 2026-11-04 · Due: Fri 2026-11-06 EOB
 
-**Updated 2026-11-06 (see §24):** the tenant comes from the API key only (no account routing, no `common-pool`, no `tenant_sources`, no `TENANT_MISMATCH`); `EntryTimeUtc` is ignored; `status` is `flagged` iff any flag; `TEMP_EXCURSION` is built (only when a shipment exists); `POST /api/webhook/tive` is the primary path. Where older text below still describes account routing, that text is superseded. The files in `specs/001-integration-api/expected/` are the golden outputs and win over this document.
+**Updated 2026-11-06 (see §24):** the tenant comes from the API key only (no account routing, no `common-pool`, no `tenant_sources`, no `TENANT_MISMATCH`); `EntryTimeUtc` is ignored; `status` is `flagged` iff any flag; there is no temperature-band flag (`TEMP_EXCURSION` removed); `POST /api/webhook/tive` is the primary path. Where older text below still describes account routing, that text is superseded. The files in `specs/001-integration-api/expected/` are the golden outputs and win over this document.
 
 This is the single source of truth for design decisions. Specs (`specs/`), ADRs (`docs/adr/`), and code must agree with it; when they diverge, update this document first.
 
@@ -173,14 +173,13 @@ Reject reason codes (in `errors[]`): `NO_DEVICE_IDENTITY`, `NO_TIMESTAMP`, `TIME
 | `TEMPERATURE_FALLBACK` | info | Device temp missing/faulty; probe used | `temperature_source=probe` |
 | `TEMPERATURE_CONVERTED` | info | `Temperature.Celsius` null, Fahrenheit present | Celsius = (F − 32) × 5/9 |
 | `DUPLICATE_CONFLICT` | warn | Same key, different content | Per tenant policy: `kept` / `replaced` / `rejected` |
-| `TEMP_EXCURSION` | warn | A shipment is present and the temperature used is outside 2–8 °C (inclusive band, config) | Flag only; reading stored |
 | `IMPOSSIBLE_TRAVEL` | warn | Speed vs time-nearest neighbors > 1000 km/h | Flag only — *designed, not built* |
 
 Unknown extra fields are accepted (kept in raw).
 
 **Status** (one per event): `rejected` > `conflict` > `duplicate` > `flagged` > `accepted`. An event is `flagged` **if and only if it carries any flag**, whatever the severity; no flags means `accepted`. Severity (`info`/`warn`/`error`) is descriptive. All flags are returned regardless of status. `EntryTimeUtc` is ignored (`EntryTimeEpoch` is the event time).
 
-**Where flags come from:** most flags are produced by rules (§5.1). These are produced elsewhere because they need context the rules engine does not have: `TEMPERATURE_FALLBACK`, `INVALID_TYPE` and `TEMP_EXCURSION` (transform), `DUPLICATE_CONFLICT` (store), `IMPOSSIBLE_TRAVEL` (domain, not built).
+**Where flags come from:** most flags are produced by rules (§5.1). These are produced elsewhere because they need context the rules engine does not have: `TEMPERATURE_FALLBACK` and `INVALID_TYPE` (transform), `DUPLICATE_CONFLICT` (store), `IMPOSSIBLE_TRAVEL` (domain, not built).
 
 ### 5.1 Rules engine (config-driven fix / drop / reject)
 
@@ -717,7 +716,7 @@ Purpose: a test harness — runs scenarios, shows request vs response, verifies 
 |---|---|---|
 | Provided samples | All 13 samples | Per-sample expected status + flags (pass/fail) |
 | Realistic route | One device between two cities; GPS interpolated; temp drifting in 2–8 °C | All accepted |
-| Temperature excursion | Route drifting to 12 °C | `TEMP_EXCURSION` |
+| Temperature excursion | Route drifting to 12 °C | accepted, no flag (temperatures are not judged) |
 | Sensor fault | Probe sentinels in a route | `SENSOR_FAULT` + fallback |
 | Duplicates | Each sent twice; some changed | `duplicate`, `conflict` |
 | Malformed burst | Bad coords, strings, missing IDs, bad JSON | flagged/rejected; reject-rate alert opens |
@@ -750,14 +749,14 @@ Live-change workflow: change the spec → change the test → change the code.
 
 | # | Trap | HTTP · `status` | Flags / notes |
 |---|---|---|---|
-| 0 | `Shipment.DeviceId` ≠ `DeviceId`; 10.08 °C with a shipment | 200 · `flagged` | `IDENTITY_MISMATCH`, `TEMP_EXCURSION` |
+| 0 | `Shipment.DeviceId` ≠ `DeviceId`; 10.08 °C (stored as sent) | 200 · `flagged` | `IDENTITY_MISMATCH` |
 | 1 | Lat 95.0; same `(IMEI, ts)` as #0, different content | 200 · `conflict` | `INVALID_COORDINATES`, `DUPLICATE_CONFLICT`. Location skipped; this version goes to `reading_conflicts` (#0 kept) |
 | 2 | Clean GPS (San Francisco, off the Boston→Atlanta route: only `IMPOSSIBLE_TRAVEL`, not built, could catch it) | 200 · `accepted` | — |
 | 3 | Probe 327.67; Richmond VA 1 h after #2 in SF | 200 · `flagged` | `SENSOR_FAULT` (probe → null; device temp used) |
 | 4 | No `DeviceId`; `DeviceName` A571992 known from #0 → same `(IMEI, ts)` as #0 | 200 · `conflict` | `DEVICE_RESOLVED_BY_NAME`, `DUPLICATE_CONFLICT`. On a tenant that has not seen A571992: 422 `NO_DEVICE_IDENTITY` |
 | 5 | Epoch in seconds | 200 · `flagged` | `TIMESTAMP_SECONDS` |
-| 6 | Probe -32768; cell location, 500 m accuracy; `Shipment` null | 200 · `flagged` | `SENSOR_FAULT`; source Cellular, category Low. No shipment, so -18.5 °C is not an excursion |
-| 7 | Numeric strings; shipment device mismatch; 10.5 °C with a shipment | 200 · `flagged` | `COERCED_TYPE` ×3, `IDENTITY_MISMATCH`, `TEMP_EXCURSION` |
+| 6 | Probe -32768; cell location, 500 m accuracy; `Shipment` null | 200 · `flagged` | `SENSOR_FAULT`; source Cellular, category Low. -18.5 °C is stored as sent |
+| 7 | Numeric strings; shipment device mismatch; 10.5 °C | 200 · `flagged` | `COERCED_TYPE` ×3, `IDENTITY_MISMATCH` |
 | 8 | Lon -200.0; same `(IMEI, ts)` as #0 | 200 · `conflict` | `INVALID_COORDINATES`, `DUPLICATE_CONFLICT` |
 | 9 | `AccountId` 999 | 200 · `accepted` | — (`AccountId` is metadata only) |
 | 10 | Nulls in probe/accuracy/method | 200 · `accepted` | — (`location_accuracy`, category, source null) |
@@ -1014,6 +1013,8 @@ Do not start the next milestone without my approval. Do not add features outside
 
 ## 24. Changelog
 
+- **2026-11-06 (TEMP_EXCURSION removed)** — The `TEMP_EXCURSION` flag (added earlier the same day for payloads with a shipment) is removed. PAXAFE's schemas have no field for an excursion, so the service stores every temperature as sent and does not judge it; samples 0, 7 and 6 no longer carry an excursion flag. Downstream PAXAFE systems decide what a temperature means.
+
 - **2026-11-06 (conflict policy)** — Conflict handling is a per-tenant setting in `tenants.config.conflict`: `policy` = `keep_first` (default) | `keep_last` | `reject`, and `http_status` = 200 | 409 (default 409 for `reject`, else 200). A duplicate (same hash) is always 200. `keep_last` replaces the reading in one transaction and keeps the replaced event archived (`reading_conflicts.resolution`); the app role gained DELETE on the two reading tables (migration 00002). Replay is limited to failed, rejected or unfinished events (a replayed old version could otherwise overwrite a newer reading). CLI: `api tenants set-conflict`, `api tenants show`. Resolves the §21 question on 200 vs 409.
 
 - **2026-11-06 (later)** — `address.street` is parsed (everything before the locality) instead of always null. Affects samples 0 and 7 (`114 Hunts Point Market`).
@@ -1022,7 +1023,7 @@ Do not start the next milestone without my approval. Do not add features outside
   1. **Tenant from the API key only.** No `tenant_sources` table, no account routing, no `common-pool`, no `submitted_by_tenant_id`, no `TENANT_MISMATCH` / `UNKNOWN_ACCOUNT` / `ACCOUNT_ID_MISSING`, no `map-source` CLI. `AccountId` is stored as metadata and never checked.
   2. **`EntryTimeUtc` is ignored**; `EntryTimeEpoch` is the event time. No `TIMESTAMP_MISMATCH` flag (sample 11 is accepted with no flags).
   3. `expected/*.json` are the golden outputs for samples 0–12, posted in order against an empty database; they win over this document.
-  4. Pinned in `contracts/mapping.md`: rounding half away from zero, conservative address parsing, `TEMP_EXCURSION` only when a shipment exists (now built), `status = flagged` iff any flag.
+  4. Pinned in `contracts/mapping.md`: rounding half away from zero, conservative address parsing, no temperature-band check (`TEMP_EXCURSION` removed), `status = flagged` iff any flag.
   5. `POST /api/webhook/tive` is the primary path (the assignment requires it); `/api/v1/webhook/tive` is an alias.
 
 - **2026-11-05 (M2-M4)** — Implemented store, webhook, ops baseline. Decisions recorded in `data-model.md`: `payload_raw` bytea keeps exact bytes; `tenants`/`tenant_sources`/`api_keys` are not RLS-protected (read before the tenant is known) and the app role has SELECT only; tenant transactions run `SET LOCAL ROLE paxafe_app`; a payload never takes over a device registered in another tenant (operator `ReassignDevice` instead); `INGEST_MODE=async` and `ROLE` other than `all`/`api` fail at startup until M8a; no pprof/admin port in M4.

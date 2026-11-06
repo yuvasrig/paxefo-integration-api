@@ -8,13 +8,9 @@ type Transform struct {
 	AccuracyHighBelowM float64
 	// AccuracyMediumBelowM: accuracy under this many meters (and not High) is Medium; otherwise Low.
 	AccuracyMediumBelowM float64
-	// TempMinC and TempMaxC are the cold-chain band (inclusive). A reading outside it is flagged
-	// TEMP_EXCURSION when the payload carries a shipment.
-	TempMinC float64
-	TempMaxC float64
 }
 
 // Default returns the documented defaults (DESIGN.md section 6).
 func Default() Transform {
-	return Transform{AccuracyHighBelowM: 50, AccuracyMediumBelowM: 500, TempMinC: 2, TempMaxC: 8}
+	return Transform{AccuracyHighBelowM: 50, AccuracyMediumBelowM: 500}
 }

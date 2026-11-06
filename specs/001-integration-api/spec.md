@@ -6,7 +6,7 @@ EARS patterns: `WHEN <event>, THE SYSTEM SHALL <response>` · `IF <condition>, T
 
 Test precondition (unless stated): an empty database, one tenant, samples sent in order 0 → 12 with that tenant's API key. The files in `expected/` are the golden outputs.
 
-Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Timescale, the `IMPOSSIBLE_TRAVEL` check. (`TEMP_EXCURSION` is built: F2-R16.)
+Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Timescale, the `IMPOSSIBLE_TRAVEL` check, and any temperature-band (excursion) check: a temperature is stored as sent.
 
 ---
 
@@ -41,17 +41,17 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F2-R11** THE SYSTEM SHALL record, for every fix or nullification, the rule ID, the original value and the new value.
 - **F2-R12** WHEN any flag is present, whatever its severity, and the event is not rejected, duplicate or conflict, THE SYSTEM SHALL respond 200 with `status: flagged`.
 - **F2-R13** WHEN no flag is present, THE SYSTEM SHALL respond `accepted`.
-- **F2-R16** WHEN the payload carries a shipment (`Shipment.Id` or `ShipmentId`) AND the temperature used is outside the band 2-8 C (inclusive bounds, configurable), THE SYSTEM SHALL add flag `TEMP_EXCURSION` (field = the source of the temperature) AND still store the reading. A payload without a shipment is never an excursion.
+- **F2-R16** THE SYSTEM SHALL NOT judge a temperature against a cold-chain band: a reading outside 2-8 C, with or without a shipment, SHALL be stored and emitted as sent with no flag.
 - **F2-R15** WHEN a field that should be a number is a non-numeric string, an object or an array, THE SYSTEM SHALL set it to null AND add flag `INVALID_TYPE`.
 - **F2-R14** WHEN `Location.Accuracy.Meters` is present, THE SYSTEM SHALL set the accuracy category High if < 50, Medium if < 500, else Low (thresholds configurable).
 
 **Acceptance**
-- *#0:* GIVEN a payload whose `Shipment.DeviceId` differs from `DeviceId` and whose temperature is 10.08 C with a shipment present, THEN 200 `flagged` with `IDENTITY_MISMATCH` and `TEMP_EXCURSION`; sensor temperature 10.08, location category High, source `WiFi`.
+- *#0:* GIVEN a payload whose `Shipment.DeviceId` differs from `DeviceId`, THEN 200 `flagged` with `IDENTITY_MISMATCH` only (10.08 C raises nothing); sensor temperature 10.08, location category High, source `WiFi`.
 - *#3:* GIVEN probe 327.67, THEN `SENSOR_FAULT`, probe nulled, device temperature 4.63 (4.625 rounds half away from zero) used with no fallback flag.
 - *#5:* GIVEN epoch 1739561246, THEN `TIMESTAMP_SECONDS`, `timestamp` = 1739561246000.
-- *#6:* GIVEN probe -32768 and a `cell` location of 500 m, THEN `SENSOR_FAULT`, `location_source` = `Cellular`, category `Low`, `Shipment` null, so -18.5 C is not an excursion (no `TEMP_EXCURSION`).
+- *#6:* GIVEN probe -32768 and a `cell` location of 500 m, THEN `SENSOR_FAULT`, `location_source` = `Cellular`, category `Low`, `Shipment` null; the device temperature -18.5 C is stored as sent.
 - *#11:* GIVEN `EntryTimeUtc` 14:27:26Z but an epoch for 19:27:26Z, THEN 200 `accepted` with no flags; `timestamp` is the epoch.
-- *#7:* GIVEN `Dbm` and `Temperature.*` as strings and a shipment device mismatch, THEN `COERCED_TYPE` for each coerced field, `IDENTITY_MISMATCH` and `TEMP_EXCURSION`; temperature 10.5, `cellular_dbm` -100.00.
+- *#7:* GIVEN `Dbm` and `Temperature.*` as strings and a shipment device mismatch, THEN `COERCED_TYPE` for each coerced field, and `IDENTITY_MISMATCH`; temperature 10.5, `cellular_dbm` -100.00.
 
 ## F3 — Ingest, rejected
 

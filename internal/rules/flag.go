@@ -19,7 +19,6 @@ const (
 	CodeIdentityMismatch     = "IDENTITY_MISMATCH"
 	CodeTemperatureFallback  = "TEMPERATURE_FALLBACK"
 	CodeTemperatureConverted = "TEMPERATURE_CONVERTED"
-	CodeTempExcursion        = "TEMP_EXCURSION"
 	CodeDuplicateConflict    = "DUPLICATE_CONFLICT"
 )
 

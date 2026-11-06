@@ -1,2 +1,2 @@
-// Package domain holds excursion and impossible-travel checks. Designed, not built in M0-M7.
+// Package domain would hold the impossible-travel check. Designed, not built.
 package domain

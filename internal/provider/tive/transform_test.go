@@ -330,55 +330,16 @@ func TestEntryTimeUtcIsIgnored(t *testing.T) {
 	}
 }
 
-// TEMP_EXCURSION fires only when the payload carries a shipment (mapping.md); the band 2-8 C is inclusive.
-func TestTempExcursion(t *testing.T) {
-	ship := `"Shipment":{"Id":"S-1"},`
-	tests := []struct {
-		name    string
-		temp    string
-		extra   string
-		want    string // flag codes
-		field   string
-		wantVal float64
-	}{
-		{"in band", `{"Celsius":5}`, ship, "", "", 0},
-		{"lower bound is in band", `{"Celsius":2}`, ship, "", "", 0},
-		{"upper bound is in band", `{"Celsius":8}`, ship, "", "", 0},
-		{"just below", `{"Celsius":1.99}`, ship, "TEMP_EXCURSION", "Temperature.Celsius", 1.99},
-		{"just above", `{"Celsius":8.01}`, ship, "TEMP_EXCURSION", "Temperature.Celsius", 8.01},
-		{"warm with shipment", `{"Celsius":10.078125}`, ship, "TEMP_EXCURSION", "Temperature.Celsius", 10.078125},
-		{"frozen with shipment", `{"Celsius":-18.5}`, ship, "TEMP_EXCURSION", "Temperature.Celsius", -18.5},
-		{"warm but no shipment", `{"Celsius":22}`, ``, "", "", 0},
-		{"warm, shipment null", `{"Celsius":22}`, `"Shipment":null,`, "", "", 0},
-		{"shipment id only in ShipmentId", `{"Celsius":22}`, `"ShipmentId":"S-2",`, "TEMP_EXCURSION", "Temperature.Celsius", 22},
-		{"shipment without an id is not a shipment", `{"Celsius":22}`, `"Shipment":{"Carrier":"X"},`, "", "", 0},
-		{"probe value used on fallback", `{"Celsius":null},"ProbeTemperature":{"Celsius":12}`, ship, "TEMPERATURE_FALLBACK,TEMP_EXCURSION", "ProbeTemperature.Celsius", 12},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			temp := tt.temp
-			if !strings.Contains(temp, "}") || strings.Count(temp, "{") > strings.Count(temp, "}") {
-				temp += "}"
+// The service does not judge temperatures: a warm or frozen reading is stored as sent, with or without a shipment.
+// (PAXAFE has no field for an excursion, so there is no flag for one.)
+func TestNoTemperatureBandCheck(t *testing.T) {
+	for _, temp := range []string{"-18.5", "1.99", "5", "8.01", "10.078125", "22"} {
+		for name, extra := range map[string]string{"no shipment": ``, "with shipment": `"Shipment":{"Id":"S-1"},`} {
+			res := transform(t, `{`+head+extra+`"Temperature":{"Celsius":`+temp+`}}`)
+			if res.Status != provider.StatusAccepted || len(res.Flags) != 0 || res.Sensor == nil {
+				t.Fatalf("%s C, %s: %s %v", temp, name, res.Status, res.Flags)
 			}
-			res := transform(t, `{`+head+tt.extra+`"Temperature":`+temp+`}`)
-			if got := flagCodes(res); got != tt.want {
-				t.Fatalf("flags = %q, want %q", got, tt.want)
-			}
-			if tt.want == "" {
-				if res.Status != provider.StatusAccepted {
-					t.Fatalf("status %s", res.Status)
-				}
-				return
-			}
-			for _, f := range res.Flags {
-				if f.Code == "TEMP_EXCURSION" && (f.Field != tt.field || f.Value != tt.wantVal || f.Severity != "warn") {
-					t.Fatalf("flag %+v", f)
-				}
-			}
-			if res.Status != provider.StatusFlagged || res.Sensor == nil {
-				t.Fatalf("an excursion is flagged but the reading is still stored: %s %+v", res.Status, res.Sensor)
-			}
-		})
+		}
 	}
 }
 

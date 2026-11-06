@@ -4,7 +4,7 @@
 
 1. **Rounding is half away from zero**, applied only when PAXAFE JSON is emitted (-0.5625 → -0.563, 0.6875 → 0.688, 4.625 → 4.63).
 2. **Addresses are parsed conservatively** (see "Address parsing"): whatever precedes the locality is the `street` (null when nothing does), `full_address` is verbatim.
-3. **`TEMP_EXCURSION` only when a shipment exists.** If the payload carries a shipment (`Shipment.Id`, or `ShipmentId`) and the temperature used is outside 2-8 C (inclusive bounds, configurable), the flag is added and the reading is still stored. No shipment means no excursion, so a frozen sample without a shipment (sample 6, -18.5 C) is not flagged.
+3. **No temperature-band check.** The service does not judge whether a temperature is too warm or too cold: a reading outside the cold-chain range (for example 10.08 C or -18.5 C) is stored and emitted as sent, with no flag, with or without a shipment. PAXAFE's schemas have no field for an excursion; downstream systems decide.
 4. **`status` is `flagged` if and only if the event carries any flag**, whatever its severity; no flags means `accepted`.
 5. **`EntryTimeEpoch` is the event time. `EntryTimeUtc` is ignored**: a disagreement (sample 11 is 5 h apart) is not flagged.
 6. **The tenant comes from the API key only.** `AccountId` is stored as metadata (in each reading's `extras`) and never checked.

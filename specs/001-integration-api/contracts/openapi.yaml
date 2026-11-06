@@ -314,7 +314,6 @@ components:
             - IDENTITY_MISMATCH
             - TEMPERATURE_FALLBACK
             - TEMPERATURE_CONVERTED
-            - TEMP_EXCURSION
             - DUPLICATE_CONFLICT
         severity: { type: string, enum: [info, warn, error] }
         field: { type: string, example: Location.Latitude }

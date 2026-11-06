@@ -37,7 +37,6 @@ Flags raised before the rejection are still returned. A rejected event is stored
 | `IDENTITY_MISMATCH` | warn | `EntityName` ≠ `DeviceName`, or `Shipment.DeviceId` ≠ `DeviceId` | Kept as sent | rules `ENTITY-NAME-MISMATCH`, `SHIPMENT-DEVICE-MISMATCH` |
 | `TEMPERATURE_FALLBACK` | info | Device temperature missing/faulty, probe used | `temperature_source=probe` | transform |
 | `TEMPERATURE_CONVERTED` | info | `Celsius` null, `Fahrenheit` present | Celsius = (F−32)×5/9 | rule `TEMP-F-ONLY` |
-| `TEMP_EXCURSION` | warn | A shipment is present (`Shipment.Id` or `ShipmentId`) and the temperature used is outside 2-8 C (inclusive band, configurable) | Flag only; the reading is stored | transform |
 | `DUPLICATE_CONFLICT` | warn | Same `(tenant, imei, ts)`, different content | Per the tenant's conflict policy: `kept` (keep_first, default), `replaced` (keep_last) or `rejected` (reject) | store |
 | `IMPOSSIBLE_TRAVEL` | warn | Speed vs time-nearest neighbours > 1000 km/h | Flag only | domain — *designed, not built* |
 
