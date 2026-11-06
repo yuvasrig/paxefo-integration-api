@@ -9,8 +9,8 @@ import (
 
 func TestDefaultRuleset(t *testing.T) {
 	rs := defaultRules(t)
-	if rs.Version == "" || len(rs.Rules) != 16 {
-		t.Fatalf("version %q with %d rules, want a version and 16 rules", rs.Version, len(rs.Rules))
+	if rs.Version == "" || len(rs.Rules) != 15 {
+		t.Fatalf("version %q with %d rules, want a version and 15 rules", rs.Version, len(rs.Rules))
 	}
 }
 

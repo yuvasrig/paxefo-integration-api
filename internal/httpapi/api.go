@@ -41,8 +41,8 @@ func (a *API) Handler() http.Handler {
 		return middleware.Chain(h, chain...)
 	}
 	webhook := secured(a.webhook, middleware.BodyLimit(a.BodyLimit))
-	mux.Handle("POST /api/v1/webhook/tive", webhook)
-	mux.Handle("POST /api/webhook/tive", webhook) // the path named in the exercise
+	mux.Handle("POST /api/webhook/tive", webhook)    // the path the exercise requires
+	mux.Handle("POST /api/v1/webhook/tive", webhook) // versioned alias, same handler
 	mux.Handle("GET /api/v1/events/{id}", secured(a.getEvent))
 	mux.Handle("POST /api/v1/events/{id}/replay", secured(a.replay))
 	mux.Handle("GET /api/v1/readings", secured(a.readings))
@@ -66,7 +66,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// webhook implements POST /api/v1/webhook/tive (F1-R1).
+// webhook implements POST /api/webhook/tive and its alias /api/v1/webhook/tive (F1-R1).
 func (a *API) webhook(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	body, err := io.ReadAll(r.Body)
@@ -80,7 +80,7 @@ func (a *API) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := a.Ingest.Ingest(r.Context(), ingest.Request{
-		SubmittedBy: p.TenantID, RequestID: middleware.RequestIDFrom(r.Context()), Body: body,
+		TenantID: p.TenantID, RequestID: middleware.RequestIDFrom(r.Context()), Body: body,
 	})
 	if err != nil {
 		// The raw payload was not saved, so nothing is acknowledged: the sender should retry.

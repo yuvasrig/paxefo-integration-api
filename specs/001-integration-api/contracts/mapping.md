@@ -1,5 +1,14 @@
 # Tive → PAXAFE mapping
 
+## Pinned decisions
+
+1. **Rounding is half away from zero**, applied only when PAXAFE JSON is emitted (-0.5625 → -0.563, 0.6875 → 0.688, 4.625 → 4.63).
+2. **Addresses are parsed conservatively** (see "Address parsing"): `street` is always null, `full_address` is verbatim.
+3. **`TEMP_EXCURSION` only when a shipment exists.** If the payload carries a shipment (`Shipment.Id`, or `ShipmentId`) and the temperature used is outside 2-8 C (inclusive bounds, configurable), the flag is added and the reading is still stored. No shipment means no excursion, so a frozen sample without a shipment (sample 6, -18.5 C) is not flagged.
+4. **`status` is `flagged` if and only if the event carries any flag**, whatever its severity; no flags means `accepted`.
+5. **`EntryTimeEpoch` is the event time. `EntryTimeUtc` is ignored**: a disagreement (sample 11 is 5 h apart) is not flagged.
+6. **The tenant comes from the API key only.** `AccountId` is stored as metadata (in each reading's `extras`) and never checked.
+
 Source of truth: DESIGN.md §6. Stored values keep full precision; rounding happens only when the PAXAFE JSON is emitted. Rounding is half away from zero (`math.Round(x·10ⁿ)/10ⁿ`): -0.5625 → -0.563, 0.6875 → 0.688, 10.078125 → 10.08.
 
 Mapping runs after `rules.Apply` (coercion, sentinels, range checks), so inputs below are already cleaned. A field nulled by a rule maps to `null`.
@@ -59,7 +68,7 @@ Split `FormattedAddress` on `", "`. Only the tail is interpreted; anything unmat
 
 ## Kept outside PAXAFE output (stored in tables)
 
-Probe temperature, `Shipment.*` (→ `shipments`), `AccountId` (tenant routing), `Cellular.SignalStrength`, `Battery.Estimation`, `Battery.IsCharging`, `Location.GeolocationSourceName`, `Location.CellTowerUsedCount`, `Accuracy.Kilometers/Miles`, `PublicShipmentId`, `EntityName`.
+Probe temperature, `Shipment.*` (→ `shipments`), `AccountId` (metadata only), `Cellular.SignalStrength`, `Battery.Estimation`, `Battery.IsCharging`, `Location.GeolocationSourceName`, `Location.CellTowerUsedCount`, `Accuracy.Kilometers/Miles`, `PublicShipmentId`, `EntityName`.
 
 ## Edge decisions made in M1
 

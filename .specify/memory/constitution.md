@@ -6,7 +6,7 @@ Source: DESIGN.md §1.3. These principles outrank convenience. If code or a spec
 
 ### 1. No acknowledged data is ever lost
 The raw payload is committed (with its ledger row) before any 2xx is returned.
-*In code:* the ingest pipeline's first transaction is raw save; nothing is validated, rejected or transformed before it. Unknown tenants are routed to `common-pool`, not dropped.
+*In code:* the ingest pipeline's first transaction is raw save; nothing is validated, rejected or transformed before it. The tenant is the API key's, so there is nothing to look up before the raw save.
 
 ### 2. Raw payloads are immutable
 `raw_events` is append-only. Processing results live in `event_outcomes`.
@@ -17,7 +17,7 @@ An invalid optional field becomes null plus a quality flag. Every fix records ru
 *In code:* `rules.Apply` returns flags for every change it makes; protected fields accept only allow-listed strategies.
 
 ### 4. Reject only unusable records
-Reject (422) only when there is no device identity, no timestamp, no usable temperature and no valid coordinates, or the account belongs to another tenant. One bad field must not discard a valid reading.
+Reject (422) only when there is no device identity, no timestamp, no usable temperature and no valid coordinates. One bad field must not discard a valid reading.
 *In code:* the reject list in DESIGN.md §5 is exhaustive; anything else is accepted with flags.
 
 ### 5. Idempotent by construction

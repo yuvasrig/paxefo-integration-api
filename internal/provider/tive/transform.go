@@ -77,6 +77,9 @@ func (p *Provider) Transform(d doc.Doc, sc rules.Scope) (provider.Result, error)
 	}
 
 	res.Aux = buildAux(rd, probe)
+	if f := p.excursion(temp, source, res.Aux.Shipment != nil); f != nil {
+		extra = append(extra, *f)
+	}
 	res.Flags = append(append(append(res.Flags, ruled.Flags...), rd.flags...), extra...)
 	res.Errors = errs
 	if len(errs) > 0 {
@@ -98,13 +101,25 @@ func (p *Provider) Transform(d doc.Doc, sc rules.Scope) (provider.Result, error)
 	return res, nil
 }
 
+// statusOf: an event is flagged if and only if it carries any flag.
 func statusOf(flags []rules.Flag) string {
-	for _, f := range flags {
-		if f.Severity == rules.SeverityWarn || f.Severity == rules.SeverityError {
-			return provider.StatusFlagged
-		}
+	if len(flags) > 0 {
+		return provider.StatusFlagged
 	}
 	return provider.StatusAccepted
+}
+
+// excursion flags a temperature outside the cold-chain band, but only when the payload carries a shipment:
+// without one there is no product whose band could be breached (a frozen sample with no shipment is not an excursion).
+func (p *Provider) excursion(temp *float64, source string, hasShipment bool) *rules.Flag {
+	if temp == nil || !hasShipment || (*temp >= p.cfg.TempMinC && *temp <= p.cfg.TempMaxC) {
+		return nil
+	}
+	field := "Temperature.Celsius"
+	if source == paxafe.TemperatureSourceProbe {
+		field = "ProbeTemperature.Celsius"
+	}
+	return &rules.Flag{Code: rules.CodeTempExcursion, Severity: rules.SeverityWarn, Field: field, Value: *temp, Action: rules.ActionKept}
 }
 
 func hasCode(ps []rules.Problem, code string) bool {

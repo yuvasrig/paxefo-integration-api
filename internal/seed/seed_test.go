@@ -27,18 +27,13 @@ func TestSeed(t *testing.T) {
 	if err := seed.Run(ctx, st, &first); err != nil {
 		t.Fatal(err)
 	}
-	for _, tenant := range []string{"common-pool", "reviewer", "acme-pharma", "bioco"} {
+	for _, tenant := range []string{"reviewer", "acme-pharma", "bioco"} {
 		if ok, _ := st.TenantExists(ctx, tenant); !ok {
 			t.Fatalf("tenant %s missing", tenant)
 		}
 	}
-	for acct, want := range map[int64]string{478: "reviewer", 1001: "acme-pharma", 1002: "bioco"} {
-		if got, ok, _ := st.TenantForAccount(ctx, "Tive", acct); !ok || got != want {
-			t.Fatalf("account %d -> %q %v, want %s", acct, got, ok, want)
-		}
-	}
-	if _, ok, _ := st.TenantForAccount(ctx, "Tive", 999); ok {
-		t.Fatal("999 must stay unmapped so it lands in common-pool")
+	if ok, _ := st.TenantExists(ctx, "common-pool"); ok {
+		t.Fatal("there is no common-pool: the tenant comes from the API key only")
 	}
 
 	// One key per tenant, printed once and valid.
@@ -50,8 +45,8 @@ func TestSeed(t *testing.T) {
 			}
 		}
 	}
-	if len(plaintexts) != 4 {
-		t.Fatalf("expected 4 keys printed, got %d:\n%s", len(plaintexts), first.String())
+	if len(plaintexts) != 3 {
+		t.Fatalf("expected 3 keys printed, got %d:\n%s", len(plaintexts), first.String())
 	}
 	for _, p := range plaintexts {
 		if _, err := st.LookupAPIKey(ctx, auth.HashKey(p)); err != nil {
@@ -70,7 +65,7 @@ func TestSeed(t *testing.T) {
 		}
 	}
 	keys, _ := st.ListAPIKeys(ctx, "")
-	if len(keys) != 4 {
-		t.Fatalf("keys after rerun = %d, want 4", len(keys))
+	if len(keys) != 3 {
+		t.Fatalf("keys after rerun = %d, want 3", len(keys))
 	}
 }

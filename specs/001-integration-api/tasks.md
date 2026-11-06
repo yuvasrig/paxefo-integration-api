@@ -6,7 +6,7 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 - [x] T1.1 `provider/tive` tolerant types: numbers as strings, nulls, absent objects record original type. Tests: F2-R4, sample #7, fuzz seed corpus.
 - [x] T1.2 `Provider` interface (`Name`, `Parse`, `Transform`) + registry. Test: unknown provider name.
 - [x] T1.3 `rules` loader: embedded default, `RULES_PATH` override, startup validation (unknown strategy, unsafe action on protected field, duplicate ID). Tests: F13-R2.
-- [x] T1.4 `rules.Apply` per rule ID, one table case each: NUMERIC-STRING (F2-R4), NO-IDENTITY / NAME-RESOLVED (F3-R2, F5-R2), TS-SECONDS (F2-R5), TS-FUTURE (F3-R4), TS-UTC-MISMATCH (F2-R6, #11), TEMP-F-ONLY (F2-R9), TEMP-SENTINEL / PROBE-SENTINEL (F2-R2), HUMIDITY-RANGE / LUX-NEGATIVE / BATTERY-RANGE (F2-R3), LAT-RANGE / LON-RANGE (F2-R1), ENTITY-NAME-MISMATCH / SHIPMENT-DEVICE-MISMATCH (F2-R7). Every fix records rule ID, original, new (F2-R11).
+- [x] T1.4 `rules.Apply` per rule ID, one table case each: NUMERIC-STRING (F2-R4), NO-IDENTITY / NAME-RESOLVED (F3-R2, F5-R2), TS-SECONDS (F2-R5), TS-FUTURE (F3-R4), TEMP-F-ONLY (F2-R9), TEMP-SENTINEL / PROBE-SENTINEL (F2-R2), HUMIDITY-RANGE / LUX-NEGATIVE / BATTERY-RANGE (F2-R3), LAT-RANGE / LON-RANGE (F2-R1), ENTITY-NAME-MISMATCH / SHIPMENT-DEVICE-MISMATCH (F2-R7). Every fix records rule ID, original, new (F2-R11).
 - [x] T1.5 Strategies: `scale`, `coerce_number`, `fahrenheit_to_celsius`, `normalize_enum`, `derive_magnitude` (F2-R10).
 - [x] T1.6 `paxafe` records + rounding at marshal (half away from zero) (F1-R5). Table: -0.5625→-0.563, 0.6875→0.688, 4.625→4.63, 10.078125→10.08.
 - [x] T1.7 Transform mapping per `contracts/mapping.md`: temperature fallback (F2-R8), accuracy category incl. 500 m→Low (F2-R14), location source, address parsing cases, null handling, no-sensor-record case.
@@ -21,12 +21,12 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 - [x] T2.3 Concurrent insert of the same key → exactly one reading (F4-R1, F4-R4).
 - [x] T2.4 Conflict recording and device upsert "only if newer" (F4-R3, F5-R1).
 - [x] T2.5 Real `DeviceResolver`; validity windows; IMEI reuse across tenants (F5-R2, F5-R3, F5-R4).
-- [x] T2.6 `docker-compose.yml` Postgres 16 + API; `make seed` (tenants incl. `common-pool`, sources, one key each).
+- [x] T2.6 `docker-compose.yml` Postgres 16 + API; `make seed` (tenants reviewer, acme-pharma, bioco and one key each).
 - **Exit:** `docker compose up` + `make seed` works (verified locally 2026-11-05); integration tests green locally (CI service container configured, not yet run); migrations on Render Postgres: pending (Render deferred).
 
 ## M3 — Webhook endpoint (`m3-webhook`)
 - [x] T3.1 `auth`: key format, hash lookup, expiry/revocation (F6-R1, F6-R2).
-- [x] T3.2 Tenant routing: absent / own / unmapped→`common-pool` / other-tenant→reject (F3-R6, F3-R8, F3-R9).
+- [x] T3.2 Tenant from the API key only; `AccountId` is metadata and never checked (F3-R6).
 - [x] T3.3 `ingest` tx1 (raw + ledger) then pipeline then tx2; canonical-JSON hash (F1-R2, F4-R5).
 - [x] T3.4 Duplicate/conflict handling and status precedence (F4-R2, F4-R3, F4-R6).
 - [x] T3.5 Failure after tx1 → `failed`, 500; replay endpoint, idempotent, 409 when already ok (F7-R1…R4).
@@ -40,7 +40,7 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 - [x] T4.1 Middleware: request ID echo, recover, access log fields, 5 s server timeouts (F6-R6, F13-R6). Test: no keys/payloads in logs.
 - [x] T4.2 `/healthz`, `/readyz` (DB, migration version, backend, mode), `/metrics` (RED, per-stage, flags, rejects, pool, runtime) (F13-R3, R4, R7).
 - [x] T4.3 Graceful shutdown, 10 s drain (F13-R5).
-- [x] T4.4 CLI: `keys create|list|revoke`, `tenants create|map-source`.
+- [x] T4.4 CLI: `keys create|list|revoke`, `tenants create`.
 - [x] T4.5 `/docs` (Redoc) + `/openapi.yaml` embedded; `GET /api/v1/rules`.
 - **Exit (verified locally 2026-11-05):** log lines carry request_id, tenant_id, event_id, status, latency_ms and no keys or payloads (tested); `/metrics` shows request and per-stage histograms after the smoke run; `/docs` serves Redoc (page loads Redoc from a CDN).
 
@@ -49,3 +49,9 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 - [ ] T5.2 Seed Render DB; reviewer key with `--expires 2026-12-15`.
 - [ ] T5.3 CI → Render auto-deploy on `main`.
 - **Exit:** `scripts/smoke.sh https://<api>.onrender.com <reviewer-key>` passes 13/13; `/readyz` green; `/docs` reachable; cold start measured.
+
+## Change on 2026-11-06: simplifications that supersede the tasks above
+- Tenant from the API key only: no `tenant_sources`, no account routing, no `common-pool`, no `submitted_by`, no `TENANT_MISMATCH` / `UNKNOWN_ACCOUNT` / `ACCOUNT_ID_MISSING`, no `map-source` command.
+- `EntryTimeUtc` is ignored: no `TS-UTC-MISMATCH` rule, no `TIMESTAMP_MISMATCH`.
+- `status` is `flagged` iff any flag; `TEMP_EXCURSION` is built (only when a shipment exists).
+- `POST /api/webhook/tive` is the primary path; `/api/v1/webhook/tive` is an alias.

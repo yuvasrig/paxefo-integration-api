@@ -12,12 +12,8 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 )
 
-// Flags that ingest and the store add in M2-M3; the transform cannot produce them.
-var ingestLevelCodes = map[string]bool{
-	rules.CodeAccountIDMissing:  true,
-	rules.CodeUnknownAccount:    true,
-	rules.CodeDuplicateConflict: true,
-}
+// The store adds this flag when a key already exists; the transform cannot produce it.
+var ingestLevelCodes = map[string]bool{rules.CodeDuplicateConflict: true}
 
 type expectedFile struct {
 	SampleName string           `json:"sample_name"`
@@ -61,8 +57,8 @@ func TestGoldenSamples(t *testing.T) {
 			wantStatus := provider.StatusAccepted
 			if want.HTTPStatus == 422 {
 				wantStatus = provider.StatusRejected
-			} else if hasWarnOrError(wantFlags) {
-				wantStatus = provider.StatusFlagged
+			} else if len(wantFlags) > 0 {
+				wantStatus = provider.StatusFlagged // flagged if and only if there is any flag
 			}
 			if got.Status != wantStatus {
 				t.Errorf("status = %s, want %s", got.Status, wantStatus)
@@ -92,15 +88,6 @@ func withoutIngestCodes(fs []map[string]any) []map[string]any {
 		}
 	}
 	return out
-}
-
-func hasWarnOrError(fs []map[string]any) bool {
-	for _, f := range fs {
-		if s := f["severity"]; s == rules.SeverityWarn || s == rules.SeverityError {
-			return true
-		}
-	}
-	return false
 }
 
 // asMap converts a record (or nil pointer) to generic JSON for comparison.

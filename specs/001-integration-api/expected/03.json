@@ -64,5 +64,5 @@
     "location": true,
     "conflict": false
   },
-  "note": "IMPOSSIBLE_TRAVEL vs #2 is designed, not built (domain checks), so it is not expected."
+  "note": "IMPOSSIBLE_TRAVEL vs #2 is designed, not built."
 }

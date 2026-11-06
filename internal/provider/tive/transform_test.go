@@ -74,10 +74,10 @@ func TestTransformTemperature(t *testing.T) {
 		wantStatus string
 	}{
 		{"device temp preferred over probe", `{` + head + `"Temperature":{"Celsius":10.078125},"ProbeTemperature":{"Celsius":9.9}}`, 10.08, "device", "", provider.StatusAccepted},
-		{"F2-R8 probe fallback when device temp null", `{` + head + `"Temperature":{"Celsius":null},"ProbeTemperature":{"Celsius":9.9375}}`, 9.94, "probe", "TEMPERATURE_FALLBACK", provider.StatusAccepted},
+		{"F2-R8 probe fallback when device temp null", `{` + head + `"Temperature":{"Celsius":null},"ProbeTemperature":{"Celsius":9.9375}}`, 9.94, "probe", "TEMPERATURE_FALLBACK", provider.StatusFlagged},
 		{"F2-R8 probe fallback when device temp faulty", `{` + head + `"Temperature":{"Celsius":-32768},"ProbeTemperature":{"Celsius":9.5}}`, 9.5, "probe", "SENSOR_FAULT,TEMPERATURE_FALLBACK", provider.StatusFlagged},
 		{"F2-R2 faulty probe unused when device ok", `{` + head + `"Temperature":{"Celsius":4.625},"ProbeTemperature":{"Celsius":327.67}}`, 4.63, "device", "SENSOR_FAULT", provider.StatusFlagged},
-		{"F2-R9 Fahrenheit only", `{` + head + `"Temperature":{"Fahrenheit":50}}`, 10.0, "device", "TEMPERATURE_CONVERTED", provider.StatusAccepted},
+		{"F2-R9 Fahrenheit only", `{` + head + `"Temperature":{"Fahrenheit":50}}`, 10.0, "device", "TEMPERATURE_CONVERTED", provider.StatusFlagged},
 		{"both temps absent but humidity ok and coordinates ok", `{` + head + `"Humidity":{"Percentage":40},"Location":{"Latitude":1,"Longitude":2}}`, nil, "", "", provider.StatusAccepted},
 		{"F2-R15 wrong type temp", `{` + head + `"Temperature":{"Celsius":{"x":1}},"Location":{"Latitude":1,"Longitude":2}}`, nil, "", "INVALID_TYPE", provider.StatusFlagged},
 	}
@@ -297,7 +297,7 @@ func TestTransformRejectionKeepsFlags_F3R7(t *testing.T) {
 // F5-R2: name-only payload is resolved.
 func TestTransformResolvedByName_F5R2(t *testing.T) {
 	res := transform(t, `{"DeviceName":"A571992","EntryTimeEpoch":1739215646000,"Temperature":{"Celsius":10}}`)
-	if res.Status != provider.StatusAccepted || flagCodes(res) != "DEVICE_RESOLVED_BY_NAME" {
+	if res.Status != provider.StatusFlagged || flagCodes(res) != "DEVICE_RESOLVED_BY_NAME" {
 		t.Fatalf("status %s flags %q errors %v", res.Status, flagCodes(res), res.Errors)
 	}
 	if res.Sensor.DeviceIMEI != "863257063350583" || res.Sensor.DeviceID != "A571992" {
@@ -305,13 +305,80 @@ func TestTransformResolvedByName_F5R2(t *testing.T) {
 	}
 }
 
-// Status: info flags stay accepted; warn/error flags make it flagged.
+// An event is flagged if and only if it carries any flag, whatever the severity.
 func TestTransformStatus(t *testing.T) {
-	if got := transform(t, `{`+head+`"Temperature":{"Celsius":"10.5"}}`).Status; got != provider.StatusAccepted {
-		t.Fatalf("COERCED_TYPE is info, status = %s", got)
+	if got := transform(t, `{`+head+`"Temperature":{"Celsius":10}}`); got.Status != provider.StatusAccepted || len(got.Flags) != 0 {
+		t.Fatalf("no flags means accepted: %s %v", got.Status, got.Flags)
+	}
+	if got := transform(t, `{`+head+`"Temperature":{"Celsius":"10.5"}}`).Status; got != provider.StatusFlagged {
+		t.Fatalf("an info flag (COERCED_TYPE) still means flagged, got %s", got)
 	}
 	if got := transform(t, `{`+head+`"Temperature":{"Celsius":10},"Humidity":{"Percentage":150}}`).Status; got != provider.StatusFlagged {
-		t.Fatalf("OUT_OF_RANGE is warn, status = %s", got)
+		t.Fatalf("OUT_OF_RANGE: status = %s", got)
+	}
+}
+
+// EntryTimeUtc is ignored: EntryTimeEpoch is the event time, and a disagreement is not an event.
+func TestEntryTimeUtcIsIgnored(t *testing.T) {
+	res := transform(t, `{`+head+`"EntryTimeUtc":"2025-02-10T14:27:26Z","Temperature":{"Celsius":10}}`) // 5 h off
+	if res.Status != provider.StatusAccepted || len(res.Flags) != 0 || res.Sensor.Timestamp != 1739215646000 {
+		t.Fatalf("%s %v %+v", res.Status, res.Flags, res.Sensor)
+	}
+	res = transform(t, `{`+head+`"EntryTimeUtc":"garbage","Temperature":{"Celsius":10}}`)
+	if res.Status != provider.StatusAccepted {
+		t.Fatalf("an unparsable EntryTimeUtc is ignored too: %s", res.Status)
+	}
+}
+
+// TEMP_EXCURSION fires only when the payload carries a shipment (mapping.md); the band 2-8 C is inclusive.
+func TestTempExcursion(t *testing.T) {
+	ship := `"Shipment":{"Id":"S-1"},`
+	tests := []struct {
+		name    string
+		temp    string
+		extra   string
+		want    string // flag codes
+		field   string
+		wantVal float64
+	}{
+		{"in band", `{"Celsius":5}`, ship, "", "", 0},
+		{"lower bound is in band", `{"Celsius":2}`, ship, "", "", 0},
+		{"upper bound is in band", `{"Celsius":8}`, ship, "", "", 0},
+		{"just below", `{"Celsius":1.99}`, ship, "TEMP_EXCURSION", "Temperature.Celsius", 1.99},
+		{"just above", `{"Celsius":8.01}`, ship, "TEMP_EXCURSION", "Temperature.Celsius", 8.01},
+		{"warm with shipment", `{"Celsius":10.078125}`, ship, "TEMP_EXCURSION", "Temperature.Celsius", 10.078125},
+		{"frozen with shipment", `{"Celsius":-18.5}`, ship, "TEMP_EXCURSION", "Temperature.Celsius", -18.5},
+		{"warm but no shipment", `{"Celsius":22}`, ``, "", "", 0},
+		{"warm, shipment null", `{"Celsius":22}`, `"Shipment":null,`, "", "", 0},
+		{"shipment id only in ShipmentId", `{"Celsius":22}`, `"ShipmentId":"S-2",`, "TEMP_EXCURSION", "Temperature.Celsius", 22},
+		{"shipment without an id is not a shipment", `{"Celsius":22}`, `"Shipment":{"Carrier":"X"},`, "", "", 0},
+		{"probe value used on fallback", `{"Celsius":null},"ProbeTemperature":{"Celsius":12}`, ship, "TEMPERATURE_FALLBACK,TEMP_EXCURSION", "ProbeTemperature.Celsius", 12},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			temp := tt.temp
+			if !strings.Contains(temp, "}") || strings.Count(temp, "{") > strings.Count(temp, "}") {
+				temp += "}"
+			}
+			res := transform(t, `{`+head+tt.extra+`"Temperature":`+temp+`}`)
+			if got := flagCodes(res); got != tt.want {
+				t.Fatalf("flags = %q, want %q", got, tt.want)
+			}
+			if tt.want == "" {
+				if res.Status != provider.StatusAccepted {
+					t.Fatalf("status %s", res.Status)
+				}
+				return
+			}
+			for _, f := range res.Flags {
+				if f.Code == "TEMP_EXCURSION" && (f.Field != tt.field || f.Value != tt.wantVal || f.Severity != "warn") {
+					t.Fatalf("flag %+v", f)
+				}
+			}
+			if res.Status != provider.StatusFlagged || res.Sensor == nil {
+				t.Fatalf("an excursion is flagged but the reading is still stored: %s %+v", res.Status, res.Sensor)
+			}
+		})
 	}
 }
 

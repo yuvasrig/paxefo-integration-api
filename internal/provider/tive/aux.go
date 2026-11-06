@@ -33,7 +33,9 @@ func buildAux(rd *reader, probe *float64) provider.Aux {
 	putNum(aux.LocationExtras, "cell_towers", "Location.CellTowerUsedCount")
 	putNum(aux.LocationExtras, "accuracy_km", "Location.Accuracy.Kilometers")
 	putNum(aux.LocationExtras, "accuracy_miles", "Location.Accuracy.Miles")
+	// AccountId is stored as metadata only; it never routes or validates anything.
 	putNum(aux.LocationExtras, "account_id", "AccountId")
+	putNum(aux.SensorExtras, "account_id", "AccountId")
 
 	id, _ := rd.str("Shipment.Id")
 	if id == "" {

@@ -92,8 +92,6 @@ func newEnv(t *testing.T) *env {
 		must(t, pg.CreateAPIKey(ctx, id, "k-"+id, k.Prefix, k.Hash, nil))
 		e.keys[id] = k.Plaintext
 	}
-	must(t, pg.MapSource(ctx, "reviewer", "Tive", 478))
-	must(t, pg.MapSource(ctx, "acme-pharma", "Tive", 1001))
 
 	rs, err := rules.Default()
 	must(t, err)
@@ -148,7 +146,7 @@ func (e *env) do(method, path, key string, body []byte, hdr ...string) (int, htt
 
 func (e *env) post(tenant string, body []byte) (int, map[string]any) {
 	e.t.Helper()
-	code, _, b := e.do("POST", "/api/v1/webhook/tive", e.keys[tenant], body)
+	code, _, b := e.do("POST", "/api/webhook/tive", e.keys[tenant], body)
 	var m map[string]any
 	_ = json.Unmarshal(b, &m)
 	return code, m
@@ -214,14 +212,9 @@ func TestSamplesEndToEnd(t *testing.T) {
 		if !reflect.DeepEqual(sent, stored) {
 			t.Errorf("%s: stored raw payload differs from what was sent", name)
 		}
-		if i == 9 {
-			if n := e.countRaw("common-pool"); n != 1 {
-				t.Errorf("sample 9 must be owned by common-pool, got %d raw events there", n)
-			}
-		}
 	}
 
-	// Readings: the reviewer sees its own device history; sample 9's device lives in common-pool.
+	// Readings: the key's tenant sees every device it sent, including sample 9 (AccountId 999 is only metadata).
 	code, _, body := e.do("GET", "/api/v1/readings?device_id=B234567", e.keys["reviewer"], nil)
 	var page struct {
 		Items []struct{ Timestamp int64 }
@@ -231,8 +224,12 @@ func TestSamplesEndToEnd(t *testing.T) {
 		t.Errorf("B234567 readings: %d %s", code, body)
 	}
 	_, _, body = e.do("GET", "/api/v1/readings?device_id=F678901", e.keys["reviewer"], nil)
+	if !strings.Contains(string(body), `"timestamp":1739734046000`) {
+		t.Errorf("F678901 (sample 9) must be readable by the tenant that sent it: %s", body)
+	}
+	_, _, body = e.do("GET", "/api/v1/readings?device_id=F678901", e.keys["acme-pharma"], nil)
 	if !strings.Contains(string(body), `"items":[]`) {
-		t.Errorf("F678901 readings must not be visible to reviewer: %s", body)
+		t.Errorf("another tenant must not see it: %s", body)
 	}
 }
 
@@ -342,22 +339,30 @@ func TestBodyLimitAndInvalidJSON(t *testing.T) {
 	}
 }
 
-// F3-R6: an account mapped to another tenant is rejected and nothing lands in that tenant.
-func TestTenantMismatch_F3R6(t *testing.T) {
+// The tenant comes from the API key only. The payload's AccountId is stored as metadata and never checked,
+// so any value (or none) gives the same answer and the event always lands in the key's tenant.
+func TestAccountIDIsMetadataOnly(t *testing.T) {
 	e := newEnv(t)
-	body := bytes.Replace(sample(t, 0), []byte(`"AccountId": 478`), []byte(`"AccountId": 1001`), 1)
-	code, got := e.post("reviewer", body)
-	if code != 422 || got["status"] != "rejected" || !strings.Contains(fmt.Sprint(got["errors"]), "TENANT_MISMATCH") {
-		t.Fatalf("%d %v", code, got)
+	for _, acct := range []string{`"AccountId": 478`, `"AccountId": 1001`, `"AccountId": 999`, `"AccountId": "abc"`} {
+		body := bytes.Replace(sample(t, 0), []byte(`"AccountId": 478`), []byte(acct), 1)
+		// Changing AccountId changes the payload, so after the first send the same reading is a conflict, never a rejection.
+		code, got := e.post("reviewer", body)
+		if code != 200 || (got["status"] != "flagged" && got["status"] != "conflict") {
+			t.Fatalf("%s: %d %v", acct, code, got)
+		}
+		if strings.Contains(fmt.Sprint(got["errors"]), "TENANT") || strings.Contains(fmt.Sprint(got["flags"]), "ACCOUNT") {
+			t.Fatalf("%s: AccountId must not produce errors or flags: %v", acct, got)
+		}
 	}
 	if n := e.countRaw("acme-pharma"); n != 0 {
-		t.Fatalf("acme-pharma has %d raw events, want 0", n)
+		t.Fatalf("nothing may land in another tenant, got %d", n)
 	}
-	if n := e.countRaw("reviewer"); n != 1 {
-		t.Fatalf("the rejected event is kept under the sender, got %d", n)
-	}
-	if code, _, _ := e.do("GET", "/api/v1/events/"+got["event_id"].(string), e.keys["acme-pharma"], nil); code != 404 {
-		t.Fatalf("acme must not see it: %d", code)
+	var acct *float64
+	must(t, e.st.WithTenantTx(ctx, "reviewer", func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT (extras->>'account_id')::float8 FROM sensor_readings LIMIT 1`).Scan(&acct)
+	}))
+	if acct == nil || *acct != 478 {
+		t.Fatalf("AccountId should be kept as metadata, got %v", acct)
 	}
 }
 
@@ -449,13 +454,13 @@ func TestReplayRejectedAfterDeviceKnown_F7R2(t *testing.T) {
 
 func TestAliasPathAndRequestID(t *testing.T) {
 	e := newEnv(t)
-	code, hdr, b := e.do("POST", "/api/webhook/tive", e.keys["reviewer"], sample(t, 2), "X-Request-ID", "my-req-1")
+	code, hdr, b := e.do("POST", "/api/v1/webhook/tive", e.keys["reviewer"], sample(t, 2), "X-Request-ID", "my-req-1")
 	var got map[string]any
 	_ = json.Unmarshal(b, &got)
 	if code != 200 || got["status"] != "accepted" || hdr.Get("X-Request-ID") != "my-req-1" || got["request_id"] != "my-req-1" {
 		t.Fatalf("%d %s %v", code, b, hdr)
 	}
-	_, hdr, _ = e.do("POST", "/api/v1/webhook/tive", e.keys["reviewer"], sample(t, 3), "X-Request-ID", "bad id with spaces")
+	_, hdr, _ = e.do("POST", "/api/webhook/tive", e.keys["reviewer"], sample(t, 3), "X-Request-ID", "bad id with spaces")
 	if id := hdr.Get("X-Request-ID"); !strings.HasPrefix(id, "req_") {
 		t.Fatalf("an unusable request id is replaced, got %q", id)
 	}

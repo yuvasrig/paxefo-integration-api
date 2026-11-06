@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,35 +37,6 @@ func (s *PGStore) TenantExists(ctx context.Context, id string) (bool, error) {
 		return false, fmt.Errorf("store: tenant exists: %w", err)
 	}
 	return ok, nil
-}
-
-// MapSource maps a provider account (Tive AccountId) to a tenant.
-func (s *PGStore) MapSource(ctx context.Context, tenantID, providerName string, accountID int64) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO tenant_sources (tenant_id, provider, provider_account_id) VALUES ($1, $2, $3)
-		ON CONFLICT (provider, provider_account_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
-		tenantID, providerName, strconv.FormatInt(accountID, 10))
-	if err != nil {
-		return fmt.Errorf("store: map source: %w", err)
-	}
-	return nil
-}
-
-// TenantForAccount returns the tenant a provider account is mapped to; ok is false when unmapped.
-func (s *PGStore) TenantForAccount(ctx context.Context, providerName string, accountID int64) (tenantID string, ok bool, err error) {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
-	err = s.pool.QueryRow(ctx, `SELECT tenant_id FROM tenant_sources WHERE provider = $1 AND provider_account_id = $2`,
-		providerName, strconv.FormatInt(accountID, 10)).Scan(&tenantID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("store: tenant for account: %w", err)
-	}
-	return tenantID, true, nil
 }
 
 // CreateAPIKey stores a key hash for a tenant.

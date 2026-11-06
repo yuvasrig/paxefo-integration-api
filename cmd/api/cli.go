@@ -17,12 +17,11 @@ import (
 
 const adminUsage = `usage:
   api serve                                            run the server (default)
-  api seed                                             create demo tenants, account mappings and one key each
+  api seed                                             create demo tenants and one key each
   api keys create --tenant T [--name N] [--expires YYYY-MM-DD]
   api keys list [--tenant T]
   api keys revoke ID
   api tenants create --id ID [--name NAME]
-  api tenants map-source --tenant T --account N [--provider Tive]
 `
 
 // runAdmin runs the operator commands against the database (keys, tenants, seed).
@@ -142,27 +141,6 @@ func runTenants(ctx context.Context, st *store.PGStore, args []string, out io.Wr
 			return err
 		}
 		fmt.Fprintf(out, "tenant %s ready\n", *id)
-		return nil
-	case "map-source":
-		fs := newFlags("tenants map-source", out)
-		tenant := fs.String("tenant", "", "tenant id (required)")
-		account := fs.Int64("account", 0, "provider account id, for Tive the AccountId (required)")
-		provider := fs.String("provider", "Tive", "provider name")
-		if err := fs.Parse(rest); err != nil {
-			return err
-		}
-		if *tenant == "" || *account == 0 {
-			return errors.New("tenants map-source: --tenant and --account are required")
-		}
-		if ok, err := st.TenantExists(ctx, *tenant); err != nil {
-			return err
-		} else if !ok {
-			return fmt.Errorf("tenants map-source: tenant %q does not exist", *tenant)
-		}
-		if err := st.MapSource(ctx, *tenant, *provider, *account); err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "%s account %d now maps to tenant %s\n", *provider, *account, *tenant)
 		return nil
 	}
 	return fmt.Errorf("tenants: unknown subcommand %q\n%s", sub, adminUsage)

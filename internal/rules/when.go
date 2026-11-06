@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/doc"
 )
@@ -125,28 +124,11 @@ func (t target) resolveName() (string, bool) {
 	return t.sc.Devices.ResolveByName(s)
 }
 
-// differs compares the target with another field. With a tolerance the values are an epoch
-// (ms) and an RFC 3339 time; otherwise they are compared as text. Absent values never differ.
+// differs compares the target with another field as text. Absent or null values never differ.
 func (r *Rule) differs(t target) bool {
 	other, ok := t.d.Get(r.When.DiffersFrom)
 	if !ok || other == nil || t.val == nil {
 		return false
-	}
-	if r.When.Tolerance != "" {
-		ms, ok1 := number(t.val)
-		str, ok2 := other.(string)
-		if !ok1 || !ok2 {
-			return false
-		}
-		parsed, err := time.Parse(time.RFC3339, str)
-		if err != nil {
-			return false
-		}
-		diff := time.Duration(int64(ms)-parsed.UnixMilli()) * time.Millisecond
-		if diff < 0 {
-			diff = -diff
-		}
-		return diff > r.tolerance
 	}
 	a, ok1 := text(t.val)
 	b, ok2 := text(other)

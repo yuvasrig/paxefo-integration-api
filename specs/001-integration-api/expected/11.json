@@ -2,18 +2,9 @@
   "sample_index": 11,
   "sample_name": "Vaccine Shipment Southbound",
   "http_status": 200,
-  "status": "flagged",
+  "status": "accepted",
   "owning_tenant": "reviewer",
-  "flags": [
-    {
-      "code": "TIMESTAMP_MISMATCH",
-      "severity": "warn",
-      "field": "EntryTimeEpoch",
-      "rule_id": "TS-UTC-MISMATCH",
-      "value": 1739647646000,
-      "action": "kept"
-    }
-  ],
+  "flags": [],
   "errors": [],
   "sensor": {
     "device_id": "B234567",
@@ -64,5 +55,5 @@
     "location": true,
     "conflict": false
   },
-  "note": "EntryTimeUtc (14:27:26Z) is 5 h before the epoch (19:27:26Z). Epoch is kept. This sample was assumed clean in DESIGN.md until checked."
+  "note": "EntryTimeUtc is ignored (it is 5 h off the epoch); EntryTimeEpoch is the event time. Accepted with no flags."
 }

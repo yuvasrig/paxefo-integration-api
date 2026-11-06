@@ -38,3 +38,17 @@ func TestAuxNoShipment(t *testing.T) {
 		t.Fatalf("no shipment id means no shipment: %+v", res.Aux.Shipment)
 	}
 }
+
+// AccountId is stored as metadata and never routes, validates or flags anything.
+func TestAccountIDIsMetadataOnly(t *testing.T) {
+	for _, acct := range []string{`"AccountId":478,`, `"AccountId":999,`, `"AccountId":"not a number",`, ``} {
+		res := transform(t, `{`+head+acct+`"Temperature":{"Celsius":5}}`)
+		if res.Status != "accepted" || len(res.Flags) != 0 || len(res.Errors) != 0 {
+			t.Fatalf("%q: %s %v %v", acct, res.Status, res.Flags, res.Errors)
+		}
+	}
+	res := transform(t, `{`+head+`"AccountId":999,"Temperature":{"Celsius":5},"Location":{"Latitude":1,"Longitude":2}}`)
+	if res.Aux.SensorExtras["account_id"] != 999.0 || res.Aux.LocationExtras["account_id"] != 999.0 {
+		t.Fatalf("extras %v %v", res.Aux.SensorExtras, res.Aux.LocationExtras)
+	}
+}

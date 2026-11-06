@@ -2,17 +2,9 @@
   "sample_index": 9,
   "sample_name": "Clinical Supply Shipment",
   "http_status": 200,
-  "status": "flagged",
-  "owning_tenant": "common-pool",
-  "flags": [
-    {
-      "code": "UNKNOWN_ACCOUNT",
-      "severity": "warn",
-      "field": "AccountId",
-      "value": 999,
-      "action": "kept"
-    }
-  ],
+  "status": "accepted",
+  "owning_tenant": "reviewer",
+  "flags": [],
   "errors": [],
   "sensor": {
     "device_id": "F678901",
@@ -63,5 +55,5 @@
     "location": true,
     "conflict": false
   },
-  "note": "Stored under tenant common-pool. Event readable with the reviewer key; readings are not."
+  "note": "AccountId 999 is stored as metadata and nothing else: the tenant comes from the API key, so this is a normal sample."
 }

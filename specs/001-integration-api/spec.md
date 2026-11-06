@@ -4,26 +4,26 @@ Source of truth: DESIGN.md. This spec states testable requirements in EARS form.
 
 EARS patterns: `WHEN <event>, THE SYSTEM SHALL <response>` · `IF <condition>, THEN THE SYSTEM SHALL …` · `THE SYSTEM SHALL …` (always).
 
-Test precondition (unless stated): fresh `reviewer` tenant, Tive `AccountId` 478 mapped to it, 999 unmapped, samples sent in order 0 → 12.
+Test precondition (unless stated): an empty database, one tenant, samples sent in order 0 → 12 with that tenant's API key. The files in `expected/` are the golden outputs.
 
-Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Timescale, domain checks (`TEMP_EXCURSION`, `IMPOSSIBLE_TRAVEL`).
+Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Timescale, the `IMPOSSIBLE_TRAVEL` check. (`TEMP_EXCURSION` is built: F2-R16.)
 
 ---
 
 ## F1 — Ingest, happy path
 
-- **F1-R1** WHEN a valid POST arrives at `/api/v1/webhook/tive` or `/api/webhook/tive` with a valid API key, THE SYSTEM SHALL process it identically on both paths.
+- **F1-R1** WHEN a valid POST arrives at `/api/webhook/tive` (the path the exercise requires) or its alias `/api/v1/webhook/tive` with a valid API key, THE SYSTEM SHALL process it identically on both paths.
 - **F1-R2** WHEN a payload is processed, THE SYSTEM SHALL commit the raw payload and one ledger row before returning any 2xx.
 - **F1-R3** WHEN a payload has a usable temperature or other sensor value, THE SYSTEM SHALL emit a PAXAFE sensor record per `contracts/mapping.md`.
 - **F1-R4** WHEN a payload has valid coordinates, THE SYSTEM SHALL emit a PAXAFE location record per `contracts/mapping.md`.
 - **F1-R5** THE SYSTEM SHALL round only when emitting PAXAFE JSON (half away from zero) and store full precision.
 - **F1-R6** THE SYSTEM SHALL validate every emitted record against the PAXAFE sensor/location JSON Schemas.
-- **F1-R7** WHEN processing completes without flags of severity warn or error, THE SYSTEM SHALL respond 200 with `status: accepted`, the PAXAFE output, empty `errors`, and an `event_id` and `request_id`.
+- **F1-R7** WHEN processing completes with no flags at all, THE SYSTEM SHALL respond 200 with `status: accepted`, the PAXAFE output, empty `errors`, and an `event_id` and `request_id`.
 - **F1-R8** THE SYSTEM SHALL accept unknown extra fields and keep them in the raw payload.
 
 **Acceptance (Given/When/Then)**
 - *#2:* GIVEN a clean GPS payload, WHEN posted, THEN 200 `accepted`, one sensor and one location record, `location_source` = `GPS`, no flags.
-- *#10:* GIVEN a payload with null probe values, null accuracy and null `LocationMethod`, WHEN posted, THEN 200 `accepted` (only an info flag), `location_accuracy`, category and source are `null`.
+- *#10:* GIVEN a payload with null probe values, null accuracy and null `LocationMethod`, WHEN posted, THEN 200 `accepted` with no flags, `location_accuracy`, category and source are `null`.
 - *F1-R1:* GIVEN #2, WHEN posted to both paths on two fresh tenants, THEN the responses are identical apart from ids.
 
 ## F2 — Ingest, partial or flagged
@@ -33,24 +33,25 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F2-R3** WHEN `Humidity.Percentage` ∉ [0, 100], `Light.Lux` < 0 or `Battery.Percentage` ∉ [0, 100], THE SYSTEM SHALL set it to null AND add flag `OUT_OF_RANGE`.
 - **F2-R4** WHEN a numeric field arrives as a numeric string, THE SYSTEM SHALL parse it AND add flag `COERCED_TYPE` (one per field) AND keep the parsed value.
 - **F2-R5** WHEN `EntryTimeEpoch` < 1e12, THE SYSTEM SHALL multiply it by 1000 AND add flag `TIMESTAMP_SECONDS`.
-- **F2-R6** WHEN `EntryTimeEpoch` and `EntryTimeUtc` differ by more than 1 s (after F2-R5), THE SYSTEM SHALL keep the epoch AND add flag `TIMESTAMP_MISMATCH`.
+- **F2-R6** THE SYSTEM SHALL ignore `EntryTimeUtc`: `EntryTimeEpoch` is the event time, and a disagreement between the two SHALL NOT raise a flag.
 - **F2-R7** WHEN `EntityName` ≠ `DeviceName`, or `Shipment.DeviceId` ≠ `DeviceId`, THE SYSTEM SHALL keep the values as sent AND add flag `IDENTITY_MISMATCH`.
 - **F2-R8** WHEN `Temperature.Celsius` is null or nulled by F2-R2 and `ProbeTemperature.Celsius` is usable, THE SYSTEM SHALL use the probe value AND set `temperature_source = probe` AND add flag `TEMPERATURE_FALLBACK`.
 - **F2-R9** WHEN `Temperature.Celsius` is null and `Temperature.Fahrenheit` is present, THE SYSTEM SHALL compute Celsius = (F − 32) × 5/9 AND add flag `TEMPERATURE_CONVERTED`.
 - **F2-R10** WHEN `Accelerometer.G` is missing and X, Y, Z are present, THE SYSTEM SHALL set magnitude = √(x²+y²+z²).
 - **F2-R11** THE SYSTEM SHALL record, for every fix or nullification, the rule ID, the original value and the new value.
-- **F2-R12** WHEN any flag of severity warn or error is present and the event is not rejected, duplicate or conflict, THE SYSTEM SHALL respond 200 with `status: flagged`.
-- **F2-R13** WHEN only info flags are present, THE SYSTEM SHALL respond `accepted`.
+- **F2-R12** WHEN any flag is present, whatever its severity, and the event is not rejected, duplicate or conflict, THE SYSTEM SHALL respond 200 with `status: flagged`.
+- **F2-R13** WHEN no flag is present, THE SYSTEM SHALL respond `accepted`.
+- **F2-R16** WHEN the payload carries a shipment (`Shipment.Id` or `ShipmentId`) AND the temperature used is outside the band 2-8 C (inclusive bounds, configurable), THE SYSTEM SHALL add flag `TEMP_EXCURSION` (field = the source of the temperature) AND still store the reading. A payload without a shipment is never an excursion.
 - **F2-R15** WHEN a field that should be a number is a non-numeric string, an object or an array, THE SYSTEM SHALL set it to null AND add flag `INVALID_TYPE`.
 - **F2-R14** WHEN `Location.Accuracy.Meters` is present, THE SYSTEM SHALL set the accuracy category High if < 50, Medium if < 500, else Low (thresholds configurable).
 
 **Acceptance**
-- *#0:* GIVEN a clean payload whose `Shipment.DeviceId` differs from `DeviceId`, THEN 200 `flagged` with `IDENTITY_MISMATCH`; sensor temperature 10.08, location category High, source `WiFi`.
+- *#0:* GIVEN a payload whose `Shipment.DeviceId` differs from `DeviceId` and whose temperature is 10.08 C with a shipment present, THEN 200 `flagged` with `IDENTITY_MISMATCH` and `TEMP_EXCURSION`; sensor temperature 10.08, location category High, source `WiFi`.
 - *#3:* GIVEN probe 327.67, THEN `SENSOR_FAULT`, probe nulled, device temperature 4.63 (4.625 rounds half away from zero) used with no fallback flag.
-- *#5:* GIVEN epoch 1739561246, THEN `TIMESTAMP_SECONDS`, `timestamp` = 1739561246000, no `TIMESTAMP_MISMATCH`.
-- *#6:* GIVEN probe -32768 and a `cell` location of 500 m, THEN `SENSOR_FAULT`, `location_source` = `Cellular`, category `Low`, `Shipment` null accepted.
-- *#11:* GIVEN `EntryTimeUtc` 14:27:26Z and epoch for 19:27:26Z, THEN `TIMESTAMP_MISMATCH`, epoch kept as `timestamp`, 200 `flagged`.
-- *#7:* GIVEN `Dbm` and `Temperature.*` as strings and a shipment device mismatch, THEN `COERCED_TYPE` for each coerced field and `IDENTITY_MISMATCH`; temperature 10.5, `cellular_dbm` -100.00.
+- *#5:* GIVEN epoch 1739561246, THEN `TIMESTAMP_SECONDS`, `timestamp` = 1739561246000.
+- *#6:* GIVEN probe -32768 and a `cell` location of 500 m, THEN `SENSOR_FAULT`, `location_source` = `Cellular`, category `Low`, `Shipment` null, so -18.5 C is not an excursion (no `TEMP_EXCURSION`).
+- *#11:* GIVEN `EntryTimeUtc` 14:27:26Z but an epoch for 19:27:26Z, THEN 200 `accepted` with no flags; `timestamp` is the epoch.
+- *#7:* GIVEN `Dbm` and `Temperature.*` as strings and a shipment device mismatch, THEN `COERCED_TYPE` for each coerced field, `IDENTITY_MISMATCH` and `TEMP_EXCURSION`; temperature 10.5, `cellular_dbm` -100.00.
 
 ## F3 — Ingest, rejected
 
@@ -59,15 +60,13 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F3-R3** IF `EntryTimeEpoch` is missing or invalid, THEN THE SYSTEM SHALL reject with 422 `NO_TIMESTAMP`.
 - **F3-R4** IF the timestamp is more than 5 minutes ahead of server time, THEN THE SYSTEM SHALL reject with 422 `TIMESTAMP_FUTURE`.
 - **F3-R5** IF there is no usable temperature AND no valid coordinates, THEN THE SYSTEM SHALL reject with 422 `NO_USABLE_DATA`.
-- **F3-R6** IF `AccountId` maps to a known tenant other than the API key's, THEN THE SYSTEM SHALL reject with 422 `TENANT_MISMATCH` AND write nothing to the other tenant.
+- **F3-R6** THE SYSTEM SHALL take the tenant from the API key only. The payload's `AccountId` SHALL be stored as metadata and never checked: no value, and no missing value, changes the outcome.
 - **F3-R7** WHEN an event is rejected, THE SYSTEM SHALL keep its raw payload, record outcome `rejected` with reasons, and return flags raised before the rejection.
-- **F3-R8** IF `AccountId` is absent, THEN THE SYSTEM SHALL use the API key's tenant AND add flag `ACCOUNT_ID_MISSING`.
-- **F3-R9** IF `AccountId` is not mapped to any tenant, THEN THE SYSTEM SHALL store the event under tenant `common-pool` AND add flag `UNKNOWN_ACCOUNT` AND process it normally, so no data is dropped. The submitting tenant SHALL be able to read the event by id but not the resulting readings.
 
 **Acceptance**
 - *#12:* GIVEN `DeviceName` Ship33CABOL (unknown) and no `DeviceId`, WHEN posted, THEN 422 `rejected`, error `NO_DEVICE_IDENTITY`, flag `IDENTITY_MISMATCH` (EntityName A571992 ≠ DeviceName), and the raw event exists.
-- *#9:* GIVEN `AccountId` 999 (unmapped), THEN 200 `flagged` with `UNKNOWN_ACCOUNT`; event readable with the reviewer key; `GET /readings` for the device with the reviewer key returns none.
-- *F3-R6:* GIVEN `AccountId` 1001 (mapped to `acme-pharma`) posted with the reviewer key, THEN 422 `TENANT_MISMATCH` and zero rows in `acme-pharma`.
+- *#9:* GIVEN `AccountId` 999, THEN 200 `accepted` with no flags; the event and its readings belong to the key's tenant like any other.
+- *F3-R6:* GIVEN sample 0 with `AccountId` 478, 1001, 999, `"abc"` or none, posted with the reviewer key, THEN the same outcome each time (never a rejection, no flag about accounts) and nothing is written to any other tenant; `AccountId` is kept in the reading's metadata.
 - *F3-R1:* GIVEN body `{not json`, THEN 400 and one raw event.
 - *F3-R5:* GIVEN no `Temperature.Celsius`, no probe and latitude 95, THEN 422 `NO_USABLE_DATA`.
 
@@ -81,7 +80,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F4-R6** WHEN the status of one event satisfies several of rejected / conflict / duplicate / flagged / accepted, THE SYSTEM SHALL report the first in that precedence.
 
 **Acceptance**
-- *#1 after #0:* same `(imei, ts)`, different content → 200 `conflict`, flags `INVALID_COORDINATES`, `DUPLICATE_CONFLICT`, `ACCOUNT_ID_MISSING`; stored sensor reading is still #0's (temperature 10.08).
+- *#1 after #0:* same `(imei, ts)`, different content → 200 `conflict`, flags `INVALID_COORDINATES`, `DUPLICATE_CONFLICT`; stored sensor reading is still #0's (temperature 10.08).
 - *#4 after #0:* resolved by name to the same key → 200 `conflict`.
 - *#8 after #0:* → 200 `conflict`, `INVALID_COORDINATES`.
 - *Re-send of #2:* → 200 `duplicate`, row count unchanged.
@@ -120,7 +119,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F7-R3** THE SYSTEM SHALL make replay idempotent: no duplicate readings, raw payload unchanged.
 - **F7-R4** WHEN replay is called for an `accepted` or `flagged` event, THE SYSTEM SHALL respond 409.
 - **F7-R5** THE SYSTEM SHALL store `transform_version` and `rules_version` with every outcome.
-- **F7-R6** WHEN `GET /api/v1/events/{id}` is called by the owning or submitting tenant, THE SYSTEM SHALL return the raw payload, outcome, flags and PAXAFE output.
+- **F7-R6** WHEN `GET /api/v1/events/{id}` is called by the owning tenant, THE SYSTEM SHALL return the raw payload, outcome, flags and PAXAFE output.
 
 **Acceptance**
 - GIVEN an injected failure in the second transaction, THEN raw event exists, outcome `failed`, HTTP 500; after the fault is removed, replay returns 200 and exactly one reading row exists.
@@ -144,9 +143,9 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 
 | Flow | Requirement IDs | Samples | Milestone |
 |---|---|---|---|
-| F1 | F1-R1…R8 | #2, #10 | M1 (transform), M3 (HTTP) |
-| F2 | F2-R1…R15 | #0, #3, #5, #6, #7, #11 | M1 |
-| F3 | F3-R1…R9 | #9, #12 | M1 (rules), M3 (HTTP, tenants) |
+| F1 | F1-R1…R8 | #2, #9, #10, #11 | M1 (transform), M3 (HTTP) |
+| F2 | F2-R1…R16 | #0, #3, #5, #6, #7 | M1 |
+| F3 | F3-R1…R7 | #12 | M1 (rules), M3 (HTTP, tenants) |
 | F4 | F4-R1…R6 | #1, #4, #8 | M2 (DB), M3 |
 | F5 | F5-R1…R4 | #4, #12 | M2 |
 | F6 | F6-R1…R6 | — | M3, M4 |

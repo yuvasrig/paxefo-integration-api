@@ -113,13 +113,7 @@ func TestApplyDefaultRules(t *testing.T) {
 		{name: "TS-FUTURE F3-R4 rejects more than 5 min ahead", in: `{` + imei + `,"EntryTimeEpoch":` + itoa(nowMs+6*60*1000) + `}`,
 			wantReject: []string{"TIMESTAMP_FUTURE"}},
 		{name: "TS-FUTURE F3-R4 allows 4 min ahead", in: `{` + imei + `,"EntryTimeEpoch":` + itoa(nowMs+4*60*1000) + `}`},
-		{name: "TS-UTC-MISMATCH F2-R6 flags 5h difference, keeps epoch", in: `{` + imei + `,"EntryTimeEpoch":1739647646000,"EntryTimeUtc":"2025-02-15T14:27:26Z"}`,
-			wantFlags: []string{"TIMESTAMP_MISMATCH@EntryTimeEpoch"},
-			wantVals:  map[string]any{"EntryTimeEpoch": json.Number("1739647646000")}},
-		{name: "TS-UTC-MISMATCH F2-R6 within 1s tolerance", in: `{` + imei + `,"EntryTimeEpoch":1739215646500,"EntryTimeUtc":"2025-02-10T19:27:26Z"}`},
-		{name: "TS-UTC-MISMATCH F2-R6 absent UTC is fine", in: `{` + imei + `,"EntryTimeEpoch":1739215646000}`},
-		{name: "TS-UTC-MISMATCH F2-R6 unparsable UTC is ignored", in: `{` + imei + `,"EntryTimeEpoch":1739215646000,"EntryTimeUtc":"yesterday"}`},
-		{name: "TS-SECONDS then UTC match F2-R5/R6 no mismatch after scaling", in: `{` + imei + `,"EntryTimeEpoch":1739561246,"EntryTimeUtc":"2025-02-14T19:27:26Z"}`,
+		{name: "EntryTimeUtc is ignored: a 5 h disagreement raises nothing (F2-R5)", in: `{` + imei + `,"EntryTimeEpoch":1739561246,"EntryTimeUtc":"2025-02-14T14:27:26Z"}`,
 			wantFlags: []string{"TIMESTAMP_SECONDS@EntryTimeEpoch"}},
 		{name: "TEMP-F-ONLY F2-R9 converts Fahrenheit", in: `{` + imei + `,"EntryTimeEpoch":1739215646000,"Temperature":{"Celsius":null,"Fahrenheit":50}}`,
 			wantFlags: []string{"TEMPERATURE_CONVERTED@Temperature.Celsius"},
@@ -245,15 +239,15 @@ func TestApplyRecordsOriginalAndNewValue_F2R11(t *testing.T) {
 	}
 }
 
-// Rules run in file order: seconds are scaled before the future check and the UTC comparison.
+// Rules run in file order: seconds are scaled to milliseconds before the future check, so a seconds timestamp
+// that is in the future is still rejected as such. EntryTimeUtc plays no part.
 func TestApplyRuleOrder(t *testing.T) {
-	res := Apply(parseDoc(t, `{"DeviceId":"863257063350583","DeviceName":"A","EntryTimeEpoch":1739561246,"EntryTimeUtc":"2025-02-14T19:27:26Z"}`), defaultRules(t), scope())
-	if len(res.Rejections) != 0 {
-		t.Fatalf("unexpected rejections %v", res.Rejections)
+	future := testNow.Add(10 * time.Minute).Unix() // seconds
+	res := Apply(parseDoc(t, `{"DeviceId":"863257063350583","DeviceName":"A","EntryTimeEpoch":`+itoa(future)+`}`), defaultRules(t), scope())
+	if len(res.Rejections) != 1 || res.Rejections[0].Code != "TIMESTAMP_FUTURE" {
+		t.Fatalf("rejections %v", res.Rejections)
 	}
-	for _, f := range res.Flags {
-		if f.Code == CodeTimestampMismatch {
-			t.Fatal("UTC comparison must use the scaled epoch")
-		}
+	if got := flagKeys(res.Flags); !equalStrings(got, []string{"TIMESTAMP_SECONDS@EntryTimeEpoch"}) {
+		t.Fatalf("flags %v", got)
 	}
 }

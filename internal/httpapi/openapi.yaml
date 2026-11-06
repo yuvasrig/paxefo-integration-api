@@ -13,14 +13,16 @@ security:
   - ApiKey: []
 
 paths:
-  /api/v1/webhook/tive:
+  /api/webhook/tive:
     post:
       operationId: ingestTive
       summary: Ingest one Tive payload
       description: |
-        The raw payload is committed before any 2xx. `/api/webhook/tive` is an alias for the same handler.
-        When several statuses apply, precedence is rejected > conflict > duplicate > flagged > accepted.
-        A request id may be supplied in `X-Request-ID`; it is echoed back.
+        The raw payload is committed before any 2xx. The tenant is the API key's; the payload's `AccountId` is stored
+        as metadata and never checked, and `EntryTimeUtc` is ignored (`EntryTimeEpoch` is the event time).
+        `/api/v1/webhook/tive` is an alias for the same handler.
+        `status` is `flagged` if and only if the response carries any flag. When several statuses apply, precedence is
+        rejected > conflict > duplicate > flagged > accepted. A request id may be supplied in `X-Request-ID`; it is echoed back.
       parameters:
         - $ref: '#/components/parameters/RequestId'
       requestBody:
@@ -49,17 +51,17 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IngestResponse' }
-  /api/webhook/tive:
+  /api/v1/webhook/tive:
     post:
-      operationId: ingestTiveAlias
-      summary: Alias of /api/v1/webhook/tive (path named in the exercise)
+      operationId: ingestTiveV1
+      summary: Alias of /api/webhook/tive (the path the exercise requires)
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/TivePayload' }
       responses:
-        '200': { description: Same as /api/v1/webhook/tive, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
+        '200': { description: Same as /api/webhook/tive, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
         '400': { $ref: '#/components/responses/InvalidJson' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '413': { $ref: '#/components/responses/TooLarge' }
@@ -72,8 +74,7 @@ paths:
       operationId: getEvent
       summary: Raw event, outcome, flags and PAXAFE output
       description: |
-        Visible to the tenant that owns the event and to the tenant whose key submitted it
-        (events routed to `common-pool` remain readable by their sender).
+        Visible only to the tenant that owns the event.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, example: evt_01JABCDEF } }
       responses:
@@ -251,7 +252,7 @@ components:
       properties:
         EntityName: { type: string }
         EntryTimeEpoch: { type: integer, format: int64, example: 1739215646000 }
-        EntryTimeUtc: { type: string, format: date-time }
+        EntryTimeUtc: { type: string, description: 'Ignored; EntryTimeEpoch is the event time.' }
         DeviceId: { type: string, pattern: '^[0-9]{15}$' }
         DeviceName: { type: string }
         AccountId: { type: integer, example: 478 }
@@ -300,13 +301,11 @@ components:
             - COERCED_TYPE
             - INVALID_TYPE
             - TIMESTAMP_SECONDS
-            - TIMESTAMP_MISMATCH
             - DEVICE_RESOLVED_BY_NAME
             - IDENTITY_MISMATCH
             - TEMPERATURE_FALLBACK
             - TEMPERATURE_CONVERTED
-            - UNKNOWN_ACCOUNT
-            - ACCOUNT_ID_MISSING
+            - TEMP_EXCURSION
             - DUPLICATE_CONFLICT
         severity: { type: string, enum: [info, warn, error] }
         field: { type: string, example: Location.Latitude }
@@ -321,7 +320,7 @@ components:
       properties:
         code:
           type: string
-          enum: [INVALID_JSON, NO_DEVICE_IDENTITY, NO_TIMESTAMP, TIMESTAMP_FUTURE, NO_USABLE_DATA, TENANT_MISMATCH, UNAUTHORIZED, PAYLOAD_TOO_LARGE, RATE_LIMITED, NOT_FOUND, NOT_REPLAYABLE, INVALID_REQUEST, UNAVAILABLE, INTERNAL]
+          enum: [INVALID_JSON, NO_DEVICE_IDENTITY, NO_TIMESTAMP, TIMESTAMP_FUTURE, NO_USABLE_DATA, UNAUTHORIZED, PAYLOAD_TOO_LARGE, RATE_LIMITED, NOT_FOUND, NOT_REPLAYABLE, INVALID_REQUEST, UNAVAILABLE, INTERNAL]
         field: { type: string }
         message: { type: string }
 

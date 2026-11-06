@@ -55,19 +55,19 @@ type dbResolver map[string]string
 func (r dbResolver) ResolveByName(n string) (string, bool) { v, ok := r[n]; return v, ok }
 
 // process runs the same steps as the ingest pipeline: save raw, parse, transform, commit.
-func process(t *testing.T, st *store.PGStore, owner, submitter string, raw []byte) (store.CommitResult, string) {
+func process(t *testing.T, st *store.PGStore, tenant string, raw []byte) (store.CommitResult, string) {
 	t.Helper()
 	id := store.NewID("evt_")
 	if err := st.SaveRaw(ctx, store.RawEvent{
-		ID: id, TenantID: owner, SubmittedBy: submitter, Provider: "Tive", Raw: raw,
+		ID: id, TenantID: tenant, Provider: "Tive", Raw: raw,
 		Hash: doc.CanonicalHash(raw), ReceivedAt: time.Now(), RequestID: "req_test",
 	}); err != nil {
 		t.Fatalf("SaveRaw: %v", err)
 	}
-	return commit(t, st, owner, submitter, id, raw), id
+	return commit(t, st, tenant, id, raw), id
 }
 
-func commit(t *testing.T, st *store.PGStore, owner, submitter, id string, raw []byte) store.CommitResult {
+func commit(t *testing.T, st *store.PGStore, tenant, id string, raw []byte) store.CommitResult {
 	t.Helper()
 	rs, err := rules.Default()
 	if err != nil {
@@ -80,17 +80,17 @@ func commit(t *testing.T, st *store.PGStore, owner, submitter, id string, raw []
 	}
 	devs := dbResolver{}
 	if name, ok := d["DeviceName"].(string); ok {
-		if imei, found, err := st.ResolveDevice(ctx, owner, name); err != nil {
+		if imei, found, err := st.ResolveDevice(ctx, tenant, name); err != nil {
 			t.Fatal(err)
 		} else if found {
 			devs[name] = imei
 		}
 	}
-	res, err := p.Transform(d, rules.Scope{Tenant: owner, Now: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), Devices: devs})
+	res, err := p.Transform(d, rules.Scope{Tenant: tenant, Now: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), Devices: devs})
 	if err != nil {
 		t.Fatalf("transform: %v", err)
 	}
-	out, err := st.Commit(ctx, store.CommitInput{RawEventID: id, TenantID: owner, SubmittedBy: submitter, Result: res})
+	out, err := st.Commit(ctx, store.CommitInput{RawEventID: id, TenantID: tenant, Result: res})
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
@@ -115,8 +115,8 @@ func TestMigrate_F13R1(t *testing.T) {
 	if v, err := st.MigrationVersion(ctx); err != nil || v < 1 {
 		t.Fatalf("version %d, %v", v, err)
 	}
-	if ok, _ := st.TenantExists(ctx, "common-pool"); !ok {
-		t.Fatal("common-pool tenant must be seeded by the migration")
+	if ok, _ := st.TenantExists(ctx, "common-pool"); ok {
+		t.Fatal("no tenant is created by the migration: tenants come from `seed` / `tenants create`")
 	}
 	if !st.UsesAppRole() {
 		t.Fatal("tenant transactions must run as the non-bypass application role")
@@ -134,7 +134,7 @@ func TestConcurrentSameKey_F4R4(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			out, _ := process(t, st, "reviewer", "reviewer", raw)
+			out, _ := process(t, st, "reviewer", raw)
 			statuses <- out.Status
 		}()
 	}
@@ -165,12 +165,12 @@ func TestConcurrentSameKey_F4R4(t *testing.T) {
 // F4-R3: a different payload for an existing key keeps the first and stores a conflict.
 func TestConflictKeepsFirst_F4R3(t *testing.T) {
 	st := newStore(t)
-	first, firstID := process(t, st, "reviewer", "reviewer", sample(t, 0))
-	if first.Status != "flagged" {
+	first, firstID := process(t, st, "reviewer", sample(t, 0))
+	if first.Status != "flagged" { // sample 0 carries IDENTITY_MISMATCH and TEMP_EXCURSION
 		t.Fatalf("first status %s", first.Status)
 	}
 	for _, n := range []int{1, 8} {
-		out, _ := process(t, st, "reviewer", "reviewer", sample(t, n))
+		out, _ := process(t, st, "reviewer", sample(t, n))
 		if out.Status != store.StatusConflict || out.FirstRawEventID != firstID {
 			t.Fatalf("sample %d: status %s first %s, want conflict against %s", n, out.Status, out.FirstRawEventID, firstID)
 		}
@@ -203,8 +203,8 @@ func TestConflictKeepsFirst_F4R3(t *testing.T) {
 // F6-R5: row-level security hides other tenants' rows and blocks writes into them.
 func TestRowLevelSecurity_F6R5(t *testing.T) {
 	st := newStore(t)
-	_, idA := process(t, st, "reviewer", "reviewer", sample(t, 2))
-	process(t, st, "acme-pharma", "acme-pharma", sample(t, 3))
+	_, idA := process(t, st, "reviewer", sample(t, 2))
+	process(t, st, "acme-pharma", sample(t, 3))
 
 	for _, table := range []string{"raw_events", "event_outcomes", "ingest_ledger", "sensor_readings", "location_readings", "devices"} {
 		if c := count(t, st, "reviewer", "SELECT count(*) FROM "+table); c != 1 {
@@ -234,7 +234,7 @@ func TestRowLevelSecurity_F6R5(t *testing.T) {
 // Constitution #2: raw_events is append-only.
 func TestRawEventsAppendOnly(t *testing.T) {
 	st := newStore(t)
-	_, id := process(t, st, "reviewer", "reviewer", sample(t, 2))
+	_, id := process(t, st, "reviewer", sample(t, 2))
 	for _, q := range []string{`UPDATE raw_events SET request_id = 'x'`, `DELETE FROM raw_events`} {
 		err := st.WithTenantTx(ctx, "reviewer", func(tx pgx.Tx) error { _, err := tx.Exec(ctx, q); return err })
 		if err == nil {
@@ -257,7 +257,7 @@ func TestSaveRawKeepsAnyBytes(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			id := store.NewID("evt_")
-			if err := st.SaveRaw(ctx, store.RawEvent{ID: id, TenantID: "reviewer", SubmittedBy: "reviewer", Provider: "Tive", Raw: raw, Hash: doc.CanonicalHash(raw), ReceivedAt: time.Now()}); err != nil {
+			if err := st.SaveRaw(ctx, store.RawEvent{ID: id, TenantID: "reviewer", Provider: "Tive", Raw: raw, Hash: doc.CanonicalHash(raw), ReceivedAt: time.Now()}); err != nil {
 				t.Fatalf("SaveRaw: %v", err)
 			}
 			ev, err := st.GetEvent(ctx, "reviewer", id)
@@ -268,35 +268,11 @@ func TestSaveRawKeepsAnyBytes(t *testing.T) {
 	}
 }
 
-// F3-R9: an event owned by common-pool is readable by its sender, but its readings are not.
-func TestCommonPoolVisibility_F3R9(t *testing.T) {
-	st := newStore(t)
-	out, id := process(t, st, "common-pool", "reviewer", sample(t, 9))
-	if out.Status != "accepted" && out.Status != "flagged" {
-		t.Fatalf("status %s", out.Status)
-	}
-	ev, err := st.GetEvent(ctx, "reviewer", id)
-	if err != nil || ev.TenantID != "common-pool" || ev.SubmittedBy != "reviewer" || !ev.HasOutcome {
-		t.Fatalf("sender cannot read its event: %+v %v", ev, err)
-	}
-	if _, err := st.GetEvent(ctx, "acme-pharma", id); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("another tenant must not see it: %v", err)
-	}
-	page, _ := st.ListReadings(ctx, "reviewer", store.ReadingsQuery{DeviceID: "F678901"})
-	if len(page.Items) != 0 {
-		t.Fatalf("sender must not read common-pool readings: %+v", page)
-	}
-	page, _ = st.ListReadings(ctx, "common-pool", store.ReadingsQuery{DeviceID: "F678901"})
-	if len(page.Items) != 1 {
-		t.Fatalf("common-pool readings = %+v", page)
-	}
-}
-
 // F5-R1: device last_* moves only forward; first_seen can move back.
 func TestDeviceLastOnlyIfNewer_F5R1(t *testing.T) {
 	st := newStore(t)
-	process(t, st, "reviewer", "reviewer", sample(t, 11)) // 1739647646000
-	process(t, st, "reviewer", "reviewer", sample(t, 2))  // 1739302046000 (older)
+	process(t, st, "reviewer", sample(t, 11)) // 1739647646000
+	process(t, st, "reviewer", sample(t, 2))  // 1739302046000 (older)
 	var lastTS int64
 	var firstSeen, lastSeen time.Time
 	var lat float64
@@ -316,7 +292,7 @@ func TestDeviceLastOnlyIfNewer_F5R1(t *testing.T) {
 // F5-R3: a name that maps to two IMEIs is not resolved.
 func TestResolveDevice_F5R3(t *testing.T) {
 	st := newStore(t)
-	process(t, st, "reviewer", "reviewer", sample(t, 0))
+	process(t, st, "reviewer", sample(t, 0))
 	if imei, ok, err := st.ResolveDevice(ctx, "reviewer", "A571992"); err != nil || !ok || imei != "863257063350583" {
 		t.Fatalf("resolve = %q %v %v", imei, ok, err)
 	}
@@ -342,10 +318,10 @@ func TestResolveDevice_F5R3(t *testing.T) {
 // F5-R4: a reused tracker keeps each tenant's history separate; payloads never move a device.
 func TestDeviceReuseAcrossTenants_F5R4(t *testing.T) {
 	st := newStore(t)
-	process(t, st, "reviewer", "reviewer", sample(t, 2)) // B234567 / 866088073468440 -> reviewer
+	process(t, st, "reviewer", sample(t, 2)) // B234567 / 866088073468440 -> reviewer
 
 	// Same IMEI arriving for another tenant is stored, but the registry is left alone.
-	process(t, st, "acme-pharma", "acme-pharma", sample(t, 11))
+	process(t, st, "acme-pharma", sample(t, 11))
 	if c := count(t, st, "acme-pharma", `SELECT count(*) FROM devices`); c != 0 {
 		t.Fatalf("acme devices = %d: a payload must not take over another tenant's tracker", c)
 	}
@@ -377,7 +353,7 @@ func TestDeviceReuseAcrossTenants_F5R4(t *testing.T) {
 // F3-R7: a rejected event keeps its raw payload and reasons, and writes no readings.
 func TestRejectedEvent_F3R7(t *testing.T) {
 	st := newStore(t)
-	out, id := process(t, st, "reviewer", "reviewer", sample(t, 12))
+	out, id := process(t, st, "reviewer", sample(t, 12))
 	if out.Status != provider.StatusRejected {
 		t.Fatalf("status %s", out.Status)
 	}
@@ -398,10 +374,10 @@ func TestFailureThenReplay_F7(t *testing.T) {
 	st := newStore(t)
 	raw := sample(t, 2)
 	id := store.NewID("evt_")
-	if err := st.SaveRaw(ctx, store.RawEvent{ID: id, TenantID: "reviewer", SubmittedBy: "reviewer", Provider: "Tive", Raw: raw, Hash: doc.CanonicalHash(raw), ReceivedAt: time.Now()}); err != nil {
+	if err := st.SaveRaw(ctx, store.RawEvent{ID: id, TenantID: "reviewer", Provider: "Tive", Raw: raw, Hash: doc.CanonicalHash(raw), ReceivedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordFailure(ctx, "reviewer", "reviewer", id, "boom"); err != nil {
+	if err := st.RecordFailure(ctx, "reviewer", id, "boom"); err != nil {
 		t.Fatal(err)
 	}
 	ev, _ := st.GetEvent(ctx, "reviewer", id)
@@ -409,10 +385,10 @@ func TestFailureThenReplay_F7(t *testing.T) {
 		t.Fatalf("event = %+v", ev)
 	}
 
-	if out := commit(t, st, "reviewer", "reviewer", id, raw); out.Status != "accepted" {
+	if out := commit(t, st, "reviewer", id, raw); out.Status != "accepted" {
 		t.Fatalf("replay status %s", out.Status)
 	}
-	if out := commit(t, st, "reviewer", "reviewer", id, raw); out.Status != "accepted" {
+	if out := commit(t, st, "reviewer", id, raw); out.Status != "accepted" {
 		t.Fatalf("a second replay must be idempotent and keep the status, got %s", out.Status)
 	}
 	ev, _ = st.GetEvent(ctx, "reviewer", id)
@@ -427,7 +403,7 @@ func TestFailureThenReplay_F7(t *testing.T) {
 func TestListReadingsPaging(t *testing.T) {
 	st := newStore(t)
 	for _, n := range []int{2, 3, 11} { // B234567 at 1739302046000, 1739305646000, 1739647646000
-		process(t, st, "reviewer", "reviewer", sample(t, n))
+		process(t, st, "reviewer", sample(t, n))
 	}
 	p1, err := st.ListReadings(ctx, "reviewer", store.ReadingsQuery{DeviceID: "B234567", Limit: 2})
 	if err != nil || len(p1.Items) != 2 || p1.NextCursor == "" {
@@ -458,16 +434,13 @@ func TestListReadingsPaging(t *testing.T) {
 	}
 }
 
-func TestAdminKeysAndSources(t *testing.T) {
+func TestAdminKeys(t *testing.T) {
 	st := newStore(t)
-	if err := st.MapSource(ctx, "reviewer", "Tive", 478); err != nil {
-		t.Fatal(err)
+	if ok, _ := st.TenantExists(ctx, "reviewer"); !ok {
+		t.Fatal("reviewer should exist")
 	}
-	if tn, ok, err := st.TenantForAccount(ctx, "Tive", 478); err != nil || !ok || tn != "reviewer" {
-		t.Fatalf("TenantForAccount = %q %v %v", tn, ok, err)
-	}
-	if _, ok, _ := st.TenantForAccount(ctx, "Tive", 999); ok {
-		t.Fatal("999 must be unmapped")
+	if ok, _ := st.TenantExists(ctx, "nobody"); ok {
+		t.Fatal("nobody should not exist")
 	}
 	exp := time.Now().Add(time.Hour)
 	if err := st.CreateAPIKey(ctx, "reviewer", "k1", "pxk_test_abcd", "hash1", &exp); err != nil {

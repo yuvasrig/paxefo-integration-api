@@ -19,8 +19,8 @@ command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 2; }
 # index:http:status on the first run
 expected=(
   "0:200:flagged" "1:200:conflict" "2:200:accepted" "3:200:flagged" "4:200:conflict"
-  "5:200:flagged" "6:200:flagged" "7:200:flagged" "8:200:conflict" "9:200:flagged"
-  "10:200:accepted" "11:200:flagged" "12:422:rejected"
+  "5:200:flagged" "6:200:flagged" "7:200:flagged" "8:200:conflict" "9:200:accepted"
+  "10:200:accepted" "11:200:accepted" "12:422:rejected"
 )
 
 # Wake a sleeping free-tier instance.
@@ -35,7 +35,7 @@ tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
 for entry in "${expected[@]}"; do
   IFS=: read -r i want_code want_status <<<"$entry"
   file=$(printf '%s/%02d.json' "$dir" "$i")
-  code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 30 -X POST "$base/api/v1/webhook/tive" \
+  code=$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 30 -X POST "$base/api/webhook/tive" \
     -H "X-API-Key: $key" -H "Content-Type: application/json" -H "X-Request-ID: smoke-$i" --data-binary "@$file")
   status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status",""))' "$tmp" 2>/dev/null || echo "?")
 

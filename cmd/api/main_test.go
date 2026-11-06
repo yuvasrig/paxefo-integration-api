@@ -61,14 +61,8 @@ func TestCLIKeysAndTenants(t *testing.T) {
 	if _, err := run(t, st, "tenants", "create"); err == nil {
 		t.Fatal("tenants create needs --id")
 	}
-	if out, err := run(t, st, "tenants", "map-source", "--tenant", "reviewer", "--account", "478"); err != nil || !strings.Contains(out, "478") {
-		t.Fatalf("map-source: %q %v", out, err)
-	}
-	if tn, ok, _ := st.TenantForAccount(context.Background(), "Tive", 478); !ok || tn != "reviewer" {
-		t.Fatalf("mapping not stored: %q %v", tn, ok)
-	}
-	if _, err := run(t, st, "tenants", "map-source", "--tenant", "ghost", "--account", "1"); err == nil {
-		t.Fatal("mapping to a missing tenant must fail with a clear error")
+	if _, err := run(t, st, "tenants", "map-source", "--tenant", "reviewer", "--account", "478"); err == nil {
+		t.Fatal("there is no map-source: the tenant comes from the API key only")
 	}
 
 	// keys create prints the plaintext once, and the reviewer key expires at the end of the named day.
@@ -161,7 +155,7 @@ func TestServeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequest("POST", base+"/api/v1/webhook/tive", bytes.NewReader(sample))
+	req, _ := http.NewRequest("POST", base+"/api/webhook/tive", bytes.NewReader(sample))
 	req.Header.Set("X-API-Key", k.Plaintext)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

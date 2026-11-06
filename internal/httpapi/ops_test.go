@@ -73,7 +73,7 @@ func TestRulesEndpoint(t *testing.T) {
 		Rules   []map[string]any
 	}
 	_ = json.Unmarshal(b, &got)
-	if code != 200 || got.Version != "2026-11-05.1" || len(got.Rules) != 16 || got.Rules[0]["id"] != "NUMERIC-STRING" {
+	if code != 200 || got.Version != "2026-11-06.1" || len(got.Rules) != 15 || got.Rules[0]["id"] != "NUMERIC-STRING" {
 		t.Fatalf("%d %s", code, b)
 	}
 }
@@ -88,10 +88,10 @@ func TestMetricsAfterTraffic(t *testing.T) {
 	_, _, b := e.do("GET", "/metrics", "", nil)
 	body := string(b)
 	for _, want := range []string{
-		`http_requests_total{route="POST /api/v1/webhook/tive",status="200"} 2`,
-		`http_requests_total{route="POST /api/v1/webhook/tive",status="422"} 1`,
+		`http_requests_total{route="POST /api/webhook/tive",status="200"} 2`,
+		`http_requests_total{route="POST /api/webhook/tive",status="422"} 1`,
 		`http_requests_total{route="unmatched",status="404"} 1`,
-		`http_request_duration_seconds_bucket{route="POST /api/v1/webhook/tive"`,
+		`http_request_duration_seconds_bucket{route="POST /api/webhook/tive"`,
 		`ingest_stage_duration_seconds_bucket{stage="raw_save"`,
 		`ingest_stage_duration_seconds_bucket{stage="validate"`,
 		`ingest_stage_duration_seconds_bucket{stage="normalize_save"`,
@@ -111,8 +111,8 @@ func TestMetricsAfterTraffic(t *testing.T) {
 func TestAccessLog(t *testing.T) {
 	e := newEnv(t)
 	key := e.keys["reviewer"]
-	_, hdr, _ := e.do("POST", "/api/v1/webhook/tive", key, sample(t, 0), "X-Request-ID", "req-log-1")
-	e.do("POST", "/api/v1/webhook/tive", "pxk_test_wrongwrongwrongwrongwrongwrongwrongwrongwrong", sample(t, 0))
+	_, hdr, _ := e.do("POST", "/api/webhook/tive", key, sample(t, 0), "X-Request-ID", "req-log-1")
+	e.do("POST", "/api/webhook/tive", "pxk_test_wrongwrongwrongwrongwrongwrongwrongwrongwrong", sample(t, 0))
 
 	var found map[string]any
 	for _, line := range strings.Split(strings.TrimSpace(e.logs.String()), "\n") {
@@ -125,7 +125,7 @@ func TestAccessLog(t *testing.T) {
 		t.Fatalf("no access log line for req-log-1 in:\n%s", e.logs)
 	}
 	if found["tenant_id"] != "reviewer" || found["status"] != "flagged" || !strings.HasPrefix(found["event_id"].(string), "evt_") ||
-		found["http_status"].(float64) != 200 || found["route"] != "POST /api/v1/webhook/tive" || found["latency_ms"] == nil || found["level"] != "WARN" {
+		found["http_status"].(float64) != 200 || found["route"] != "POST /api/webhook/tive" || found["latency_ms"] == nil || found["level"] != "WARN" {
 		t.Fatalf("unexpected line %v", found)
 	}
 	if hdr.Get("X-Request-ID") != "req-log-1" {

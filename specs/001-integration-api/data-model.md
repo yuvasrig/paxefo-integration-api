@@ -6,21 +6,18 @@ Source: DESIGN.md §7, §7.2. Postgres 16. Every tenant table carries `tenant_id
 
 ### tenants
 `id` text PK · `name` · `status` · `plan` · `retention_days` · `config` jsonb · `created_at`.
-Seeded: `common-pool` (reserved), `reviewer`, `acme-pharma`, `bioco`.
-
-### tenant_sources
-`tenant_id` FK · `provider` · `provider_account_id` text. **Unique `(provider, provider_account_id)`**. Seed: Tive 478 → `reviewer`, 1001 → `acme-pharma`, 1002 → `bioco`.
+Seeded by `api seed`: `reviewer`, `acme-pharma`, `bioco`. The tenant of a request is the API key's; there is no account-to-tenant mapping.
 
 ### api_keys
 `id` · `key_hash` (SHA-256, unique) · `prefix` · `tenant_id` FK · `name` · `created_at` · `expires_at` · `revoked_at`. Plaintext never stored.
 
 ### raw_events (append-only)
-`id` text PK (`evt_…`) · `tenant_id` (owner; `common-pool` for unmapped accounts) · `submitted_by_tenant_id` (key's tenant) · `provider` · `payload_raw` bytea (the exact bytes received; always stored, even if not JSON) · `payload` jsonb (convenience copy when the bytes are valid JSON and jsonb can hold them) · `payload_hash` (SHA-256 of canonical JSON) · `received_at` · `request_id`.
-Index `(tenant_id, received_at DESC)`, `(submitted_by_tenant_id, received_at DESC)`. No UPDATE/DELETE grants.
+`id` text PK (`evt_…`) · `tenant_id` (the API key's tenant) · `provider` · `payload_raw` bytea (the exact bytes received; always stored, even if not JSON) · `payload` jsonb (convenience copy when the bytes are valid JSON and jsonb can hold them) · `payload_hash` (SHA-256 of canonical JSON) · `received_at` · `request_id`.
+Index `(tenant_id, received_at DESC)`. No UPDATE/DELETE grants.
 
 ### event_outcomes
-`raw_event_id` PK/FK · `tenant_id` · `submitted_by_tenant_id` · `status` (accepted, flagged, rejected, duplicate, conflict, failed) · `reasons` jsonb · `flags` jsonb · `expected_outputs` jsonb `{sensor, location}` · `transform_version` · `rules_version` · `processed_at` · `attempts` · `error` (message of the last failure).
-Index `(status, processed_at)`. Read policy: `tenant_id = current OR submitted_by_tenant_id = current`.
+`raw_event_id` PK/FK · `tenant_id` · `status` (accepted, flagged, rejected, duplicate, conflict, failed) · `reasons` jsonb · `flags` jsonb · `expected_outputs` jsonb `{sensor, location}` · `transform_version` · `rules_version` · `processed_at` · `attempts` · `error` (message of the last failure).
+Index `(status, processed_at)`.
 
 ### ingest_ledger (insert-only)
 `id` · `raw_event_id` FK · `tenant_id` · `acked_at`. Index `(tenant_id, acked_at)`.
@@ -44,11 +41,11 @@ Unique `(tenant_id, imei, valid_from)`; at most one open assignment per IMEI acr
 `tenant_id` · `shipment_id` · `public_id` · `carrier` · ship-from/to coordinates and addresses · `temp_min_c` · `temp_max_c`. Unique `(tenant_id, shipment_id)`.
 
 ## Row-level security
-Registry and auth tables (`tenants`, `tenant_sources`, `api_keys`) are not row-level secured because they are read before a tenant is known; the application role may only SELECT from them. All other tables are secured and `FORCE`d.
+Registry and auth tables (`tenants`, `api_keys`) are not row-level secured because they are read before a tenant is known; the application role may only SELECT from them. All other tables are secured and `FORCE`d.
 
 The store runs `SET LOCAL ROLE paxafe_app` (no `BYPASSRLS`, no UPDATE/DELETE on raw events or readings) inside every tenant transaction. `raw_events` also has a trigger that rejects UPDATE and DELETE for every role. If the migrating database user cannot create roles, `FORCE ROW LEVEL SECURITY` still applies to a non-superuser owner.
 
-Policy per table: `USING (tenant_id = current_setting('app.tenant_id', true))` (and the `submitted_by` clause on events/outcomes). `Store.WithTenantTx(ctx, tenantID, fn)` runs `SET LOCAL app.tenant_id` inside the transaction. Unset setting → no rows.
+Policy per table: `USING (tenant_id = current_setting('app.tenant_id', true))`. `Store.WithTenantTx(ctx, tenantID, fn)` runs `SET LOCAL app.tenant_id` inside the transaction. Unset setting → no rows.
 
 ## Not in M0–M7
 `ingest_jobs`, `alerts`, `reconciliation_runs`, Timescale hypertables.

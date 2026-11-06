@@ -50,8 +50,7 @@ type Rule struct {
 	Section  string         `yaml:"section" json:"section,omitempty"`
 	Severity string         `yaml:"severity" json:"severity,omitempty"`
 
-	afterNow  time.Duration
-	tolerance time.Duration
+	afterNow time.Duration
 }
 
 // When holds the conditions of a rule; every condition that is set must hold.
@@ -67,7 +66,6 @@ type When struct {
 	ResolvedBy     string    `yaml:"resolved_by" json:"resolved_by,omitempty"`
 	AfterNow       string    `yaml:"after_now" json:"after_now,omitempty"`
 	DiffersFrom    string    `yaml:"differs_from" json:"differs_from,omitempty"`
-	Tolerance      string    `yaml:"tolerance" json:"tolerance,omitempty"`
 	Present        *bool     `yaml:"present" json:"present,omitempty"`
 }
 
@@ -212,14 +210,6 @@ func compile(r *Rule) error {
 		if r.afterNow, err = time.ParseDuration(r.When.AfterNow); err != nil {
 			return fmt.Errorf("when.after_now: %w", err)
 		}
-	}
-	if r.When.Tolerance != "" {
-		if r.tolerance, err = time.ParseDuration(r.When.Tolerance); err != nil {
-			return fmt.Errorf("when.tolerance: %w", err)
-		}
-	}
-	if r.When.Tolerance != "" && r.When.DiffersFrom == "" {
-		return fmt.Errorf("when.tolerance needs differs_from")
 	}
 
 	if err := checkProtected(r); err != nil {

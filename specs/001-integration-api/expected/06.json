@@ -63,5 +63,6 @@
     "sensor": true,
     "location": true,
     "conflict": false
-  }
+  },
+  "note": "No shipment, so -18.5 C is not an excursion."
 }

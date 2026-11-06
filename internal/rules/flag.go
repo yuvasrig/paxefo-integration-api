@@ -15,13 +15,11 @@ const (
 	CodeCoercedType          = "COERCED_TYPE"
 	CodeInvalidType          = "INVALID_TYPE"
 	CodeTimestampSeconds     = "TIMESTAMP_SECONDS"
-	CodeTimestampMismatch    = "TIMESTAMP_MISMATCH"
 	CodeDeviceResolvedByName = "DEVICE_RESOLVED_BY_NAME"
 	CodeIdentityMismatch     = "IDENTITY_MISMATCH"
 	CodeTemperatureFallback  = "TEMPERATURE_FALLBACK"
 	CodeTemperatureConverted = "TEMPERATURE_CONVERTED"
-	CodeUnknownAccount       = "UNKNOWN_ACCOUNT"
-	CodeAccountIDMissing     = "ACCOUNT_ID_MISSING"
+	CodeTempExcursion        = "TEMP_EXCURSION"
 	CodeDuplicateConflict    = "DUPLICATE_CONFLICT"
 )
 
@@ -32,7 +30,6 @@ const (
 	CodeNoTimestamp      = "NO_TIMESTAMP"
 	CodeTimestampFuture  = "TIMESTAMP_FUTURE"
 	CodeNoUsableData     = "NO_USABLE_DATA"
-	CodeTenantMismatch   = "TENANT_MISMATCH"
 )
 
 // Flag actions.

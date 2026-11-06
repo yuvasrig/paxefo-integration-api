@@ -12,12 +12,6 @@
       "rule_id": "ENTITY-NAME-MISMATCH",
       "value": "A571992",
       "action": "kept"
-    },
-    {
-      "code": "ACCOUNT_ID_MISSING",
-      "severity": "info",
-      "field": "AccountId",
-      "action": "kept"
     }
   ],
   "errors": [

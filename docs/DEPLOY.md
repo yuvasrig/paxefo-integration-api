@@ -25,7 +25,7 @@ go run ./cmd/api keys create --tenant reviewer --name paxafe-reviewer --expires 
 go run ./cmd/api keys create --tenant reviewer --name sender
 ```
 
-- `seed` creates the tenants, maps Tive accounts (478 → `reviewer`; 999 stays unmapped) and prints one key per tenant. Keep none of those except what you need: revoke the rest with `keys revoke ID`.
+- `seed` creates the tenants `reviewer`, `acme-pharma` and `bioco` and prints one key per tenant. Keep only what you need: revoke the rest with `keys revoke ID`. The tenant of every request is the key's; the payload's `AccountId` is not checked.
 - The **reviewer key** goes in the submission email. The **sender key** goes in the sender service's `SENDER_API_KEY` environment variable and nowhere else.
 - Plaintext keys are printed once.
 

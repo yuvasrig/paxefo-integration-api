@@ -14,12 +14,6 @@
       "action": "location_skipped"
     },
     {
-      "code": "ACCOUNT_ID_MISSING",
-      "severity": "info",
-      "field": "AccountId",
-      "action": "kept"
-    },
-    {
       "code": "DUPLICATE_CONFLICT",
       "severity": "warn",
       "field": "(tenant_id,device_imei,ts)",

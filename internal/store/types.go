@@ -18,22 +18,20 @@ const (
 
 // RawEvent is a payload exactly as received, saved before any 2xx (F1-R2).
 type RawEvent struct {
-	ID          string
-	TenantID    string // owner; common-pool for unmapped accounts
-	SubmittedBy string // tenant of the API key
-	Provider    string
-	Raw         []byte
-	Hash        string
-	ReceivedAt  time.Time
-	RequestID   string
+	ID         string
+	TenantID   string // the API key's tenant
+	Provider   string
+	Raw        []byte
+	Hash       string
+	ReceivedAt time.Time
+	RequestID  string
 }
 
 // CommitInput is the second transaction: normalized rows plus the outcome.
 type CommitInput struct {
-	RawEventID  string
-	TenantID    string
-	SubmittedBy string
-	Result      provider.Result
+	RawEventID string
+	TenantID   string
+	Result     provider.Result
 }
 
 // CommitResult is what was decided inside the transaction.
@@ -47,7 +45,6 @@ type CommitResult struct {
 type EventRecord struct {
 	ID               string
 	TenantID         string
-	SubmittedBy      string
 	Provider         string
 	RequestID        string
 	Raw              []byte

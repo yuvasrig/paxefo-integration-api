@@ -25,9 +25,9 @@ func (s *PGStore) SaveRaw(ctx context.Context, ev RawEvent) error {
 	}
 	return s.WithTenantTx(ctx, ev.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO raw_events (id, tenant_id, submitted_by_tenant_id, provider, payload_raw, payload, payload_hash, received_at, request_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			ev.ID, ev.TenantID, ev.SubmittedBy, ev.Provider, ev.Raw, payload, ev.Hash, ev.ReceivedAt, ev.RequestID)
+			INSERT INTO raw_events (id, tenant_id, provider, payload_raw, payload, payload_hash, received_at, request_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			ev.ID, ev.TenantID, ev.Provider, ev.Raw, payload, ev.Hash, ev.ReceivedAt, ev.RequestID)
 		if err != nil {
 			return fmt.Errorf("store: insert raw event: %w", err)
 		}
@@ -254,12 +254,12 @@ func upsertOutcome(ctx context.Context, tx pgx.Tx, in CommitInput, out CommitRes
 		return fmt.Errorf("store: marshal outputs: %w", err)
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO event_outcomes (raw_event_id, tenant_id, submitted_by_tenant_id, status, reasons, flags, expected_outputs, transform_version, rules_version)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO event_outcomes (raw_event_id, tenant_id, status, reasons, flags, expected_outputs, transform_version, rules_version)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (raw_event_id) DO UPDATE SET status = EXCLUDED.status, reasons = EXCLUDED.reasons, flags = EXCLUDED.flags,
 			expected_outputs = EXCLUDED.expected_outputs, transform_version = EXCLUDED.transform_version,
 			rules_version = EXCLUDED.rules_version, processed_at = now(), attempts = event_outcomes.attempts + 1, error = ''`,
-		in.RawEventID, in.TenantID, in.SubmittedBy, out.Status, reasons, flags, outputs, res.TransformVersion, res.RulesVersion)
+		in.RawEventID, in.TenantID, out.Status, reasons, flags, outputs, res.TransformVersion, res.RulesVersion)
 	if err != nil {
 		return fmt.Errorf("store: upsert outcome: %w", err)
 	}
@@ -281,14 +281,14 @@ func nonNilFlags(f []rules.Flag) []rules.Flag {
 }
 
 // RecordFailure marks an event failed after its raw payload was saved (F7-R1). Replay can recover it.
-func (s *PGStore) RecordFailure(ctx context.Context, tenantID, submittedBy, rawEventID, message string) error {
+func (s *PGStore) RecordFailure(ctx context.Context, tenantID, rawEventID, message string) error {
 	return s.WithTenantTx(ctx, tenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO event_outcomes (raw_event_id, tenant_id, submitted_by_tenant_id, status, error)
-			VALUES ($1, $2, $3, 'failed', $4)
+			INSERT INTO event_outcomes (raw_event_id, tenant_id, status, error)
+			VALUES ($1, $2, 'failed', $3)
 			ON CONFLICT (raw_event_id) DO UPDATE SET status = 'failed', error = EXCLUDED.error,
 				processed_at = now(), attempts = event_outcomes.attempts + 1`,
-			rawEventID, tenantID, submittedBy, message)
+			rawEventID, tenantID, message)
 		if err != nil {
 			return fmt.Errorf("store: record failure: %w", err)
 		}
@@ -296,7 +296,7 @@ func (s *PGStore) RecordFailure(ctx context.Context, tenantID, submittedBy, rawE
 	})
 }
 
-// GetEvent returns an event and its outcome as seen by viewerTenant: the owner and the submitter can read it.
+// GetEvent returns an event and its outcome; only the owning tenant can read it.
 func (s *PGStore) GetEvent(ctx context.Context, viewerTenant, id string) (*EventRecord, error) {
 	var ev EventRecord
 	err := s.WithTenantTx(ctx, viewerTenant, func(tx pgx.Tx) error {
@@ -305,11 +305,11 @@ func (s *PGStore) GetEvent(ctx context.Context, viewerTenant, id string) (*Event
 		var processed *time.Time
 		var attempts *int
 		err := tx.QueryRow(ctx, `
-			SELECT r.id, r.tenant_id, r.submitted_by_tenant_id, r.provider, r.request_id, r.payload_raw, r.received_at,
+			SELECT r.id, r.tenant_id, r.provider, r.request_id, r.payload_raw, r.received_at,
 			       o.status, o.reasons, o.flags, o.expected_outputs, o.transform_version, o.rules_version, o.processed_at, o.attempts, o.error
 			FROM raw_events r LEFT JOIN event_outcomes o ON o.raw_event_id = r.id
 			WHERE r.id = $1`, id).Scan(
-			&ev.ID, &ev.TenantID, &ev.SubmittedBy, &ev.Provider, &ev.RequestID, &ev.Raw, &ev.ReceivedAt,
+			&ev.ID, &ev.TenantID, &ev.Provider, &ev.RequestID, &ev.Raw, &ev.ReceivedAt,
 			&status, &reasons, &flags, &outputs, &tv, &rv, &processed, &attempts, &errMsg)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
