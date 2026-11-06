@@ -38,7 +38,7 @@ type Metrics struct {
 	jobs       *prometheus.CounterVec
 	queueDepth *prometheus.GaugeVec
 	queueAge   *prometheus.GaugeVec
-	workers    prometheus.Gauge
+	workers    *prometheus.GaugeVec
 }
 
 // NewMetrics registers the RED metrics, per-stage latency, quality counters, Go runtime and (if pool is not nil)
@@ -55,7 +55,7 @@ func NewMetrics(pool func() *pgxpool.Stat) *Metrics {
 		jobs:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "jobs_finished_total", Help: "Queue jobs finished by result (done, retry, dead)."}, []string{"result"}),
 		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "queue_depth", Help: "Jobs waiting in the ingest queue, by tenant."}, []string{"tenant"}),
 		queueAge:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "queue_oldest_seconds", Help: "How long the oldest waiting job has waited, by tenant."}, []string{"tenant"}),
-		workers:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "workers_active", Help: "Workers running in this process."}),
+		workers:    prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "workers_active", Help: "Workers running in this process, per tenant."}, []string{"tenant"}),
 		reloads:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "rules_reloads_total", Help: "Runtime ruleset reload attempts by result (changed, invalid, error)."}, []string{"result"}),
 		rulesGauge: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "rules_active_info", Help: "The ruleset in force (value 1), by version and source."}, []string{"version", "source"}),
 	}
@@ -100,15 +100,18 @@ func (m *Metrics) Outcome(status string, flags []rules.Flag, errs []rules.Proble
 // JobFinished implements worker.Observer.
 func (m *Metrics) JobFinished(result string) { m.jobs.WithLabelValues(result).Inc() }
 
-// QueueState implements worker.Observer: the queue per tenant and this process's worker count.
-func (m *Metrics) QueueState(rows []store.QueueRow, workers int) {
+// QueueState implements worker.Observer: the queue per tenant and this process's worker count per tenant.
+func (m *Metrics) QueueState(rows []store.QueueRow, workers map[string]int) {
 	m.queueDepth.Reset()
 	m.queueAge.Reset()
 	for _, r := range rows {
 		m.queueDepth.WithLabelValues(r.TenantID).Set(float64(r.Pending))
 		m.queueAge.WithLabelValues(r.TenantID).Set(r.OldestPendingAge.Seconds())
 	}
-	m.workers.Set(float64(workers))
+	m.workers.Reset()
+	for tenant, n := range workers {
+		m.workers.WithLabelValues(tenant).Set(float64(n))
+	}
 }
 
 // RulesReload implements rulesync.Observer.

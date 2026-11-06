@@ -940,31 +940,37 @@ func TestPendingDepthIsBounded(t *testing.T) {
 	}
 }
 
-func TestClaimJobsIsFairAcrossTenants(t *testing.T) {
+// Each tenant has its own workers: a claim for one tenant never returns another tenant's job.
+func TestClaimJobsAreScopedToOneTenant(t *testing.T) {
 	st := newStore(t)
 	enqueue(t, st, "reviewer", 20)
 	enqueue(t, st, "acme-pharma", 2)
-	jobs, err := st.ClaimJobs(ctx, "w1", 10, 5)
+	jobs, err := st.ClaimJobs(ctx, "w1", "acme-pharma", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	per := map[string]int{}
+	if len(jobs) != 2 {
+		t.Fatalf("acme's workers take acme's jobs only, however big another tenant's backlog is: %d", len(jobs))
+	}
 	for _, j := range jobs {
-		per[j.TenantID]++
-		if j.Attempts != 1 {
+		if j.TenantID != "acme-pharma" || j.Attempts != 1 {
 			t.Fatalf("a claim counts as an attempt: %+v", j)
 		}
 	}
-	if len(jobs) != 7 || per["reviewer"] != 5 || per["acme-pharma"] != 2 {
-		t.Fatalf("a big backlog must not starve a small tenant: %v", per)
+	batch, _ := st.ClaimJobs(ctx, "w2", "reviewer", 8)
+	if len(batch) != 8 {
+		t.Fatalf("a claim takes at most the batch: %d", len(batch))
 	}
 	// Claimed jobs are not handed out again.
-	again, _ := st.ClaimJobs(ctx, "w2", 100, 100)
-	if len(again) != 15 {
-		t.Fatalf("remaining jobs: %d", len(again))
+	rest, _ := st.ClaimJobs(ctx, "w3", "reviewer", 100)
+	if len(rest) != 12 {
+		t.Fatalf("remaining jobs: %d", len(rest))
 	}
-	if more, _ := st.ClaimJobs(ctx, "w3", 100, 100); len(more) != 0 {
+	if more, _ := st.ClaimJobs(ctx, "w4", "reviewer", 100); len(more) != 0 {
 		t.Fatalf("nothing left: %d", len(more))
+	}
+	if more, _ := st.ClaimJobs(ctx, "w5", "nobody", 100); len(more) != 0 {
+		t.Fatalf("unknown tenant: %d", len(more))
 	}
 }
 
@@ -980,8 +986,9 @@ func TestConcurrentClaimsAreDisjoint(t *testing.T) {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
+			tenant := []string{"reviewer", "acme-pharma"}[w%2] // four workers per tenant
 			for {
-				jobs, err := st.ClaimJobs(ctx, fmt.Sprintf("w%d", w), 7, 4)
+				jobs, err := st.ClaimJobs(ctx, fmt.Sprintf("w%d", w), tenant, 7)
 				if err != nil {
 					t.Error(err)
 					return
@@ -1009,7 +1016,7 @@ func TestConcurrentClaimsAreDisjoint(t *testing.T) {
 func TestRetryBuryRescueAndStats(t *testing.T) {
 	st := newStore(t)
 	ids := enqueue(t, st, "reviewer", 3)
-	jobs, _ := st.ClaimJobs(ctx, "w1", 10, 10)
+	jobs, _ := st.ClaimJobs(ctx, "w1", "reviewer", 10)
 	if len(jobs) != 3 {
 		t.Fatalf("%d", len(jobs))
 	}
@@ -1018,13 +1025,13 @@ func TestRetryBuryRescueAndStats(t *testing.T) {
 	if err := st.RetryJob(ctx, ids[0], "boom", time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.ClaimJobs(ctx, "w1", 10, 10); len(got) != 0 {
+	if got, _ := st.ClaimJobs(ctx, "w1", "reviewer", 10); len(got) != 0 {
 		t.Fatalf("a retry waits for its backoff: %d", len(got))
 	}
 	if err := st.RetryJob(ctx, ids[0], "boom", time.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := st.ClaimJobs(ctx, "w1", 10, 10)
+	got, _ := st.ClaimJobs(ctx, "w1", "reviewer", 10)
 	if len(got) != 1 || got[0].RawEventID != ids[0] || got[0].Attempts != 2 {
 		t.Fatalf("%+v", got)
 	}
@@ -1057,7 +1064,7 @@ func TestRetryBuryRescueAndStats(t *testing.T) {
 	if n, err := st.RescueStuckJobs(ctx, time.Hour); err != nil || n != 2 {
 		t.Fatalf("rescued %d %v", n, err)
 	}
-	if again, _ := st.ClaimJobs(ctx, "w2", 10, 10); len(again) != 2 {
+	if again, _ := st.ClaimJobs(ctx, "w2", "reviewer", 10); len(again) != 2 {
 		t.Fatalf("rescued jobs can be claimed again: %d", len(again))
 	}
 }
@@ -1089,30 +1096,40 @@ func TestCommitCompletesTheJobAtomically(t *testing.T) {
 func TestHeartbeats(t *testing.T) {
 	st := newStore(t)
 	now := time.Now()
-	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "a", Role: "worker", Workers: 3, StartedAt: now}); err != nil {
+	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "a", TenantID: "reviewer", Role: "worker", Workers: 3, StartedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "b", Role: "all", Workers: 2, InFlight: 1, ProcessedTotal: 9, StartedAt: now}); err != nil {
+	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "b", TenantID: "acme-pharma", Role: "all", Workers: 2, InFlight: 1, ProcessedTotal: 9, StartedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "a", Role: "worker", Workers: 4, StartedAt: now}); err != nil { // update, not a second row
+	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "a", TenantID: "reviewer", Role: "worker", Workers: 4, StartedAt: now}); err != nil { // update, not a second row
+		t.Fatal(err)
+	}
+	// The same process can report one row per tenant pool.
+	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "b", TenantID: "reviewer", Role: "all", Workers: 1, StartedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	hbs, err := st.ActiveHeartbeats(ctx, time.Minute)
-	if err != nil || len(hbs) != 2 || hbs[0].Workers+hbs[1].Workers != 6 {
+	if err != nil || len(hbs) != 3 || hbs[0].Workers+hbs[1].Workers+hbs[2].Workers != 7 || hbs[0].TenantID == "" {
+		t.Fatalf("%+v %v", hbs, err)
+	}
+	if hbs[1].Instance != "b" || hbs[1].TenantID != "acme-pharma" {
+		t.Fatalf("rows come back by process then tenant: %+v", hbs)
+	}
+	if hbs[0].Workers != 4 {
 		t.Fatalf("%+v %v", hbs, err)
 	}
 	if _, err := st.Pool().Exec(ctx, `UPDATE worker_heartbeats SET last_seen = now() - interval '5 minutes' WHERE instance = 'a'`); err != nil {
 		t.Fatal(err)
 	}
-	if hbs, _ = st.ActiveHeartbeats(ctx, time.Minute); len(hbs) != 1 || hbs[0].Instance != "b" {
+	if hbs, _ = st.ActiveHeartbeats(ctx, time.Minute); len(hbs) != 2 || hbs[0].Instance != "b" {
 		t.Fatalf("a process that stopped reporting stops counting: %+v", hbs)
 	}
 	if err := st.RemoveHeartbeat(ctx, "b"); err != nil {
 		t.Fatal(err)
 	}
 	if hbs, _ = st.ActiveHeartbeats(ctx, time.Hour); len(hbs) != 1 {
-		t.Fatalf("clean shutdown removes the row: %+v", hbs)
+		t.Fatalf("clean shutdown removes all of the process's rows: %+v", hbs)
 	}
 }
 
@@ -1212,4 +1229,59 @@ func TestSettingsStore(t *testing.T) {
 	if rows, _ = st.ListSettings(ctx); len(rows) != 0 {
 		t.Fatal("reset removes it")
 	}
+}
+
+func TestTenantWorkerLimits(t *testing.T) {
+	st := newStore(t)
+	cfg := func() []byte {
+		for _, i := range mustList(t, st) {
+			if i.ID == "reviewer" {
+				return i.Config
+			}
+		}
+		return nil
+	}
+	if _, ok := store.ParseWorkerLimits(cfg()); ok {
+		t.Fatal("no limits by default")
+	}
+	l, err := store.NewWorkerLimits(1, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetTenantWorkers(ctx, "reviewer", &l); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := store.ParseWorkerLimits(cfg()); !ok || got != l {
+		t.Fatalf("%+v %v", got, ok)
+	}
+	// Other config keys survive, in both directions.
+	if err := st.SetTenantIngestMode(ctx, "reviewer", "async"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := store.ParseWorkerLimits(cfg()); !ok || got != l || store.ParseIngestMode(cfg()) != "async" {
+		t.Fatalf("%s", cfg())
+	}
+	if err := st.SetTenantWorkers(ctx, "reviewer", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.ParseWorkerLimits(cfg()); ok || store.ParseIngestMode(cfg()) != "async" {
+		t.Fatalf("clearing removes only the limits: %s", cfg())
+	}
+	if err := st.SetTenantWorkers(ctx, "nobody", &l); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("%v", err)
+	}
+	for _, bad := range [][2]int{{-1, 3}, {0, 0}, {4, 2}, {1, 5000}} {
+		if _, err := store.NewWorkerLimits(bad[0], bad[1]); err == nil {
+			t.Fatalf("%v should be refused", bad)
+		}
+	}
+}
+
+func mustList(t *testing.T, st *store.PGStore) []store.TenantInfo {
+	t.Helper()
+	info, err := st.ListTenantInfo(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
 }

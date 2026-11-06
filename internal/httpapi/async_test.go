@@ -45,7 +45,7 @@ func TestAsyncWebhookAcknowledgesWithoutProcessing(t *testing.T) {
 	}
 
 	// A worker finishing the job produces the same outcome sync mode would have.
-	jobs, _ := e.st.ClaimJobs(ctx, "w", 10, 10)
+	jobs, _ := e.st.ClaimJobs(ctx, "w", "reviewer", 10)
 	if len(jobs) != 1 {
 		t.Fatalf("%d", len(jobs))
 	}
@@ -96,7 +96,7 @@ func TestReplayGuardsForAsyncEvents(t *testing.T) {
 	if res.Reprocessed != 0 || res.Queued != 1 {
 		t.Fatalf("a queued event must be left to its worker: %+v", res)
 	}
-	jobs, _ := e.st.ClaimJobs(ctx, "w", 10, 10)
+	jobs, _ := e.st.ClaimJobs(ctx, "w", "reviewer", 10)
 	must(t, e.st.BuryJob(ctx, jobs[0].TenantID, id, "gave up"))
 	res, err = e.ing.ReplayWindow(ctx, ingest.ReplayOptions{Filter: store.ReplayFilter{TenantID: "reviewer", From: time.Unix(0, 0), To: time.Now().Add(time.Hour)}, Apply: true})
 	must(t, err)

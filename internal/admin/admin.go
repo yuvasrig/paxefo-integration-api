@@ -37,6 +37,7 @@ type Store interface {
 	CreateAPIKey(ctx context.Context, tenantID, name, prefix, hash string, expiresAt *time.Time) error
 	ListAPIKeys(ctx context.Context, tenantID string) ([]store.APIKey, error)
 	RevokeAPIKey(ctx context.Context, id int64) error
+	SetTenantWorkers(ctx context.Context, tenantID string, l *store.WorkerLimits) error
 	SetTenantIngestMode(ctx context.Context, tenantID, mode string) error
 	SetConflictSettings(ctx context.Context, tenantID string, cs store.ConflictSettings) error
 	TenantStats(ctx context.Context, tenantID string) (store.TenantStats, error)
@@ -116,6 +117,7 @@ func (c *Console) Handler() http.Handler {
 	page("POST /admin/tenants/{id}/keys", c.keyCreate)
 	page("POST /admin/tenants/{id}/keys/{key}/revoke", c.keyRevoke)
 	page("POST /admin/tenants/{id}/settings", c.tenantSettings)
+	page("POST /admin/tenants/{id}/workers", c.tenantWorkers)
 	page("GET /admin/rules", c.rulesPage)
 	page("POST /admin/rules/validate", c.rulesValidate)
 	page("POST /admin/rules/publish", c.rulesPublish)

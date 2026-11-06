@@ -2,11 +2,13 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Job is a queued payload waiting for, or being given to, a worker.
@@ -31,27 +33,22 @@ func (s *PGStore) PendingDepth(ctx context.Context, tenantID string, cap int) (i
 	return n, nil
 }
 
-// ClaimJobs hands a worker up to batch ready jobs, at most perTenant from any one tenant, so a tenant with a large
-// backlog cannot starve the others. FOR UPDATE SKIP LOCKED lets many workers claim at once without waiting on each other.
-func (s *PGStore) ClaimJobs(ctx context.Context, worker string, batch, perTenant int) ([]Job, error) {
+// ClaimJobs hands one tenant's worker up to batch of that tenant's ready jobs, oldest first. Each tenant has its own
+// workers, so a worker never takes another tenant's job. FOR UPDATE SKIP LOCKED lets that tenant's workers claim at
+// once without waiting on each other, and never hand one job to two of them.
+func (s *PGStore) ClaimJobs(ctx context.Context, worker, tenantID string, batch int) ([]Job, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	rows, err := s.pool.Query(ctx, `
-		WITH ready AS (
-			SELECT DISTINCT tenant_id FROM ingest_jobs WHERE status = 'pending' AND next_attempt_at <= now()
-		), picked AS (
-			SELECT j.raw_event_id FROM ready t
-			CROSS JOIN LATERAL (
-				SELECT raw_event_id FROM ingest_jobs
-				WHERE tenant_id = t.tenant_id AND status = 'pending' AND next_attempt_at <= now()
-				ORDER BY next_attempt_at, raw_event_id
-				LIMIT $2 FOR UPDATE SKIP LOCKED
-			) j
-			LIMIT $1
+		WITH picked AS (
+			SELECT raw_event_id FROM ingest_jobs
+			WHERE tenant_id = $1 AND status = 'pending' AND next_attempt_at <= now()
+			ORDER BY next_attempt_at, raw_event_id
+			LIMIT $2 FOR UPDATE SKIP LOCKED
 		)
-		UPDATE ingest_jobs SET status = 'processing', attempts = attempts + 1, locked_at = now(), locked_by = $3
-		WHERE raw_event_id IN (SELECT raw_event_id FROM picked)
-		RETURNING raw_event_id, tenant_id, attempts, enqueued_at`, batch, perTenant, worker)
+		UPDATE ingest_jobs j SET status = 'processing', attempts = attempts + 1, locked_at = now(), locked_by = $3
+		FROM picked WHERE j.raw_event_id = picked.raw_event_id
+		RETURNING j.raw_event_id, j.tenant_id, j.attempts, j.enqueued_at`, tenantID, batch, worker)
 	if err != nil {
 		return nil, fmt.Errorf("store: claim jobs: %w", err)
 	}
@@ -161,6 +158,7 @@ func (s *PGStore) QueueStats(ctx context.Context) ([]QueueRow, error) {
 // Heartbeat is a worker process reporting in.
 type Heartbeat struct {
 	Instance       string
+	TenantID       string // the tenant whose pool this row describes
 	Role           string
 	Workers        int
 	InFlight       int
@@ -169,16 +167,16 @@ type Heartbeat struct {
 	LastSeen       time.Time
 }
 
-// ReportHeartbeat records that a process runs Workers workers right now.
+// ReportHeartbeat records that a process runs Workers workers for one tenant right now.
 func (s *PGStore) ReportHeartbeat(ctx context.Context, h Heartbeat) error {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO worker_heartbeats (instance, role, workers, in_flight, processed_total, started_at, last_seen)
-		VALUES ($1, $2, $3, $4, $5, $6, now())
-		ON CONFLICT (instance) DO UPDATE SET role = EXCLUDED.role, workers = EXCLUDED.workers, in_flight = EXCLUDED.in_flight,
+		INSERT INTO worker_heartbeats (instance, tenant_id, role, workers, in_flight, processed_total, started_at, last_seen)
+		VALUES ($1, $7, $2, $3, $4, $5, $6, now())
+		ON CONFLICT (instance, tenant_id) DO UPDATE SET role = EXCLUDED.role, workers = EXCLUDED.workers, in_flight = EXCLUDED.in_flight,
 			processed_total = EXCLUDED.processed_total, last_seen = now()`,
-		h.Instance, h.Role, h.Workers, h.InFlight, h.ProcessedTotal, h.StartedAt)
+		h.Instance, h.Role, h.Workers, h.InFlight, h.ProcessedTotal, h.StartedAt, h.TenantID)
 	if err != nil {
 		return fmt.Errorf("store: heartbeat: %w", err)
 	}
@@ -190,8 +188,8 @@ func (s *PGStore) ActiveHeartbeats(ctx context.Context, within time.Duration) ([
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	rows, err := s.pool.Query(ctx, `
-		SELECT instance, role, workers, in_flight, processed_total, started_at, last_seen FROM worker_heartbeats
-		WHERE last_seen > now() - make_interval(secs => $1) ORDER BY instance`, within.Seconds())
+		SELECT instance, tenant_id, role, workers, in_flight, processed_total, started_at, last_seen FROM worker_heartbeats
+		WHERE last_seen > now() - make_interval(secs => $1) ORDER BY instance, tenant_id`, within.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("store: heartbeats: %w", err)
 	}
@@ -199,7 +197,7 @@ func (s *PGStore) ActiveHeartbeats(ctx context.Context, within time.Duration) ([
 	var out []Heartbeat
 	for rows.Next() {
 		var h Heartbeat
-		if err := rows.Scan(&h.Instance, &h.Role, &h.Workers, &h.InFlight, &h.ProcessedTotal, &h.StartedAt, &h.LastSeen); err != nil {
+		if err := rows.Scan(&h.Instance, &h.TenantID, &h.Role, &h.Workers, &h.InFlight, &h.ProcessedTotal, &h.StartedAt, &h.LastSeen); err != nil {
 			return nil, fmt.Errorf("store: scan heartbeat: %w", err)
 		}
 		out = append(out, h)
@@ -247,6 +245,75 @@ func (s *PGStore) SetTenantIngestMode(ctx context.Context, tenantID, mode string
 		WHERE id = $1`, tenantID, mode)
 	if err != nil {
 		return fmt.Errorf("store: set ingest mode: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// WorkerLimits bounds one tenant's worker pool. A tenant with none uses the service-wide WORKERS_MIN and WORKERS_MAX.
+type WorkerLimits struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
+// NewWorkerLimits validates a tenant's limits.
+func NewWorkerLimits(min, max int) (WorkerLimits, error) {
+	switch {
+	case min < 0:
+		return WorkerLimits{}, fmt.Errorf("workers min must be 0 or more (got %d)", min)
+	case max < 1 || max > maxTenantWorkers:
+		return WorkerLimits{}, fmt.Errorf("workers max must be between 1 and %d (got %d)", maxTenantWorkers, max)
+	case min > max:
+		return WorkerLimits{}, fmt.Errorf("workers min (%d) cannot be more than max (%d)", min, max)
+	}
+	return WorkerLimits{Min: min, Max: max}, nil
+}
+
+const maxTenantWorkers = 1000
+
+// ParseWorkerLimits reads a tenant's limits from its config; ok is false when it has none (or they are invalid).
+func ParseWorkerLimits(config []byte) (WorkerLimits, bool) {
+	var c struct {
+		Workers *WorkerLimits `json:"workers"`
+	}
+	if json.Unmarshal(config, &c) != nil || c.Workers == nil {
+		return WorkerLimits{}, false
+	}
+	l, err := NewWorkerLimits(c.Workers.Min, c.Workers.Max)
+	return l, err == nil
+}
+
+// ParseIngestMode reads a tenant's own ingest mode from its config ("" when it has none).
+func ParseIngestMode(config []byte) string {
+	var c struct {
+		IngestMode string `json:"ingest_mode"`
+	}
+	if json.Unmarshal(config, &c) != nil || (c.IngestMode != "sync" && c.IngestMode != "async") {
+		return ""
+	}
+	return c.IngestMode
+}
+
+// SetTenantWorkers stores the tenant's worker limits, or clears them (nil) so it uses the service-wide defaults.
+func (s *PGStore) SetTenantWorkers(ctx context.Context, tenantID string, l *WorkerLimits) error {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	const obj = `CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END`
+	var tag pgconn.CommandTag
+	var err error
+	if l == nil {
+		tag, err = s.pool.Exec(ctx, `UPDATE tenants SET config = `+obj+` - 'workers' WHERE id = $1`, tenantID)
+	} else {
+		b, merr := json.Marshal(l)
+		if merr != nil {
+			return fmt.Errorf("store: marshal worker limits: %w", merr)
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE tenants SET config = jsonb_set(`+obj+`, '{workers}', $2::jsonb) WHERE id = $1`, tenantID, string(b))
+	}
+	if err != nil {
+		return fmt.Errorf("store: set tenant workers: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

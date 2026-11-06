@@ -42,27 +42,28 @@
 <table>
   <thead><tr>
     <th>Tenant</th><th>Mode</th><th class="n">Events / min</th><th class="n">Active devices (1 min)</th>
-    <th class="n">Done / min</th><th class="n">Waiting</th><th class="n">Processing</th><th class="n">Oldest wait</th><th class="n">Dead</th>
-    <th class="n">Latency p50 / p95</th><th class="n">Events total</th>
+    <th class="n">Workers</th><th class="n">Done / min</th><th class="n">Waiting</th><th class="n">Processing</th><th class="n">Oldest wait</th><th class="n">Dead</th>
+    <th class="n">Latency p50 / p95</th><th class="n">Events total</th><th>Workers up to date?</th>
   </tr></thead>
   <tbody>
   {{range .Tenants}}<tr>
     <td><a href="/admin/tenants#{{.Info.ID}}">{{.Info.ID}}</a></td><td>{{.Mode}}</td>
     <td class="n">{{.Stats.EventsLastMinute}}</td><td class="n">{{.Stats.ActiveDevicesLastMinute}}</td>
-    <td class="n">{{.Stats.CompletedLastMinute}}</td><td class="n">{{.Stats.Pending}}</td><td class="n">{{.Stats.Processing}}</td>
+    <td class="n">{{.Workers}}</td><td class="n">{{.Stats.CompletedLastMinute}}</td><td class="n">{{.Stats.Pending}}</td><td class="n">{{.Stats.Processing}}</td>
     <td class="n">{{dur .Stats.OldestPendingAge}}</td><td class="n {{if .Stats.Dead}}bad{{end}}">{{.Stats.Dead}}</td>
     <td class="n">{{dur .Stats.LatencyP50}} / {{dur .Stats.LatencyP95}}</td><td class="n">{{.Stats.TotalEvents}}</td>
-  </tr>{{else}}<tr><td colspan="11">No tenants yet. <a href="/admin/tenants">Add one.</a></td></tr>{{end}}
+    <td><span class="tag {{.Prediction.State}}">{{if eq .Prediction.State "up_to_date"}}yes{{else if eq .Prediction.State "catching_up"}}catching up{{else if eq .Prediction.State "falling_behind"}}falling behind{{else}}stalled{{end}}</span>{{if .Prediction.HasETA}} <span class="muted">{{dur .Prediction.ETA}}</span>{{end}}</td>
+  </tr>{{else}}<tr><td colspan="13">No tenants yet. <a href="/admin/tenants">Add one.</a></td></tr>{{end}}
   </tbody>
 </table>
 {{end}}
 
 {{define "workers_table"}}
 <table>
-  <thead><tr><th>Process</th><th>Role</th><th class="n">Workers</th><th class="n">In flight</th><th class="n">Processed</th><th>Up since</th><th>Last report</th></tr></thead>
+  <thead><tr><th>Process</th><th>Tenant</th><th>Role</th><th class="n">Workers</th><th class="n">In flight</th><th class="n">Processed</th><th>Up since</th><th>Last report</th></tr></thead>
   <tbody>
-  {{range .Workers}}<tr><td>{{.Instance}}</td><td>{{.Role}}</td><td class="n">{{.Workers}}</td><td class="n">{{.InFlight}}</td><td class="n">{{.ProcessedTotal}}</td><td>{{ago .StartedAt}}</td><td>{{ago .LastSeen}}</td></tr>
-  {{else}}<tr><td colspan="7">No process has reported in the last 30 seconds.</td></tr>{{end}}
+  {{range .Workers}}<tr><td>{{.Instance}}</td><td>{{if .TenantID}}{{.TenantID}}{{else}}<span class="muted">none yet</span>{{end}}</td><td>{{.Role}}</td><td class="n">{{.Workers}}</td><td class="n">{{.InFlight}}</td><td class="n">{{.ProcessedTotal}}</td><td>{{ago .StartedAt}}</td><td>{{ago .LastSeen}}</td></tr>
+  {{else}}<tr><td colspan="8">No process has reported in the last 30 seconds.</td></tr>{{end}}
   </tbody>
 </table>
 {{end}}

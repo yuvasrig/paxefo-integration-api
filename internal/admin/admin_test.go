@@ -448,7 +448,7 @@ func TestDashboardAndMonitoringShowTheLoad(t *testing.T) {
 	has(t, dash, "busy", "async", "Stalled", "No workers are running")
 
 	// Workers report in and the picture changes.
-	must(t, e.st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "host-1", Role: "all", Workers: 3, InFlight: 1, StartedAt: time.Now()}))
+	must(t, e.st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "host-1", TenantID: "busy", Role: "all", Workers: 3, InFlight: 1, StartedAt: time.Now()}))
 	live := e.get("/admin/monitoring/live")
 	has(t, live, "host-1", "busy", "pending")
 	if strings.Contains(live, "No workers are running") {
@@ -470,5 +470,34 @@ func TestAssetsAreServed(t *testing.T) {
 		if code != 200 || !strings.HasPrefix(hdr.Get("Content-Type"), ct) || len(body) < 50 {
 			t.Fatalf("%s: %d %s", p, code, hdr.Get("Content-Type"))
 		}
+	}
+}
+
+func TestTenantWorkerLimitsForm(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	e.post("/admin/tenants", url.Values{"id": {"pool-co"}})
+	if code, _, _ := e.post("/admin/tenants/pool-co/workers", url.Values{"min": {"1"}, "max": {"6"}}); code != 303 {
+		t.Fatalf("%d", code)
+	}
+	info, _ := e.st.ListTenantInfo(ctx)
+	for _, i := range info {
+		if i.ID == "pool-co" {
+			if l, ok := store.ParseWorkerLimits(i.Config); !ok || l.Min != 1 || l.Max != 6 {
+				t.Fatalf("%s", i.Config)
+			}
+		}
+	}
+	for _, bad := range []url.Values{{"min": {"5"}, "max": {"2"}}, {"min": {"x"}, "max": {"2"}}, {"min": {"1"}}} {
+		_, body, _ := e.post("/admin/tenants/pool-co/workers", bad)
+		if !strings.Contains(body, `class="error"`) {
+			t.Fatalf("%v should be refused", bad)
+		}
+	}
+	if code, _, _ := e.post("/admin/tenants/pool-co/workers", url.Values{}); code != 303 { // both empty: back to defaults
+		t.Fatalf("%d", code)
+	}
+	if code, _, _ := e.post("/admin/tenants/ghost/workers", url.Values{"min": {"1"}, "max": {"2"}}); code != 404 {
+		t.Fatalf("%d", code)
 	}
 }

@@ -41,9 +41,9 @@ var defs = []Def{
 	{"rate_limit_per_sec", "Rate limit (requests/s per tenant)", "Requests per second each tenant may send before it gets 429.", true, 0.1, 100000},
 	{"rate_limit_burst", "Rate limit burst", "How many requests a tenant may send at once before the per-second limit applies.", false, 1, 1000000},
 	{"queue_max_depth", "Queue limit per tenant", "Waiting jobs a tenant may have before ingest answers 503 with Retry-After (backpressure).", false, 1, 100000000},
-	{"workers_min", "Workers: minimum", "Fewest workers an instance keeps running.", false, 0, 1000},
-	{"workers_max", "Workers: maximum", "Most workers an instance runs. Keep workers x instances within the database connection budget.", false, 1, 1000},
-	{"jobs_per_worker", "Jobs per worker", "Backlog one worker is expected to handle; the pool grows when the backlog exceeds workers x this.", false, 1, 1000000},
+	{"workers_min", "Workers per tenant: minimum", "Fewest workers each async tenant's pool keeps running per instance. A tenant can set its own on the Tenants page.", false, 0, 1000},
+	{"workers_max", "Workers per tenant: maximum", "Most workers each tenant's pool runs per instance. Keep tenants x workers x instances within the database connection budget.", false, 1, 1000},
+	{"jobs_per_worker", "Jobs per worker", "Backlog one worker is expected to handle; a tenant's pool grows when its backlog exceeds workers x this.", false, 1, 1000000},
 	{"lag_slo_seconds", "Lag target (seconds)", "A job waiting longer than this counts as behind, and the pool grows by one.", false, 1, 86400},
 	{"max_attempts", "Attempts before a job is dead", "How many times a failing job is tried before its outcome becomes 'dead' (replayable).", false, 1, 100},
 }

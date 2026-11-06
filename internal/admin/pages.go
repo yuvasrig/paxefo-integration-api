@@ -78,6 +78,12 @@ type TenantView struct {
 	Stats   store.TenantStats
 	Webhook string
 	Keys    []store.APIKey
+
+	Workers    int                // this tenant's workers running now, across all processes
+	InFlight   int                // jobs those workers are processing
+	Limits     store.WorkerLimits // the tenant's own limits, or the service-wide ones
+	OwnLimits  bool               // true when the tenant has limits of its own
+	Prediction worker.Prediction  // whether this tenant's workers are keeping up
 }
 
 // Snapshot is the live picture the dashboard and the monitoring page share.
@@ -176,6 +182,7 @@ func (c *Console) snapshot(ctx context.Context, r *http.Request, withEvents bool
 	for _, info := range infos {
 		tv := TenantView{Info: info, Mode: c.modeOf(info), Webhook: c.webhookURL(r)}
 		tv.Policy, _ = store.ParseConflictSettings(info.Config)
+		c.fillLimits(&tv)
 		if tv.Stats, err = c.Store.TenantStats(ctx, info.ID); err != nil {
 			return nil, err
 		}
@@ -225,19 +232,68 @@ func (c *Console) snapshot(ctx context.Context, r *http.Request, withEvents bool
 		s.Recent = s.Recent[:15]
 	}
 
-	if s.Workers, err = c.Store.ActiveHeartbeats(ctx, workerLiveWithin); err != nil {
+	beats, err := c.Store.ActiveHeartbeats(ctx, workerLiveWithin)
+	if err != nil {
 		return nil, err
 	}
-	for _, h := range s.Workers {
+	perTenant, inFlight := map[string]int{}, map[string]int{}
+	for _, h := range beats {
+		if h.TenantID == "" { // a process with no tenant pools yet: keep it in the table only
+			s.Workers = append(s.Workers, h)
+			continue
+		}
+		s.Workers = append(s.Workers, h)
+		perTenant[h.TenantID] += h.Workers
+		inFlight[h.TenantID] += h.InFlight
 		s.WorkerCount += h.Workers
 		s.InFlight += h.InFlight
 	}
-	s.Prediction = worker.Predict(worker.PredictInput{
-		Pending: s.Pending, Processing: s.Processing,
-		ArrivalsPerMin: float64(s.ArrivalsPerMin), CompletedPerMin: float64(s.CompletedPerMin),
-		ActiveWorkers: s.WorkerCount, OldestAge: s.OldestAge, LagSLO: time.Duration(s.Limits.LagSLOSeconds) * time.Second,
-	})
+	lag := time.Duration(s.Limits.LagSLOSeconds) * time.Second
+	for i := range s.Tenants {
+		tv := &s.Tenants[i]
+		tv.Workers, tv.InFlight = perTenant[tv.Info.ID], inFlight[tv.Info.ID]
+		tv.Prediction = worker.Predict(worker.PredictInput{
+			Pending: tv.Stats.Pending, Processing: tv.Stats.Processing,
+			ArrivalsPerMin: float64(tv.Stats.EventsLastMinute), CompletedPerMin: float64(tv.Stats.CompletedLastMinute),
+			ActiveWorkers: tv.Workers, OldestAge: tv.Stats.OldestPendingAge, LagSLO: lag,
+		})
+	}
+	s.Prediction = overall(s.Tenants)
 	return s, nil
+}
+
+// fillLimits sets the tenant's worker limits: its own if it has any, else the service-wide ones.
+func (c *Console) fillLimits(tv *TenantView) {
+	if l, ok := store.ParseWorkerLimits(tv.Info.Config); ok {
+		tv.Limits, tv.OwnLimits = l, true
+		return
+	}
+	cur := c.Settings.Current()
+	tv.Limits = store.WorkerLimits{Min: cur.WorkersMin, Max: cur.WorkersMax}
+}
+
+// overall summarizes the tenants' predictions: the worst state wins, and the text names the tenant it comes from.
+// Every tenant has its own workers, so "are the workers up to date" is a question about each tenant.
+func overall(tenants []TenantView) worker.Prediction {
+	rank := map[string]int{worker.StateUpToDate: 0, worker.StateCatchingUp: 1, worker.StateFallingBehind: 2, worker.StateStalled: 3}
+	var worst *TenantView
+	for i := range tenants {
+		t := &tenants[i]
+		if worst == nil || rank[t.Prediction.State] > rank[worst.Prediction.State] ||
+			(t.Prediction.State == worst.Prediction.State && t.Prediction.ETA > worst.Prediction.ETA) {
+			worst = t
+		}
+	}
+	if worst == nil {
+		return worker.Prediction{State: worker.StateUpToDate, Text: "No tenants yet."}
+	}
+	p := worst.Prediction
+	if p.State == worker.StateUpToDate {
+		p.Text = "Every tenant's workers are up to date."
+		return p
+	}
+	p.Text = worst.Info.ID + ": " + p.Text
+	return p
 }
 
 // modeOf is the tenant's ingest mode: its own setting, else the service default.
@@ -312,6 +368,7 @@ func (c *Console) tenantViews(ctx context.Context, r *http.Request) ([]TenantVie
 	for _, info := range infos {
 		tv := TenantView{Info: info, Mode: c.modeOf(info), Webhook: c.webhookURL(r)}
 		tv.Policy, _ = store.ParseConflictSettings(info.Config)
+		c.fillLimits(&tv)
 		if tv.Keys, err = c.Store.ListAPIKeys(ctx, info.ID); err != nil {
 			return nil, err
 		}
@@ -444,6 +501,37 @@ func (c *Console) tenantSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	c.Log.Info("admin: tenant settings changed", "tenant_id", id, "ingest_mode", mode, "conflict_policy", cs.Policy)
 	http.Redirect(w, r, "/admin/tenants?done="+urlText("Saved "+id+". Ingest mode changes reach every instance within a few seconds."), http.StatusSeeOther)
+}
+
+// tenantWorkers sets one tenant's worker limits; leaving both fields empty goes back to the service-wide defaults.
+func (c *Console) tenantWorkers(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if ok, err := c.Store.TenantExists(r.Context(), id); err != nil || !ok {
+		http.NotFound(w, r)
+		return
+	}
+	minS, maxS := strings.TrimSpace(r.FormValue("min")), strings.TrimSpace(r.FormValue("max"))
+	var limits *store.WorkerLimits
+	if minS != "" || maxS != "" {
+		min, err1 := strconv.Atoi(minS)
+		max, err2 := strconv.Atoi(maxS)
+		if err1 != nil || err2 != nil {
+			c.renderTenants(w, r, view{Error: "Worker limits are whole numbers: give both a minimum and a maximum, or leave both empty to use the defaults."})
+			return
+		}
+		l, err := store.NewWorkerLimits(min, max)
+		if err != nil {
+			c.renderTenants(w, r, view{Error: err.Error()})
+			return
+		}
+		limits = &l
+	}
+	if err := c.Store.SetTenantWorkers(r.Context(), id, limits); err != nil {
+		c.fail(w, r, "could not set the worker limits", err)
+		return
+	}
+	c.Log.Info("admin: tenant worker limits changed", "tenant_id", id, "limits", limits)
+	http.Redirect(w, r, "/admin/tenants?done="+urlText("Saved worker limits for "+id+". Its pool resizes within a few seconds."), http.StatusSeeOther)
 }
 
 // ---- rules ----

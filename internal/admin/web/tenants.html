@@ -38,6 +38,12 @@ Body:    JSON (Tive's standard payload)</pre>
     <label>Answer with <select name="http_status"><option value="200" {{if eq .Policy.HTTPStatus 200}}selected{{end}}>200</option><option value="409" {{if eq .Policy.HTTPStatus 409}}selected{{end}}>409</option></select></label>
     <button>Save</button>
   </form>
+  <form method="post" action="/admin/tenants/{{.Info.ID}}/workers" class="inline">
+    <label>Workers min <input name="min" size="4" value="{{if .OwnLimits}}{{.Limits.Min}}{{end}}" placeholder="{{.Limits.Min}}"></label>
+    <label>Workers max <input name="max" size="4" value="{{if .OwnLimits}}{{.Limits.Max}}{{end}}" placeholder="{{.Limits.Max}}"></label>
+    <button>Save worker limits</button>
+    <span class="muted">This tenant has its own worker pool; it runs the minimum when idle and grows up to the maximum with its backlog. Empty = {{if .OwnLimits}}go back to the service defaults{{else}}the service defaults (shown){{end}}. Sync tenants run no workers.</span>
+  </form>
   <table>
     <thead><tr><th>Key</th><th>Name</th><th>Created</th><th>State</th><th></th></tr></thead>
     <tbody>

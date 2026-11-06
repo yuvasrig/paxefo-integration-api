@@ -212,11 +212,12 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	poolDone := make(chan struct{})
 	if cfg.Role == "all" || cfg.Role == "worker" {
 		host, _ := os.Hostname()
-		pool := &worker.Pool{
-			Source: st, Processor: svc, Settings: live, Role: cfg.Role, Log: log, Observer: metrics,
+		// One pool of workers per tenant, each sized from that tenant's own backlog.
+		workers := &worker.Manager{
+			Source: st, Processor: svc, Settings: live, Role: cfg.Role, DefaultMode: cfg.IngestMode, Log: log, Observer: metrics,
 			Instance: fmt.Sprintf("%s-%d-%s", host, os.Getpid(), store.NewID("")[20:]),
 		}
-		go func() { pool.Run(ctx); close(poolDone) }()
+		go func() { workers.Run(ctx); close(poolDone) }()
 	} else {
 		close(poolDone)
 	}
