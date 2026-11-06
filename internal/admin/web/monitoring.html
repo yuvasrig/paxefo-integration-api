@@ -8,6 +8,7 @@
 {{template "foot" .}}{{end}}
 
 {{define "monitoring_live"}}
+{{template "alerts" .Snap}}
 {{template "prediction" .Snap}}
 <section class="cards">
   <div class="card"><span class="big">{{.Snap.ArrivalsPerMin}}</span><span>arriving / min</span></div>

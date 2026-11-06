@@ -579,3 +579,12 @@ func TestTenantsSetWorkers(t *testing.T) {
 		}
 	}
 }
+
+func TestRestartConfigNeverShowsSecrets(t *testing.T) {
+	cfg := config.Server{AlertWebhookURL: "https://hooks.example.com/services/T000/B000/SECRET", AdminToken: "tok", DatabaseURL: "postgres://u:pw@h/db"}
+	for _, it := range restartConfig(cfg) {
+		if strings.Contains(it.Value+it.Note, "SECRET") || strings.Contains(it.Value, "pw@") || strings.Contains(it.Value, "tok") {
+			t.Fatalf("%s leaks a secret: %q", it.Name, it.Value)
+		}
+	}
+}

@@ -27,3 +27,6 @@ textarea { width:100%; font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; } b
 button.primary { background:var(--accent); border-color:var(--accent); color:#fff; } button.link { border:0; background:none; color:var(--accent); padding:0; } button.danger, button.link.danger { color:var(--bad); }
 .actions { display:flex; gap:10px; margin:8px 0; } ul.links { padding-left:18px; } .editor { margin-bottom:12px; }
 @media (max-width:640px) { main { padding:12px; } th, td { padding:6px; } }
+.alert { border:1px solid var(--warn); border-left-width:6px; border-radius:6px; padding:8px 12px; margin:8px 0; background:color-mix(in srgb,var(--warn) 12%,var(--card)); }
+.alert.critical { border-color:var(--bad); background:color-mix(in srgb,var(--bad) 12%,var(--card)); }
+.alert strong { margin-right:8px; }

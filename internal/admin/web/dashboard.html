@@ -5,6 +5,7 @@
   <div class="card"><span class="big">{{.Snap.WorkerCount}}</span><span>workers running, across all tenants' pools</span></div>
   <div class="card"><span class="big">{{.Snap.Pending}}</span><span>waiting in the queue{{if .Snap.Processing}} · {{.Snap.Processing}} in progress{{end}}</span></div>
 </section>
+{{template "alerts" .Snap}}
 {{template "prediction" .Snap}}
 <h2>Tenants</h2>
 {{template "tenant_table" .Snap}}

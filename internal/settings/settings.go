@@ -17,15 +17,16 @@ import (
 
 // Values is the set of runtime settings in force.
 type Values struct {
-	RateLimitPerSec float64 // requests per second per tenant
-	RateLimitBurst  int     // burst size per tenant
-	QueueMaxDepth   int     // jobs a tenant may have waiting before ingest answers 503
-	WorkersMin      int     // fewest workers an instance keeps running
-	WorkersMax      int     // most workers an instance runs
-	WorkersTotalMax int     // most workers one process runs across all tenants' pools (0 = no cap)
-	JobsPerWorker   int     // backlog one worker is expected to keep up with (sizes the pool)
-	LagSLOSeconds   int     // a job waiting longer than this is "behind"
-	MaxAttempts     int     // tries before a job is given up as dead
+	RateLimitPerSec    float64 // requests per second per tenant
+	RateLimitBurst     int     // burst size per tenant
+	QueueMaxDepth      int     // jobs a tenant may have waiting before ingest answers 503
+	WorkersMin         int     // fewest workers an instance keeps running
+	WorkersMax         int     // most workers an instance runs
+	WorkersTotalMax    int     // most workers one process runs across all tenants' pools (0 = no cap)
+	JobsPerWorker      int     // backlog one worker is expected to keep up with (sizes the pool)
+	LagSLOSeconds      int     // a job waiting longer than this is "behind"
+	MaxAttempts        int     // tries before a job is given up as dead
+	AlertRejectPercent int     // alert when this share of a tenant's recent events is rejected (0 = off)
 }
 
 // Def describes one setting for the console and for validation.
@@ -48,6 +49,7 @@ var defs = []Def{
 	{"jobs_per_worker", "Jobs per worker", "Backlog one worker is expected to handle; a tenant's pool grows when its backlog exceeds workers x this.", false, 1, 1000000},
 	{"lag_slo_seconds", "Lag target (seconds)", "A job waiting longer than this counts as behind, and the pool grows by one.", false, 1, 86400},
 	{"max_attempts", "Attempts before a job is dead", "How many times a failing job is tried before its outcome becomes 'dead' (replayable).", false, 1, 100},
+	{"alert_reject_percent", "Alert: reject rate (%)", "Raise an alert when at least this percentage of a tenant's events in the last 15 minutes were rejected (needs 10 or more events). 0 turns the rule off.", false, 0, 100},
 }
 
 // Defs lists the runtime settings in display order.
@@ -84,6 +86,8 @@ func (v Values) Get(key string) string {
 		return strconv.Itoa(v.LagSLOSeconds)
 	case "max_attempts":
 		return strconv.Itoa(v.MaxAttempts)
+	case "alert_reject_percent":
+		return strconv.Itoa(v.AlertRejectPercent)
 	}
 	return ""
 }
@@ -148,6 +152,8 @@ func (v Values) With(key, raw string) (Values, error) {
 		v.LagSLOSeconds = int(f)
 	case "max_attempts":
 		v.MaxAttempts = int(f)
+	case "alert_reject_percent":
+		v.AlertRejectPercent = int(f)
 	}
 	return v, nil
 }

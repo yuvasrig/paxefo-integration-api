@@ -35,10 +35,12 @@ type Server struct {
 	SettingsRefresh time.Duration
 
 	// Admin console (served by the api role): disabled unless AdminToken is set.
-	AdminToken    string
-	PublicBaseURL string // shown in webhook setup instructions; defaults to the request's own address
-	LogsURL       string // link to the platform's log viewer (for example the Render logs page)
-	DashboardURL  string // link to a metrics dashboard (for example Grafana)
+	AdminToken         string
+	PublicBaseURL      string // shown in webhook setup instructions; defaults to the request's own address
+	AlertWebhookURL    string // where alerts are posted (a Slack incoming webhook works); empty = on-screen only
+	AlertRejectPercent int    // alert when this share of recent events is rejected (0 = off)
+	LogsURL            string // link to the platform's log viewer (for example the Render logs page)
+	DashboardURL       string // link to a metrics dashboard (for example Grafana)
 }
 
 // FromEnv reads and validates the configuration; getenv is os.Getenv in production.
@@ -63,27 +65,29 @@ func FromEnv(getenv func(string) string) (Server, error) {
 	}
 
 	s := Server{
-		Port:            str("PORT", "8080"),
-		DatabaseURL:     getenv("DATABASE_URL"),
-		LogLevel:        str("LOG_LEVEL", "info"),
-		IngestMode:      str("INGEST_MODE", "sync"),
-		Role:            str("ROLE", "all"),
-		BodyLimitBytes:  int64(num("BODY_LIMIT_BYTES", 256<<10)),
-		RateLimitPerSec: num("RATE_LIMIT_PER_SEC", 100),
-		RateLimitBurst:  int(num("RATE_LIMIT_BURST", 200)),
-		DBMaxConns:      int32(num("DB_MAX_CONNS", 10)),
-		RulesPath:       getenv("RULES_PATH"),
-		QueueMaxDepth:   int(num("QUEUE_MAX_DEPTH", 5000)),
-		WorkersMin:      -1,
-		WorkersMax:      int(num("WORKERS_MAX", 8)),
-		WorkersTotal:    int(num("WORKERS_TOTAL_MAX", 0)),
-		JobsPerWorker:   int(num("JOBS_PER_WORKER", 50)),
-		LagSLOSeconds:   int(num("LAG_SLO_SECONDS", 10)),
-		MaxAttempts:     int(num("MAX_ATTEMPTS", 5)),
-		AdminToken:      getenv("ADMIN_TOKEN"),
-		PublicBaseURL:   getenv("PUBLIC_BASE_URL"),
-		LogsURL:         getenv("LOGS_URL"),
-		DashboardURL:    getenv("DASHBOARD_URL"),
+		Port:               str("PORT", "8080"),
+		DatabaseURL:        getenv("DATABASE_URL"),
+		LogLevel:           str("LOG_LEVEL", "info"),
+		IngestMode:         str("INGEST_MODE", "sync"),
+		Role:               str("ROLE", "all"),
+		BodyLimitBytes:     int64(num("BODY_LIMIT_BYTES", 256<<10)),
+		RateLimitPerSec:    num("RATE_LIMIT_PER_SEC", 100),
+		RateLimitBurst:     int(num("RATE_LIMIT_BURST", 200)),
+		DBMaxConns:         int32(num("DB_MAX_CONNS", 10)),
+		RulesPath:          getenv("RULES_PATH"),
+		QueueMaxDepth:      int(num("QUEUE_MAX_DEPTH", 5000)),
+		WorkersMin:         -1,
+		WorkersMax:         int(num("WORKERS_MAX", 8)),
+		WorkersTotal:       int(num("WORKERS_TOTAL_MAX", 0)),
+		JobsPerWorker:      int(num("JOBS_PER_WORKER", 50)),
+		LagSLOSeconds:      int(num("LAG_SLO_SECONDS", 10)),
+		MaxAttempts:        int(num("MAX_ATTEMPTS", 5)),
+		AdminToken:         getenv("ADMIN_TOKEN"),
+		AlertWebhookURL:    getenv("ALERT_WEBHOOK_URL"),
+		AlertRejectPercent: int(num("ALERT_REJECT_PERCENT", 25)),
+		PublicBaseURL:      getenv("PUBLIC_BASE_URL"),
+		LogsURL:            getenv("LOGS_URL"),
+		DashboardURL:       getenv("DASHBOARD_URL"),
 	}
 	// WORKERS_MIN may be 0 (scale to zero), which num() does not allow.
 	s.WorkersMin = 2

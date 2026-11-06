@@ -79,3 +79,7 @@
   </tbody>
 </table>
 {{end}}
+
+{{define "alerts"}}
+{{range .Alerts}}<div class="alert {{.Severity}}" role="alert"><strong>{{.Title}}</strong> <span>{{.Detail}}</span></div>{{end}}
+{{end}}

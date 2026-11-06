@@ -1020,6 +1020,8 @@ Do not start the next milestone without my approval. Do not add features outside
 
 ## 24. Changelog
 
+- **2026-11-06 (alert rules)** — `internal/alerts`: pure `Evaluate` over the live figures (dead events, no workers for a tenant with jobs, oldest job past the lag target, queue at 80% / 100% of its limit, reject share over `alert_reject_percent` with at least 10 events), shown on the console and, with `ALERT_WEBHOOK_URL`, posted by a `Notifier` once when an alert starts and once when it clears (state kept in memory; a failed post is retried at the next check; the URL is never displayed because it can hold a secret).
+
 - **2026-11-06 (conflict viewer)** — Console page `/admin/conflicts`: per tenant, the latest `reading_conflicts` with the fields whose values differ between the first and the later payload (`Store.ListConflicts`), the resolution the tenant's policy applied, and a preview/apply replay of the tenant's `conflict` events from the last N hours through the existing `ReplayWindow` (dry run is the default). No new write path.
 
 - **2026-11-06 (hard cap on workers)** — `WORKERS_TOTAL_MAX` / setting `workers_total_max` (0 = no cap) caps the workers one process runs across all tenants' pools. The pure `worker.CapTotal` takes workers from the largest pool first; the manager applies it to targets and also to the workers actually running, so the cap holds even while pools shrink slowly. Editable live in the console.

@@ -456,6 +456,7 @@ func TestDashboardAndMonitoringShowTheLoad(t *testing.T) {
 	// Jobs are waiting and no process has reported in: the prediction says so.
 	dash := e.get("/admin/")
 	has(t, dash, "busy", "async", "Stalled", "No workers are running")
+	has(t, dash, `class="alert critical"`, "busy has 3 jobs waiting and no worker is running for it")
 
 	// Workers report in and the picture changes.
 	must(t, e.st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "host-1", TenantID: "busy", Role: "all", Workers: 3, InFlight: 1, StartedAt: time.Now()}))
@@ -467,6 +468,10 @@ func TestDashboardAndMonitoringShowTheLoad(t *testing.T) {
 
 	mon := e.get("/admin/monitoring")
 	has(t, mon, `data-live-url="/admin/monitoring/live"`, "/metrics", "https://logs.example.com/x", "https://grafana.example.com")
+
+	if strings.Contains(live, `class="alert critical"`) {
+		t.Fatal("workers are reporting, so the no-workers alert must clear")
+	}
 
 	// Nothing waiting: up to date.
 	_, _ = e.st.Pool().Exec(ctx, `DELETE FROM ingest_jobs`)
@@ -555,4 +560,15 @@ func TestConflictViewerAndReplay(t *testing.T) {
 	if code, _, _ := e.post("/admin/conflicts/replay", url.Values{"tenant": {"ghost"}, "mode": {"apply"}}); code != 404 {
 		t.Fatalf("unknown tenant: %d", code)
 	}
+}
+
+func TestAlertsShowDeadEventsAndFeedTheNotifier(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "dead-co", "Dead Co", nil))
+	id := store.NewID("evt_")
+	raw := []byte(`{}`)
+	must(t, e.st.SaveRawAndEnqueue(ctx, store.RawEvent{ID: id, TenantID: "dead-co", Provider: "Tive", Raw: raw, Hash: "h", ReceivedAt: time.Now()}))
+	must(t, e.st.BuryJob(ctx, "dead-co", id, "boom"))
+	has(t, e.get("/admin/monitoring/live"), `class="alert warning"`, "Dead events", "dead-co has 1 events that failed every attempt")
 }

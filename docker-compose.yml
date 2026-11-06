@@ -24,6 +24,7 @@ services:
       LOG_LEVEL: info
       ADMIN_TOKEN: local-admin-token   # enables the console at http://localhost:8080/admin (local use only)
       SETTINGS_REFRESH_INTERVAL: 3s
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}   # optional: where alerts are posted, e.g. a Slack incoming webhook
     ports:
       - "8080:8080"
     depends_on:

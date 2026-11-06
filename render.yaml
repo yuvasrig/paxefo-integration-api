@@ -34,6 +34,8 @@ services:
         value: "15"
       - key: LOG_LEVEL
         value: info
+      - key: ALERT_WEBHOOK_URL   # optional: a Slack incoming webhook; alerts are posted when they start and clear
+        sync: false
       - key: ADMIN_TOKEN   # enables /admin; you type the value into the Render dashboard (never committed)
         sync: false
 

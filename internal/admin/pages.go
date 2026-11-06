@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuvasrig/paxefo-integration-api/internal/alerts"
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
 	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
@@ -111,6 +112,7 @@ type Snapshot struct {
 	Rejects                         []RejectRow
 	Recent                          []RejectRow
 	RulesVersion                    string
+	Alerts                          []alerts.Alert
 }
 
 // RejectRow is a recent event with its tenant, for the monitoring tables.
@@ -167,6 +169,9 @@ func (c *Console) fail(w http.ResponseWriter, r *http.Request, what string, err 
 func (c *Console) baseURL(r *http.Request) string {
 	if c.PublicBaseURL != "" {
 		return strings.TrimRight(c.PublicBaseURL, "/")
+	}
+	if r == nil { // the alert notifier has no request
+		return ""
 	}
 	scheme := "http"
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
@@ -267,7 +272,36 @@ func (c *Console) snapshot(ctx context.Context, r *http.Request, withEvents bool
 		})
 	}
 	s.Prediction = overall(s.Tenants)
+	s.Alerts = alerts.Evaluate(c.alertInput(s))
 	return s, nil
+}
+
+// alertInput turns the live figures into what the alert rules look at.
+func (c *Console) alertInput(s *Snapshot) alerts.Input {
+	in := alerts.Input{
+		LagSLO: time.Duration(s.Limits.LagSLOSeconds) * time.Second, QueueLimit: s.Limits.QueueMaxDepth, RejectPercent: s.Limits.AlertRejectPercent,
+	}
+	for _, t := range s.Tenants {
+		total := 0
+		for _, n := range t.Stats.Statuses15m {
+			total += n
+		}
+		in.Tenants = append(in.Tenants, alerts.Tenant{
+			ID: t.Info.ID, Async: t.Mode == ingest.ModeAsync, Pending: t.Stats.Pending, OldestWait: t.Stats.OldestPendingAge,
+			Dead: t.Stats.Dead, Workers: t.Workers, Rejected15m: t.Stats.Statuses15m["rejected"], Total15m: total,
+		})
+	}
+	return in
+}
+
+// Alerts is the list of current alerts; the notifier polls it.
+func (c *Console) Alerts(ctx context.Context) ([]alerts.Alert, error) {
+	c.init()
+	s, err := c.snapshot(ctx, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	return s.Alerts, nil
 }
 
 // fillLimits sets the tenant's worker limits: its own if it has any, else the service-wide ones.

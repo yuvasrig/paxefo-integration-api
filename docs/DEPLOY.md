@@ -19,6 +19,8 @@ Render dashboard → **New → Blueprint** → pick the repo. `render.yaml` crea
 
 **Multiple containers:** the same image runs as `ROLE=api` (webhooks) or `ROLE=worker` (processing). `make up-split` runs one API and two worker containers locally to prove it; `render.yaml` has the paid worker service commented out. Rationale and test results: `docs/adr/0001-deployment-topology.md`.
 
+**Alerts:** the console shows them on the Dashboard and Monitoring pages. To also be notified, set `ALERT_WEBHOOK_URL` (for example a Slack incoming webhook) in the Render dashboard.
+
 **Admin console:** the blueprint asks you for `ADMIN_TOKEN` (any long random string you choose; keep it in your password manager). With it set, `https://<your-service>.onrender.com/admin` is the operator console; leave it empty and the console does not exist. Optionally set `PUBLIC_BASE_URL` (shown in webhook setup), `LOGS_URL` (the service's Logs page in Render) and `DASHBOARD_URL`.
 
 Free Postgres expires 30 days after creation (plus a 14-day grace). Create it on deploy day. Recovery: new database → update `DATABASE_URL` → the service migrates on start → re-seed and re-create keys.

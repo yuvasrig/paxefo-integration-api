@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/admin"
+	"github.com/yuvasrig/paxefo-integration-api/internal/alerts"
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
 	"github.com/yuvasrig/paxefo-integration-api/internal/config"
 	"github.com/yuvasrig/paxefo-integration-api/internal/httpapi"
@@ -155,7 +156,7 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	defaults := settings.Values{
 		RateLimitPerSec: cfg.RateLimitPerSec, RateLimitBurst: cfg.RateLimitBurst, QueueMaxDepth: cfg.QueueMaxDepth,
 		WorkersMin: cfg.WorkersMin, WorkersMax: cfg.WorkersMax, WorkersTotalMax: cfg.WorkersTotal, JobsPerWorker: cfg.JobsPerWorker,
-		LagSLOSeconds: cfg.LagSLOSeconds, MaxAttempts: cfg.MaxAttempts,
+		LagSLOSeconds: cfg.LagSLOSeconds, MaxAttempts: cfg.MaxAttempts, AlertRejectPercent: cfg.AlertRejectPercent,
 	}
 	live := settings.NewHolder(defaults)
 	syncer := &settings.Syncer{Source: st, Holder: live, Base: defaults, Interval: cfg.SettingsRefresh, Log: log}
@@ -198,14 +199,22 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 		},
 	}
 
-	if cfg.AdminToken != "" && cfg.Role != "worker" {
-		api.Admin = (&admin.Console{
+	if cfg.Role != "worker" {
+		console := &admin.Console{
 			Store: st, Token: cfg.AdminToken, Settings: live, Defaults: defaults, Rules: holder,
 			ReloadRules: reloader.Refresh, ReloadSettings: syncer.Refresh, Replayer: svc, DefaultMode: cfg.IngestMode,
 			Restart: restartConfig(cfg), PublicBaseURL: cfg.PublicBaseURL, LogsURL: cfg.LogsURL, DashboardURL: cfg.DashboardURL,
 			RefreshSeconds: int(cfg.SettingsRefresh.Seconds()), Log: log,
-		}).Handler()
-		log.Info("admin console enabled at /admin")
+		}
+		if cfg.AdminToken != "" {
+			api.Admin = console.Handler()
+			log.Info("admin console enabled at /admin")
+		}
+		// Alerts: shown in the console, and posted to ALERT_WEBHOOK_URL when one starts or clears.
+		if cfg.AlertWebhookURL != "" {
+			go (&alerts.Notifier{Source: console.Alerts, URL: cfg.AlertWebhookURL, Log: log}).Run(ctx)
+			log.Info("alert notifications enabled")
+		}
 	}
 
 	// Workers (roles all and worker): claim queued payloads and process them like a synchronous request would.
@@ -273,6 +282,7 @@ func restartConfig(cfg config.Server) []admin.ConfigItem {
 		{Name: "LOG_LEVEL", Value: cfg.LogLevel, Note: "debug, info, warn or error."},
 		{Name: "PUBLIC_BASE_URL", Value: orNone(cfg.PublicBaseURL), Note: "Address shown in webhook setup instructions."},
 		{Name: "LOGS_URL / DASHBOARD_URL", Value: orNone(cfg.LogsURL) + " / " + orNone(cfg.DashboardURL), Note: "Links on the monitoring page."},
+		{Name: "ALERT_WEBHOOK_URL", Value: setOrNot(cfg.AlertWebhookURL), Note: "Never shown (it can hold a secret). Where alerts are posted when they start and clear, for example a Slack incoming webhook. Alerts always show in this console."},
 		{Name: "ADMIN_TOKEN", Value: "(set)", Note: "Enables this console. Never shown."},
 	}
 }
@@ -282,4 +292,12 @@ func orNone(s string) string {
 		return "(not set)"
 	}
 	return s
+}
+
+// setOrNot reports whether a secret value is configured without showing it.
+func setOrNot(s string) string {
+	if s == "" {
+		return "(not set)"
+	}
+	return "(set)"
 }
