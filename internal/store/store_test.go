@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -464,5 +465,278 @@ func TestAdminKeys(t *testing.T) {
 	}
 	if keys, err := st.ListAPIKeys(ctx, "reviewer"); err != nil || len(keys) != 1 {
 		t.Fatalf("keys = %v, %v", keys, err)
+	}
+}
+
+// ---- per-tenant conflict policy (F4-R7, F4-R8) ----
+
+func TestParseConflictSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		want    store.ConflictSettings
+		wantErr bool
+	}{
+		{"no config", ``, store.ConflictSettings{Policy: "keep_first", HTTPStatus: 200}, false},
+		{"empty object", `{}`, store.ConflictSettings{Policy: "keep_first", HTTPStatus: 200}, false},
+		{"other keys only", `{"ingest_mode":"sync"}`, store.ConflictSettings{Policy: "keep_first", HTTPStatus: 200}, false},
+		{"keep_first", `{"conflict":{"policy":"keep_first"}}`, store.ConflictSettings{Policy: "keep_first", HTTPStatus: 200}, false},
+		{"keep_last defaults to 200", `{"conflict":{"policy":"keep_last"}}`, store.ConflictSettings{Policy: "keep_last", HTTPStatus: 200}, false},
+		{"reject defaults to 409", `{"conflict":{"policy":"reject"}}`, store.ConflictSettings{Policy: "reject", HTTPStatus: 409}, false},
+		{"reject with 200", `{"conflict":{"policy":"reject","http_status":200}}`, store.ConflictSettings{Policy: "reject", HTTPStatus: 200}, false},
+		{"keep_first with 409", `{"conflict":{"policy":"keep_first","http_status":409}}`, store.ConflictSettings{Policy: "keep_first", HTTPStatus: 409}, false},
+		{"unknown policy", `{"conflict":{"policy":"merge"}}`, store.ConflictSettings{}, true},
+		{"missing policy", `{"conflict":{"http_status":409}}`, store.ConflictSettings{}, true},
+		{"bad status", `{"conflict":{"policy":"reject","http_status":500}}`, store.ConflictSettings{}, true},
+		{"not json", `{nope`, store.ConflictSettings{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := store.ParseConflictSettings([]byte(tt.config))
+			if (err != nil) != tt.wantErr || (!tt.wantErr && got != tt.want) {
+				t.Fatalf("got %+v, err %v; want %+v (err %v)", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+	if _, err := store.NewConflictSettings("keep_last", 404); err == nil {
+		t.Fatal("only 200 and 409 are allowed")
+	}
+}
+
+// variant of sample 2 (same device and time) with different content.
+func variant(t *testing.T, humidity, lat float64) []byte {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(sample(t, 2), &m); err != nil {
+		t.Fatal(err)
+	}
+	m["Humidity"].(map[string]any)["Percentage"] = humidity
+	m["Location"].(map[string]any)["Latitude"] = lat
+	b, _ := json.Marshal(m)
+	return b
+}
+
+func setPolicy(t *testing.T, st *store.PGStore, policy string, status int) {
+	t.Helper()
+	cs, err := store.NewConflictSettings(policy, status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetConflictSettings(ctx, "reviewer", cs); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func humidityAndLat(t *testing.T, st *store.PGStore) (hum, lat float64, locRows int) {
+	t.Helper()
+	err := st.WithTenantTx(ctx, "reviewer", func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT humidity FROM sensor_readings`).Scan(&hum); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM location_readings`).Scan(&locRows); err != nil {
+			return err
+		}
+		if locRows == 1 {
+			return tx.QueryRow(ctx, `SELECT lat FROM location_readings`).Scan(&lat)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+func resolutions(t *testing.T, st *store.PGStore) []string {
+	t.Helper()
+	var out []string
+	err := st.WithTenantTx(ctx, "reviewer", func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT resolution FROM reading_conflicts ORDER BY id`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r string
+			if err := rows.Scan(&r); err != nil {
+				return err
+			}
+			out = append(out, r)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func conflictFlagAction(res store.CommitResult) string {
+	for _, f := range res.Flags {
+		if f.Code == rules.CodeDuplicateConflict {
+			return f.Action
+		}
+	}
+	return ""
+}
+
+func TestConflictPolicyKeepFirstIsTheDefault_F4R7(t *testing.T) {
+	st := newStore(t)
+	process(t, st, "reviewer", sample(t, 2))
+	out, _ := process(t, st, "reviewer", variant(t, 99.9, 38.5))
+	if out.Status != store.StatusConflict || out.ConflictHTTPStatus != 200 || conflictFlagAction(out) != "kept" {
+		t.Fatalf("%+v", out)
+	}
+	if hum, lat, rows := humidityAndLat(t, st); hum != 55.3 || lat != 37.7749 || rows != 1 {
+		t.Fatalf("the first reading must be kept: %v %v %d", hum, lat, rows)
+	}
+	if r := resolutions(t, st); len(r) != 1 || r[0] != "kept_first" {
+		t.Fatalf("resolutions %v", r)
+	}
+}
+
+// keep_last: the new version replaces the stored reading, the old event stays archived and is named.
+func TestConflictPolicyKeepLast_F4R7(t *testing.T) {
+	st := newStore(t)
+	setPolicy(t, st, "keep_last", 0)
+	_, firstID := process(t, st, "reviewer", sample(t, 2))
+
+	out, secondID := process(t, st, "reviewer", variant(t, 99.9, 38.5))
+	if out.Status != store.StatusConflict || out.ConflictHTTPStatus != 200 || conflictFlagAction(out) != "replaced" || out.FirstRawEventID != firstID {
+		t.Fatalf("%+v", out)
+	}
+	if hum, lat, rows := humidityAndLat(t, st); hum != 99.9 || lat != 38.5 || rows != 1 {
+		t.Fatalf("the new reading must replace the stored one: %v %v %d", hum, lat, rows)
+	}
+	var owner string
+	var devLat float64
+	_ = st.WithTenantTx(ctx, "reviewer", func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT raw_event_id FROM sensor_readings`).Scan(&owner); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT last_lat FROM devices WHERE imei = '866088073468440'`).Scan(&devLat)
+	})
+	if owner != secondID || devLat != 38.5 {
+		t.Fatalf("the reading now belongs to the new event and the device position follows: owner %s, last_lat %v", owner, devLat)
+	}
+	if _, err := st.GetEvent(ctx, "reviewer", firstID); err != nil {
+		t.Fatalf("the replaced event must stay archived: %v", err)
+	}
+	if r := resolutions(t, st); len(r) != 1 || r[0] != "replaced" {
+		t.Fatalf("resolutions %v", r)
+	}
+
+	// Last wins means last received: sending the original again puts it back.
+	if out, _ = process(t, st, "reviewer", sample(t, 2)); out.Status != store.StatusConflict {
+		t.Fatalf("%+v", out)
+	}
+	if hum, lat, _ := humidityAndLat(t, st); hum != 55.3 || lat != 37.7749 {
+		t.Fatalf("%v %v", hum, lat)
+	}
+
+	// A new version without a valid location removes the old location row, as the new payload has none.
+	if out, _ = process(t, st, "reviewer", variant(t, 70, 95)); out.Status != store.StatusConflict {
+		t.Fatalf("%+v", out)
+	}
+	if hum, _, rows := humidityAndLat(t, st); hum != 70 || rows != 0 {
+		t.Fatalf("humidity %v, location rows %d; the replaced reading has no location", hum, rows)
+	}
+}
+
+func TestConflictPolicyReject_F4R7(t *testing.T) {
+	st := newStore(t)
+	setPolicy(t, st, "reject", 0)
+	process(t, st, "reviewer", sample(t, 2))
+	out, id := process(t, st, "reviewer", variant(t, 99.9, 38.5))
+	if out.Status != store.StatusConflict || out.ConflictHTTPStatus != 409 || conflictFlagAction(out) != "rejected" {
+		t.Fatalf("%+v", out)
+	}
+	if hum, lat, _ := humidityAndLat(t, st); hum != 55.3 || lat != 37.7749 {
+		t.Fatalf("a rejected version writes nothing to the readings: %v %v", hum, lat)
+	}
+	if _, err := st.GetEvent(ctx, "reviewer", id); err != nil {
+		t.Fatalf("the raw payload is archived anyway: %v", err)
+	}
+	if r := resolutions(t, st); len(r) != 1 || r[0] != "rejected" {
+		t.Fatalf("resolutions %v", r)
+	}
+
+	// The status code is its own setting.
+	setPolicy(t, st, "reject", 200)
+	if out, _ = process(t, st, "reviewer", variant(t, 12.3, 38.5)); out.ConflictHTTPStatus != 200 {
+		t.Fatalf("%+v", out)
+	}
+	setPolicy(t, st, "keep_first", 409)
+	if out, _ = process(t, st, "reviewer", variant(t, 12.4, 38.5)); out.ConflictHTTPStatus != 409 {
+		t.Fatalf("%+v", out)
+	}
+}
+
+// An identical payload is a duplicate whatever the policy: the policy is only for different content.
+func TestDuplicateIgnoresConflictPolicy(t *testing.T) {
+	for _, policy := range []string{"keep_first", "keep_last", "reject"} {
+		t.Run(policy, func(t *testing.T) {
+			st := newStore(t)
+			setPolicy(t, st, policy, 0)
+			process(t, st, "reviewer", sample(t, 2))
+			out, _ := process(t, st, "reviewer", sample(t, 2))
+			if out.Status != store.StatusDuplicate || out.ConflictHTTPStatus != 0 {
+				t.Fatalf("%+v", out)
+			}
+			if hum, _, _ := humidityAndLat(t, st); hum != 55.3 {
+				t.Fatal("a duplicate changes nothing")
+			}
+		})
+	}
+}
+
+// Policies belong to a tenant: another tenant keeps its own behavior.
+func TestConflictPolicyIsPerTenant(t *testing.T) {
+	st := newStore(t)
+	setPolicy(t, st, "reject", 0) // reviewer only
+	process(t, st, "acme-pharma", sample(t, 2))
+	out, _ := process(t, st, "acme-pharma", variant(t, 99.9, 38.5))
+	if out.ConflictHTTPStatus != 200 || conflictFlagAction(out) != "kept" {
+		t.Fatalf("acme-pharma has no policy set, so it keeps the first: %+v", out)
+	}
+}
+
+// A malformed stored config must never stop ingest: it falls back to the default.
+func TestMalformedConflictConfigFallsBack(t *testing.T) {
+	for _, bad := range []string{`{"conflict":{"policy":"merge"}}`, `{"conflict":{"policy":"reject","http_status":500}}`, `{"conflict":"yes"}`} {
+		t.Run(bad, func(t *testing.T) {
+			st := newStore(t)
+			if _, err := st.Pool().Exec(ctx, `UPDATE tenants SET config = $1::jsonb WHERE id = 'reviewer'`, bad); err != nil {
+				t.Fatal(err)
+			}
+			process(t, st, "reviewer", sample(t, 2))
+			out, _ := process(t, st, "reviewer", variant(t, 99.9, 38.5))
+			if out.Status != store.StatusConflict || out.ConflictHTTPStatus != 200 || conflictFlagAction(out) != "kept" {
+				t.Fatalf("%+v", out)
+			}
+		})
+	}
+}
+
+func TestSetConflictSettingsKeepsOtherConfig(t *testing.T) {
+	st := newStore(t)
+	if err := st.CreateTenant(ctx, "cfg", "cfg", map[string]any{"ingest_mode": "sync", "plan": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := store.NewConflictSettings("keep_last", 0)
+	if err := st.SetConflictSettings(ctx, "cfg", cs); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := st.TenantConfig(ctx, "cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal(raw, &m)
+	if m["ingest_mode"] != "sync" || m["plan"] != "x" || m["conflict"].(map[string]any)["policy"] != "keep_last" {
+		t.Fatalf("config = %s", raw)
+	}
+	if err := st.SetConflictSettings(ctx, "nobody", cs); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown tenant: %v", err)
 	}
 }

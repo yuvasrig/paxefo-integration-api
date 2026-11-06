@@ -74,13 +74,17 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 
 - **F4-R1** THE SYSTEM SHALL enforce uniqueness of readings on `(tenant_id, device_imei, ts)` in the database.
 - **F4-R2** WHEN a payload has the same key and the same canonical-JSON hash as a stored event, THE SYSTEM SHALL respond 200 `duplicate` AND write no new readings.
-- **F4-R3** WHEN a payload has the same key but a different hash, THE SYSTEM SHALL keep the first readings, store the second version in `reading_conflicts`, add flag `DUPLICATE_CONFLICT`, and respond 200 `conflict`.
+- **F4-R3** WHEN a payload has the same key but a different hash, THE SYSTEM SHALL apply the tenant's conflict policy (F4-R7), record the version in `reading_conflicts` with its resolution, add flag `DUPLICATE_CONFLICT`, and respond with `status: conflict`. The default policy is `keep_first`: the first readings are kept.
 - **F4-R4** WHEN the same key arrives concurrently, THE SYSTEM SHALL end with exactly one reading row.
 - **F4-R5** THE SYSTEM SHALL compute the payload hash over canonical JSON (sorted keys, no insignificant whitespace), so key order and whitespace never create a conflict.
+- **F4-R7** THE SYSTEM SHALL read the conflict policy from the tenant's config (`conflict.policy`), one of: `keep_first` (default: keep the stored readings), `keep_last` (replace the stored readings with the new version in one transaction; the replaced event stays archived and is named in `reading_conflicts.first_raw_event_id`), `reject` (write nothing to the readings). `DUPLICATE_CONFLICT` carries the action `kept`, `replaced` or `rejected` accordingly.
+- **F4-R8** THE SYSTEM SHALL read the HTTP status of a conflict response from the tenant's config (`conflict.http_status`, 200 or 409), defaulting to 409 for `reject` and 200 otherwise. The status code is independent of the policy. A duplicate (same hash) is always 200 `duplicate`, whatever the policy.
+- **F4-R9** IF a tenant's stored conflict config is missing or invalid, THEN THE SYSTEM SHALL use `keep_first` / 200 and SHALL NOT stop ingesting.
 - **F4-R6** WHEN the status of one event satisfies several of rejected / conflict / duplicate / flagged / accepted, THE SYSTEM SHALL report the first in that precedence.
 
 **Acceptance**
 - *#1 after #0:* same `(imei, ts)`, different content → 200 `conflict`, flags `INVALID_COORDINATES`, `DUPLICATE_CONFLICT`; stored sensor reading is still #0's (temperature 10.08).
+- *Policies:* GIVEN sample 2 stored and the same device and time sent again with a different humidity, THEN `keep_first` leaves humidity 55.3 and answers 200; `keep_last` stores the new humidity (and a new version without valid coordinates removes the old location row); `reject` leaves it unchanged and answers 409 by default; a tenant's `http_status` overrides the code; another tenant is unaffected; a malformed config behaves as `keep_first` / 200.
 - *#4 after #0:* resolved by name to the same key → 200 `conflict`.
 - *#8 after #0:* → 200 `conflict`, `INVALID_COORDINATES`.
 - *Re-send of #2:* → 200 `duplicate`, row count unchanged.
@@ -117,7 +121,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F7-R1** IF an error occurs after the raw payload is committed, THEN THE SYSTEM SHALL record outcome `failed` AND respond 500 with `status: failed` AND keep the raw payload.
 - **F7-R2** WHEN `POST /api/v1/events/{id}/replay` is called for a `failed` or `rejected` event, THE SYSTEM SHALL re-run the stored raw payload through the pipeline and return the new outcome.
 - **F7-R3** THE SYSTEM SHALL make replay idempotent: no duplicate readings, raw payload unchanged.
-- **F7-R4** WHEN replay is called for an `accepted` or `flagged` event, THE SYSTEM SHALL respond 409.
+- **F7-R4** WHEN replay is called for an event that is not `failed`, `rejected` or unfinished (that is `accepted`, `flagged`, `duplicate` or `conflict`), THE SYSTEM SHALL respond 409, because replaying it could put an old version over a newer reading under `keep_last`.
 - **F7-R5** THE SYSTEM SHALL store `transform_version` and `rules_version` with every outcome.
 - **F7-R6** WHEN `GET /api/v1/events/{id}` is called by the owning tenant, THE SYSTEM SHALL return the raw payload, outcome, flags and PAXAFE output.
 
@@ -146,7 +150,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 | F1 | F1-R1…R8 | #2, #9, #10, #11 | M1 (transform), M3 (HTTP) |
 | F2 | F2-R1…R16 | #0, #3, #5, #6, #7 | M1 |
 | F3 | F3-R1…R7 | #12 | M1 (rules), M3 (HTTP, tenants) |
-| F4 | F4-R1…R6 | #1, #4, #8 | M2 (DB), M3 |
+| F4 | F4-R1…R9 | #1, #4, #8 | M2 (DB), M3 |
 | F5 | F5-R1…R4 | #4, #12 | M2 |
 | F6 | F6-R1…R6 | — | M3, M4 |
 | F7 | F7-R1…R6 | — | M3 |

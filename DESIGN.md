@@ -124,7 +124,7 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 | F1 | Ingest, happy path | Valid payload | Raw saved; sensor + location rows; 200 with PAXAFE output (sync) / 202 (async) | #2, #10 |
 | F2 | Ingest, partial or flagged | Some fields invalid | Bad fields nulled + flagged; valid half saved | #0, #3, #5, #6, #7, #11 |
 | F3 | Ingest, rejected | Unusable record; tenant mismatch; bad JSON | Raw saved `rejected` + reasons; 422 (400 for bad JSON) | #9, #12 |
-| F4 | Duplicate / conflict | Same `(device_imei, ts)` | Same hash: 200 `duplicate`, no write. Different hash: first kept, conflict stored + flagged | #0 vs #1, #4, #8; any sample re-sent |
+| F4 | Duplicate / conflict | Same `(device_imei, ts)` | Same hash: 200 `duplicate`, no write. Different hash: the tenant's conflict policy — `keep_first` (default: first kept, conflict stored + flagged), `keep_last` (replaced; old event stays archived) or `reject` (nothing written); HTTP 200 or 409 per tenant | #0 vs #1, #4, #8; any sample re-sent |
 | F5 | Device resolution | IMEI missing or names disagree | Resolve by `DeviceName`, else reject; mismatch flagged | #4, #12, #0, #7 |
 | F6 | Edge rejection | Bad key, body > 256 KB, rate limit, backpressure | 401 / 413 / 429 / 503 + `Retry-After`; nothing saved | — |
 | F7 | Failure + replay | Error after raw save | Event `failed`; `POST /api/v1/events/{id}/replay` reruns idempotently | — |
@@ -172,7 +172,7 @@ Reject reason codes (in `errors[]`): `NO_DEVICE_IDENTITY`, `NO_TIMESTAMP`, `TIME
 | `IDENTITY_MISMATCH` | warn | `EntityName` ≠ `DeviceName`, or `Shipment.DeviceId` ≠ `DeviceId` | Kept as sent |
 | `TEMPERATURE_FALLBACK` | info | Device temp missing/faulty; probe used | `temperature_source=probe` |
 | `TEMPERATURE_CONVERTED` | info | `Temperature.Celsius` null, Fahrenheit present | Celsius = (F − 32) × 5/9 |
-| `DUPLICATE_CONFLICT` | warn | Same key, different content | First kept; conflict stored |
+| `DUPLICATE_CONFLICT` | warn | Same key, different content | Per tenant policy: `kept` / `replaced` / `rejected` |
 | `TEMP_EXCURSION` | warn | A shipment is present and the temperature used is outside 2–8 °C (inclusive band, config) | Flag only; reading stored |
 | `IMPOSSIBLE_TRAVEL` | warn | Speed vs time-nearest neighbors > 1000 km/h | Flag only — *designed, not built* |
 
@@ -510,7 +510,7 @@ All endpoints except probes/metrics require `X-API-Key`; all queries are tenant-
 | 200 | Clean (sync) | `accepted` |
 | 200 | Flags / partial (sync) | `flagged` |
 | 200 | Same key, same hash | `duplicate` |
-| 200 | Same key, different hash (decision: 200, not 409, to avoid sender retry loops — confirm) | `conflict` |
+| 200 or 409 | Same key, different hash. The tenant's `conflict.http_status` decides (default 200; 409 for policy `reject`) | `conflict` |
 | 202 | Async accepted | `queued` |
 | 400 | Not JSON | `rejected` |
 | 401 | Missing/invalid/expired key | — |
@@ -780,7 +780,7 @@ Live-change workflow: change the spec → change the test → change the code.
 | 6 | Postgres with Timescale toggle | InfluxDB, DynamoDB, MongoDB | DB-enforced idempotency, transactions, JSONB; no-rewrite upgrade |
 | 7 | Two-tier validation | Reject on any error | One bad field must not drop a valid temperature |
 | 8 | Device temp primary, probe fallback | Probe primary | Device always present; probe faults in samples |
-| 9 | Keep first on conflict; 200 `conflict` | Last write wins; 409 | Audit; avoid retry loops |
+| 9 | Conflict handling is a per-tenant setting: `keep_first` (default) / `keep_last` / `reject`, with HTTP 200 or 409 | One fixed behavior | Tenants differ: audit-first vs latest-wins vs strict; avoids hard-coding the 200-vs-409 question |
 | 10 | Rounding only at output | Round on store | Full precision for audit |
 | 11 | Reconciler with ledger | Trust counters | Independent proof of completeness |
 | 12 | Prometheus rules + in-app evaluator | One only | Production standard + visible in demo |
@@ -793,7 +793,7 @@ Live-change workflow: change the spec → change the test → change the code.
 | 19 | Per-tenant worker allocation (`Allocate()`, shared + dedicated) | One global pool | Fairness, premium tiers, capacity derived from customer forecasts |
 
 ## 21. Open questions
-- [ ] Confirm 200 vs 409 for conflicting duplicates.
+- [x] 200 vs 409 for conflicting duplicates: resolved by making it a per-tenant setting (`tenants.config.conflict`).
 - [ ] Is `type` always `Active` for Tive?
 - [ ] Authoritative temperature: device (ambient) or probe (product)?
 - [ ] Source of per-shipment temperature bands in production.
@@ -898,7 +898,7 @@ Do not start the next milestone without my approval. Do not add features outside
 **Scope**
 - `internal/auth`: key format `pxk_test_<base62>`; SHA-256 lookup; expired/revoked → 401; key → tenant in context.
 - `internal/ingest` (sync mode only): pipeline §4.1 — tx1 (raw event + ledger row) commit → parse → tenant from the API key (§4.1 1a) → rules → transform → tx2 (readings, conflicts, device/shipment upserts with "only if newer", outcome with `expected_outputs`, `transform_version`, `rules_version`).
-- Duplicate handling: same hash → 200 `duplicate`, no write; different hash → first kept, row in `reading_conflicts`, 200 `conflict` + `DUPLICATE_CONFLICT` flag.
+- Duplicate handling: same hash → 200 `duplicate`, no write; different hash → the tenant's conflict policy (default `keep_first`: first kept, row in `reading_conflicts`, 200 `conflict` + `DUPLICATE_CONFLICT` flag).
 - Failure after tx1 → outcome `failed`, 500; `POST /api/v1/events/{id}/replay` re-runs idempotently.
 - `internal/httpapi`: routes `POST /api/webhook/tive` (alias `POST /api/v1/webhook/tive`), `GET /api/v1/events/{id}`, `POST /api/v1/events/{id}/replay`, `GET /api/v1/readings` (device_id, from, to, cursor); response envelope and status codes per §12; body limit 256 KB; per-tenant token-bucket rate limit (in-memory).
 
@@ -1013,6 +1013,8 @@ Do not start the next milestone without my approval. Do not add features outside
 ---
 
 ## 24. Changelog
+
+- **2026-11-06 (conflict policy)** — Conflict handling is a per-tenant setting in `tenants.config.conflict`: `policy` = `keep_first` (default) | `keep_last` | `reject`, and `http_status` = 200 | 409 (default 409 for `reject`, else 200). A duplicate (same hash) is always 200. `keep_last` replaces the reading in one transaction and keeps the replaced event archived (`reading_conflicts.resolution`); the app role gained DELETE on the two reading tables (migration 00002). Replay is limited to failed, rejected or unfinished events (a replayed old version could otherwise overwrite a newer reading). CLI: `api tenants set-conflict`, `api tenants show`. Resolves the §21 question on 200 vs 409.
 
 - **2026-11-06 (later)** — `address.street` is parsed (everything before the locality) instead of always null. Affects samples 0 and 7 (`114 Hunts Point Market`).
 

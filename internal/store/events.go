@@ -107,21 +107,55 @@ func (s *PGStore) writeReadings(ctx context.Context, tx pgx.Tx, in CommitInput, 
 		return nil
 	}
 
-	// F4-R3: keep the first, store this version as a conflict.
+	// Same key, different content: the tenant's conflict policy decides (F4-R3, F4-R7, F4-R8).
+	settings := conflictSettings(ctx, tx, in.TenantID)
 	out.Status = StatusConflict
+	out.ConflictHTTPStatus = settings.HTTPStatus
+	flagAction, resolution := rules.ActionKept, ResolutionKeptFirst
+	switch settings.Policy {
+	case PolicyKeepLast:
+		flagAction, resolution = rules.ActionReplaced, ResolutionReplaced
+	case PolicyReject:
+		flagAction, resolution = rules.ActionRejected, ResolutionRejected
+	}
 	out.Flags = append(out.Flags, rules.Flag{
-		Code: rules.CodeDuplicateConflict, Severity: rules.SeverityWarn, Field: "(tenant_id,device_imei,ts)", Action: rules.ActionKept,
+		Code: rules.CodeDuplicateConflict, Severity: rules.SeverityWarn, Field: "(tenant_id,device_imei,ts)", Action: flagAction,
 	})
+
 	diff, err := json.Marshal(payloadDiff(firstRaw, thisRaw))
 	if err != nil {
 		return fmt.Errorf("store: marshal diff: %w", err)
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO reading_conflicts (tenant_id, device_imei, ts, raw_event_id, first_raw_event_id, diff)
-		VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (raw_event_id) DO NOTHING`,
-		in.TenantID, imei, ts, in.RawEventID, first, diff)
+		INSERT INTO reading_conflicts (tenant_id, device_imei, ts, raw_event_id, first_raw_event_id, diff, resolution)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (raw_event_id) DO NOTHING`,
+		in.TenantID, imei, ts, in.RawEventID, first, diff, resolution)
 	if err != nil {
 		return fmt.Errorf("store: insert conflict: %w", err)
+	}
+
+	if settings.Policy != PolicyKeepLast {
+		return nil
+	}
+	// keep_last: the new version replaces the stored one in this transaction. The replaced event stays archived
+	// (raw_events is append-only) and is named by first_raw_event_id above.
+	for _, table := range []string{"sensor_readings", "location_readings"} {
+		if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE tenant_id = $1 AND device_imei = $2 AND ts = $3", in.TenantID, imei, ts); err != nil {
+			return fmt.Errorf("store: replace reading in %s: %w", table, err)
+		}
+	}
+	if err := insertReadings(ctx, tx, in); err != nil {
+		return err
+	}
+	// The device's last position is "only if newer"; a replaced reading has the same timestamp, so refresh it explicitly.
+	if res.Location != nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE devices SET last_lat = $4, last_lon = $5
+			WHERE tenant_id = $1 AND imei = $2 AND valid_to IS NULL AND last_ts = $3`,
+			in.TenantID, imei, ts, res.Location.Latitude, res.Location.Longitude)
+		if err != nil {
+			return fmt.Errorf("store: refresh device position: %w", err)
+		}
 	}
 	return nil
 }

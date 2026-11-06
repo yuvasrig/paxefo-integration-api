@@ -38,7 +38,7 @@ Flags raised before the rejection are still returned. A rejected event is stored
 | `TEMPERATURE_FALLBACK` | info | Device temperature missing/faulty, probe used | `temperature_source=probe` | transform |
 | `TEMPERATURE_CONVERTED` | info | `Celsius` null, `Fahrenheit` present | Celsius = (F−32)×5/9 | rule `TEMP-F-ONLY` |
 | `TEMP_EXCURSION` | warn | A shipment is present (`Shipment.Id` or `ShipmentId`) and the temperature used is outside 2-8 C (inclusive band, configurable) | Flag only; the reading is stored | transform |
-| `DUPLICATE_CONFLICT` | warn | Same `(tenant, imei, ts)`, different content | First kept; conflict stored | store |
+| `DUPLICATE_CONFLICT` | warn | Same `(tenant, imei, ts)`, different content | Per the tenant's conflict policy: `kept` (keep_first, default), `replaced` (keep_last) or `rejected` (reject) | store |
 | `IMPOSSIBLE_TRAVEL` | warn | Speed vs time-nearest neighbours > 1000 km/h | Flag only | domain — *designed, not built* |
 
 Reject-only codes (`NO_DEVICE_IDENTITY`, `TIMESTAMP_FUTURE`) appear in `errors[]`, not `flags[]`.
@@ -56,14 +56,14 @@ Reject-only codes (`NO_DEVICE_IDENTITY`, `TIMESTAMP_FUTURE`) appear in `errors[]
 }
 ```
 
-For `fix` actions, `value` is the original and `new_value` the replacement. `action` is one of `nullified`, `fixed`, `location_skipped`, `kept`.
+For `fix` actions, `value` is the original and `new_value` the replacement. `action` is one of `nullified`, `fixed`, `location_skipped`, `kept`, `replaced`, `rejected`.
 
 ## Duplicate semantics
 
 Key `(tenant_id, device_imei, ts)`. Hash = SHA-256 of canonical JSON of the raw payload (keys sorted, no insignificant whitespace).
 
 - Same key, same hash → 200 `duplicate`, nothing written.
-- Same key, different hash → first kept; second stored in `reading_conflicts`; 200 `conflict` + `DUPLICATE_CONFLICT`.
+- Same key, different hash → the tenant's conflict policy applies (`tenants.config.conflict.policy`, default `keep_first`): `keep_first` keeps the stored reading, `keep_last` replaces it (the old event stays archived), `reject` writes nothing. The version is recorded in `reading_conflicts` with its resolution. `status: conflict`; HTTP 200 or 409 per `conflict.http_status` (default 409 for `reject`, else 200).
 
 ## Ignored on purpose
 

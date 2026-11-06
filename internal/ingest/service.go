@@ -87,7 +87,9 @@ func (s *Service) Replay(ctx context.Context, tenantID, eventID, requestID strin
 	if err != nil {
 		return Response{}, err
 	}
-	if ev.HasOutcome && (ev.Status == provider.StatusAccepted || ev.Status == provider.StatusFlagged) {
+	// Only a failed, rejected or never-finished event can be replayed. A processed one (including a duplicate or a
+	// conflict) would, under a keep_last policy, put an old version back over a newer reading.
+	if ev.HasOutcome && ev.Status != provider.StatusRejected && ev.Status != store.StatusFailed {
 		return Response{}, ErrNotReplayable
 	}
 	return s.process(ctx, run{eventID: ev.ID, requestID: requestID, tenant: ev.TenantID, body: ev.Raw}), nil
@@ -131,6 +133,8 @@ func (s *Service) process(ctx context.Context, r run) Response {
 	switch {
 	case httpStatus != 0:
 		resp.HTTPStatus = httpStatus
+	case out.Status == store.StatusConflict && out.ConflictHTTPStatus != 0:
+		resp.HTTPStatus = out.ConflictHTTPStatus // the tenant's choice: 200 or 409
 	case out.Status == provider.StatusRejected:
 		resp.HTTPStatus = 422
 	default:

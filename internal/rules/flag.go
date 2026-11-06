@@ -38,6 +38,8 @@ const (
 	ActionFixed           = "fixed"
 	ActionLocationSkipped = "location_skipped"
 	ActionKept            = "kept"
+	ActionReplaced        = "replaced" // conflict policy keep_last: the new reading replaced the stored one
+	ActionRejected        = "rejected" // conflict policy reject: nothing was written to the readings
 )
 
 // Flag records one quality finding. For fixes Value is the original and NewValue the replacement.

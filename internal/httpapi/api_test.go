@@ -504,3 +504,96 @@ func TestDuplicateAndConflictOverHTTP_F4(t *testing.T) {
 		t.Fatalf("%d %v", code, got)
 	}
 }
+
+// Per-tenant conflict policy over HTTP (F4-R7, F4-R8).
+func changedSample(t *testing.T, humidity float64) []byte {
+	t.Helper()
+	var m map[string]any
+	must(t, json.Unmarshal(sample(t, 2), &m))
+	m["Humidity"].(map[string]any)["Percentage"] = humidity
+	b, _ := json.Marshal(m)
+	return b
+}
+
+func (e *env) setPolicy(tenant, policy string, status int) {
+	e.t.Helper()
+	cs, err := store.NewConflictSettings(policy, status)
+	must(e.t, err)
+	must(e.t, e.st.SetConflictSettings(ctx, tenant, cs))
+}
+
+func (e *env) humidity(tenant string) float64 {
+	e.t.Helper()
+	_, _, b := e.do("GET", "/api/v1/readings?device_id=B234567", e.keys[tenant], nil)
+	var page struct {
+		Items []struct{ Sensor struct{ Humidity float64 } }
+	}
+	must(e.t, json.Unmarshal(b, &page))
+	if len(page.Items) != 1 {
+		e.t.Fatalf("readings: %s", b)
+	}
+	return page.Items[0].Sensor.Humidity
+}
+
+func TestConflictPoliciesOverHTTP_F4R7(t *testing.T) {
+	e := newEnv(t)
+
+	// Default (keep_first): 200 conflict, the first reading stays.
+	e.post("reviewer", sample(t, 2))
+	code, got := e.post("reviewer", changedSample(t, 99.9))
+	if code != 200 || got["status"] != "conflict" || e.humidity("reviewer") != 55.3 {
+		t.Fatalf("keep_first: %d %v humidity %v", code, got["status"], e.humidity("reviewer"))
+	}
+
+	// reject: 409, nothing replaced; the body still says what happened.
+	e.setPolicy("reviewer", "reject", 0)
+	code, got = e.post("reviewer", changedSample(t, 88.8))
+	if code != 409 || got["status"] != "conflict" || got["event_id"] == "" || !strings.Contains(fmt.Sprint(got["flags"]), "rejected") || e.humidity("reviewer") != 55.3 {
+		t.Fatalf("reject: %d %v", code, got)
+	}
+	// ...but a plain duplicate is still a 200.
+	if code, got = e.post("reviewer", sample(t, 2)); code != 200 || got["status"] != "duplicate" {
+		t.Fatalf("duplicate under reject: %d %v", code, got["status"])
+	}
+
+	// The status code is separate from the policy.
+	e.setPolicy("reviewer", "reject", 200)
+	if code, _ = e.post("reviewer", changedSample(t, 77.7)); code != 200 {
+		t.Fatalf("reject with http_status 200: %d", code)
+	}
+
+	// keep_last: the new version replaces the stored reading.
+	e.setPolicy("reviewer", "keep_last", 0)
+	code, got = e.post("reviewer", changedSample(t, 66.6))
+	if code != 200 || got["status"] != "conflict" || !strings.Contains(fmt.Sprint(got["flags"]), "replaced") || e.humidity("reviewer") != 66.6 {
+		t.Fatalf("keep_last: %d %v humidity %v", code, got["status"], e.humidity("reviewer"))
+	}
+	e.setPolicy("reviewer", "keep_last", 409)
+	if code, _ = e.post("reviewer", changedSample(t, 65.5)); code != 409 || e.humidity("reviewer") != 65.5 {
+		t.Fatalf("keep_last answering 409 still replaces: %d humidity %v", code, e.humidity("reviewer"))
+	}
+
+	// Another tenant is unaffected by the reviewer's policy.
+	e.post("acme-pharma", sample(t, 2))
+	if code, got = e.post("acme-pharma", changedSample(t, 99.9)); code != 200 || got["status"] != "conflict" || e.humidity("acme-pharma") != 55.3 {
+		t.Fatalf("acme-pharma defaults to keep_first: %d %v", code, got["status"])
+	}
+}
+
+// Replaying a duplicate or a conflict could put an old version over a newer reading, so only failed, rejected or
+// never-finished events can be replayed.
+func TestReplayOfConflictIsRefused(t *testing.T) {
+	e := newEnv(t)
+	e.setPolicy("reviewer", "keep_last", 0)
+	e.post("reviewer", sample(t, 2))
+	_, conflict := e.post("reviewer", changedSample(t, 99.9))
+	_, dup := e.post("reviewer", changedSample(t, 99.9))
+	for name, resp := range map[string]map[string]any{"conflict": conflict, "duplicate": dup} {
+		if code, _, _ := e.do("POST", "/api/v1/events/"+resp["event_id"].(string)+"/replay", e.keys["reviewer"], nil); code != 409 {
+			t.Errorf("replay of a %s: %d, want 409", name, code)
+		}
+	}
+	if e.humidity("reviewer") != 99.9 {
+		t.Fatal("the latest reading must not change")
+	}
+}

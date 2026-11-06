@@ -22,7 +22,8 @@ paths:
         as metadata and never checked, and `EntryTimeUtc` is ignored (`EntryTimeEpoch` is the event time).
         `/api/v1/webhook/tive` is an alias for the same handler.
         `status` is `flagged` if and only if the response carries any flag. When several statuses apply, precedence is
-        rejected > conflict > duplicate > flagged > accepted. A request id may be supplied in `X-Request-ID`; it is echoed back.
+        rejected > conflict > duplicate > flagged > accepted. A conflict follows the tenant's conflict policy
+        (`keep_first` default, `keep_last`, `reject`). A request id may be supplied in `X-Request-ID`; it is echoed back.
       parameters:
         - $ref: '#/components/parameters/RequestId'
       requestBody:
@@ -32,13 +33,21 @@ paths:
             schema: { $ref: '#/components/schemas/TivePayload' }
       responses:
         '200':
-          description: Processed (accepted, flagged, duplicate or conflict)
+          description: Processed (accepted, flagged, duplicate, or conflict when the tenant's conflict `http_status` is 200)
           headers: { X-Request-ID: { $ref: '#/components/headers/RequestId' } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IngestResponse' }
         '400': { $ref: '#/components/responses/InvalidJson' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: |
+            Conflict: the same device and time arrived earlier with different content, and the tenant's conflict
+            `http_status` is 409 (the default for policy `reject`). The body is the usual envelope with status `conflict`;
+            the raw payload is still archived.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResponse' }
         '413': { $ref: '#/components/responses/TooLarge' }
         '422':
           description: Unusable record (rejected); raw payload is still stored
@@ -91,7 +100,7 @@ paths:
       operationId: replayEvent
       summary: Re-run a failed or rejected event from its stored raw payload
       description: |
-        Idempotent: readings are inserted with ON CONFLICT. The raw payload is never modified.
+        Only failed, rejected or unfinished events can be replayed. Idempotent: readings are inserted with ON CONFLICT. The raw payload is never modified.
         Returns the same envelope as the webhook with the new outcome.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
@@ -104,7 +113,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Event is already accepted or flagged; nothing to replay
+          description: Event is already processed (accepted, flagged, duplicate or conflict); nothing to replay
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -311,7 +320,7 @@ components:
         field: { type: string, example: Location.Latitude }
         value: { description: Original value as sent }
         new_value: { description: Replacement value, for fixes }
-        action: { type: string, enum: [nullified, fixed, location_skipped, kept] }
+        action: { type: string, enum: [nullified, fixed, location_skipped, kept, replaced, rejected] }
         rule_id: { type: string, example: LAT-RANGE }
 
     Problem:

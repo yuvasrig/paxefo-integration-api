@@ -18,6 +18,9 @@ import (
 func (s *PGStore) CreateTenant(ctx context.Context, id, name string, config map[string]any) error {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
+	if config == nil {
+		config = map[string]any{}
+	}
 	cfg, err := json.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("store: marshal tenant config: %w", err)

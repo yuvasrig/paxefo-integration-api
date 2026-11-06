@@ -116,6 +116,41 @@ func TestCLIKeysAndTenants(t *testing.T) {
 	}
 }
 
+func TestCLIConflictPolicy(t *testing.T) {
+	st, _ := openTestStore(t)
+	if _, err := run(t, st, "tenants", "create", "--id", "reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, st, "tenants", "show", "--tenant", "reviewer")
+	if err != nil || !strings.Contains(out, "conflict policy: keep_first (HTTP 200)") {
+		t.Fatalf("default: %q %v", out, err)
+	}
+	out, err = run(t, st, "tenants", "set-conflict", "--tenant", "reviewer", "--policy", "reject")
+	if err != nil || !strings.Contains(out, "reject, HTTP 409") {
+		t.Fatalf("reject: %q %v", out, err)
+	}
+	out, _ = run(t, st, "tenants", "show", "--tenant", "reviewer")
+	if !strings.Contains(out, "conflict policy: reject (HTTP 409)") || !strings.Contains(out, `"policy"`) {
+		t.Fatalf("show: %q", out)
+	}
+	if out, err = run(t, st, "tenants", "set-conflict", "--tenant", "reviewer", "--policy", "keep_last", "--http-status", "409"); err != nil || !strings.Contains(out, "keep_last, HTTP 409") {
+		t.Fatalf("%q %v", out, err)
+	}
+	for name, args := range map[string][]string{
+		"no tenant":      {"set-conflict", "--policy", "reject"},
+		"no policy":      {"set-conflict", "--tenant", "reviewer"},
+		"bad policy":     {"set-conflict", "--tenant", "reviewer", "--policy", "merge"},
+		"bad status":     {"set-conflict", "--tenant", "reviewer", "--policy", "reject", "--http-status", "500"},
+		"unknown tenant": {"set-conflict", "--tenant", "ghost", "--policy", "reject"},
+		"show unknown":   {"show", "--tenant", "ghost"},
+		"show no tenant": {"show"},
+	} {
+		if _, err := run(t, st, "tenants", args...); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
 // F13-R1, R3, R4, R5, R7: the server migrates, serves probes and the webhook, and shuts down cleanly.
 func TestServeLifecycle(t *testing.T) {
 	st, dsn := openTestStore(t)

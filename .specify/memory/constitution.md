@@ -21,8 +21,8 @@ Reject (422) only when there is no device identity, no timestamp, no usable temp
 *In code:* the reject list in DESIGN.md §5 is exhaustive; anything else is accepted with flags.
 
 ### 5. Idempotent by construction
-Uniqueness is enforced by the database, `(tenant_id, device_imei, ts)`, and writes use `ON CONFLICT`. At-least-once processing is therefore safe; the first write wins and a differing second version is stored as a conflict.
-*In code:* no "check then insert" in application code.
+Uniqueness is enforced by the database, `(tenant_id, device_imei, ts)`, and writes use `ON CONFLICT`. At-least-once processing is therefore safe; by default the first write wins and a differing second version is stored as a conflict; a tenant may instead choose `keep_last` or `reject` (the version is always recorded, never silently dropped).
+*In code:* the key is checked and written inside one transaction under a per-key lock, with the unique index as the backstop.
 
 ### 6. Transforms are pure; providers and storage are pluggable
 Parsing, rules, transform, quality and output rounding do no I/O (no DB, HTTP or clock). Interfaces exist only at real boundaries: `Provider`, `Store`, `Queue`, `Notifier`.

@@ -22,6 +22,9 @@ const adminUsage = `usage:
   api keys list [--tenant T]
   api keys revoke ID
   api tenants create --id ID [--name NAME]
+  api tenants show --tenant T                          print the tenant's config
+  api tenants set-conflict --tenant T --policy keep_first|keep_last|reject [--http-status 200|409]
+                                                       what to do when the same device and time arrive with different content
 `
 
 // runAdmin runs the operator commands against the database (keys, tenants, seed).
@@ -141,6 +144,52 @@ func runTenants(ctx context.Context, st *store.PGStore, args []string, out io.Wr
 			return err
 		}
 		fmt.Fprintf(out, "tenant %s ready\n", *id)
+		return nil
+	case "show":
+		fs := newFlags("tenants show", out)
+		tenant := fs.String("tenant", "", "tenant id (required)")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if *tenant == "" {
+			return errors.New("tenants show: --tenant is required")
+		}
+		cfg, err := st.TenantConfig(ctx, *tenant)
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("tenants show: tenant %q does not exist", *tenant)
+		}
+		if err != nil {
+			return err
+		}
+		cs, perr := store.ParseConflictSettings(cfg)
+		if perr != nil {
+			fmt.Fprintf(out, "warning: stored conflict config is invalid (%v); ingest uses the default\n", perr)
+			cs = store.DefaultConflictSettings()
+		}
+		fmt.Fprintf(out, "config: %s\nconflict policy: %s (HTTP %d)\n", cfg, cs.Policy, cs.HTTPStatus)
+		return nil
+	case "set-conflict":
+		fs := newFlags("tenants set-conflict", out)
+		tenant := fs.String("tenant", "", "tenant id (required)")
+		policy := fs.String("policy", "", "keep_first, keep_last or reject (required)")
+		status := fs.Int("http-status", 0, "HTTP status of a conflict response, 200 or 409 (default: 409 for reject, else 200)")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if *tenant == "" || *policy == "" {
+			return errors.New("tenants set-conflict: --tenant and --policy are required")
+		}
+		cs, err := store.NewConflictSettings(*policy, *status)
+		if err != nil {
+			return fmt.Errorf("tenants set-conflict: %w", err)
+		}
+		if err := st.SetConflictSettings(ctx, *tenant, cs); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("tenants set-conflict: tenant %q does not exist", *tenant)
+			}
+			return err
+		}
+		fmt.Fprintf(out, "tenant %s: conflict policy %s, HTTP %d\n", *tenant, cs.Policy, cs.HTTPStatus)
 		return nil
 	}
 	return fmt.Errorf("tenants: unknown subcommand %q\n%s", sub, adminUsage)

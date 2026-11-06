@@ -39,6 +39,8 @@ type CommitResult struct {
 	Status          string       // accepted, flagged, rejected, duplicate or conflict
 	Flags           []rules.Flag // transform flags plus DUPLICATE_CONFLICT when it applies
 	FirstRawEventID string       // the event that owns the key, for duplicate and conflict
+	// ConflictHTTPStatus is the tenant's configured HTTP status for a conflict response (0 when not a conflict).
+	ConflictHTTPStatus int
 }
 
 // EventRecord is an event with its outcome, as shown by GET /events/{id}.

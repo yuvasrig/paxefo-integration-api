@@ -55,3 +55,8 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 - `EntryTimeUtc` is ignored: no `TS-UTC-MISMATCH` rule, no `TIMESTAMP_MISMATCH`.
 - `status` is `flagged` iff any flag; `TEMP_EXCURSION` is built (only when a shipment exists).
 - `POST /api/webhook/tive` is the primary path; `/api/v1/webhook/tive` is an alias.
+
+## Change on 2026-11-06 (later): per-tenant conflict policy
+- [x] `tenants.config.conflict` = `{policy: keep_first|keep_last|reject, http_status: 200|409}`; migration 00002 (`reading_conflicts.resolution`, DELETE grant); store applies the policy inside the commit transaction (F4-R7..R9).
+- [x] Replay limited to failed, rejected or unfinished events (F7-R4).
+- [x] CLI `tenants set-conflict` and `tenants show`.

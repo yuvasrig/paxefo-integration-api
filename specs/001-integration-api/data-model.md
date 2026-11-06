@@ -5,7 +5,7 @@ Source: DESIGN.md §7, §7.2. Postgres 16. Every tenant table carries `tenant_id
 ## Tables
 
 ### tenants
-`id` text PK · `name` · `status` · `plan` · `retention_days` · `config` jsonb · `created_at`.
+`id` text PK · `name` · `status` · `plan` · `retention_days` · `config` jsonb · `created_at`. `config.conflict = {policy: keep_first|keep_last|reject, http_status: 200|409}` sets the tenant's conflict handling (default keep_first / 200); set it with `api tenants set-conflict`.
 Seeded by `api seed`: `reviewer`, `acme-pharma`, `bioco`. The tenant of a request is the API key's; there is no account-to-tenant mapping.
 
 ### api_keys
@@ -31,7 +31,7 @@ Index `(status, processed_at)`.
 **Unique `(tenant_id, device_imei, ts)`**; index `(tenant_id, device_id, ts DESC)`.
 
 ### reading_conflicts
-`tenant_id` · `device_imei` · `ts` · `raw_event_id` · `first_raw_event_id` · `diff` jsonb · `created_at`. `raw_event_id` is unique, so replays do not duplicate conflicts. Index `(tenant_id, device_imei, ts)`.
+`tenant_id` · `device_imei` · `ts` · `raw_event_id` · `first_raw_event_id` · `diff` jsonb · `created_at`. `resolution` (`kept_first`, `replaced`, `rejected`) records the tenant's policy outcome. `raw_event_id` is unique, so replays do not duplicate conflicts. Index `(tenant_id, device_imei, ts)`.
 
 ### devices
 `tenant_id` · `imei` · `device_name` · `valid_from` · `valid_to` (null = open) · `first_seen` · `last_seen` · `last_lat` · `last_lon` · `last_ts`.
