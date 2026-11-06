@@ -63,6 +63,7 @@ func TestPredict(t *testing.T) {
 		behind  bool
 		textHas string
 	}{
+		{"a job or two in flight while keeping up is up to date", PredictInput{Pending: 1, ArrivalsPerMin: 250, CompletedPerMin: 249, ActiveWorkers: 2, OldestAge: 20 * time.Millisecond, LagSLO: slo}, StateUpToDate, false, 0, false, "keeping up"},
 		{"nothing waiting", PredictInput{ActiveWorkers: 2, LagSLO: slo}, StateUpToDate, false, 0, false, "up to date"},
 		{"nothing waiting and no workers is still up to date", PredictInput{LagSLO: slo}, StateUpToDate, false, 0, false, "up to date"},
 		{"no workers", PredictInput{Pending: 40, LagSLO: slo}, StateStalled, false, 0, false, "No workers are running"},

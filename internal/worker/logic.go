@@ -37,6 +37,12 @@ func Desired(depth int, oldestAge time.Duration, c SizeConfig) int {
 	return n
 }
 
+// keepingUpRatio: completions at least this fraction of arrivals, with nothing over the lag target, counts as keeping up.
+const (
+	keepingUpRatio  = 0.9
+	inFlightSeconds = 2.0 // a queue this short at the current rate is work in flight, not a backlog
+)
+
 const (
 	backoffBase = time.Second
 	backoffCap  = 5 * time.Minute
@@ -95,6 +101,11 @@ func Predict(in PredictInput) Prediction {
 		p.State, p.Text = StateStalled, fmt.Sprintf("No workers are running, and %d jobs are waiting.", backlog)
 	case in.CompletedPerMin <= 0:
 		p.State, p.Text = StateStalled, fmt.Sprintf("%d jobs are waiting and none finished in the last minute.", backlog)
+	case !p.Behind && in.CompletedPerMin >= keepingUpRatio*in.ArrivalsPerMin && float64(backlog) <= in.CompletedPerMin*inFlightSeconds/60:
+		// The whole queue would clear in a couple of seconds and the oldest has waited less than the lag target: that is
+		// normal work in progress, not a backlog, even when the last minute's two counts differ by a job or two.
+		p.State = StateUpToDate
+		p.Text = fmt.Sprintf("Workers are keeping up: %d in the queue, the oldest has waited %s.", backlog, in.OldestAge.Round(time.Millisecond))
 	case in.CompletedPerMin <= in.ArrivalsPerMin:
 		p.State = StateFallingBehind
 		p.Text = fmt.Sprintf("Jobs arrive at %.0f/min but finish at %.0f/min, so the backlog of %d is not shrinking. More workers are needed.",
