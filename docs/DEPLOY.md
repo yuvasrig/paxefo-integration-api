@@ -13,6 +13,8 @@ Render dashboard → **New → Blueprint** → pick the repo. `render.yaml` crea
 
 `DATABASE_URL` is wired to the database's **internal** connection string. `ROLE=all`, `INGEST_MODE=sync`, `LOG_LEVEL=info` are set by the blueprint. Migrations run when the service starts.
 
+**Admin console:** the blueprint asks you for `ADMIN_TOKEN` (any long random string you choose; keep it in your password manager). With it set, `https://<your-service>.onrender.com/admin` is the operator console; leave it empty and the console does not exist. Optionally set `PUBLIC_BASE_URL` (shown in webhook setup), `LOGS_URL` (the service's Logs page in Render) and `DASHBOARD_URL`.
+
 Free Postgres expires 30 days after creation (plus a 14-day grace). Create it on deploy day. Recovery: new database → update `DATABASE_URL` → the service migrates on start → re-seed and re-create keys.
 
 ## 3. Seed the database from your laptop

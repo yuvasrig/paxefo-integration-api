@@ -1178,7 +1178,7 @@ func TestTenantStatsAndRecentEvents(t *testing.T) {
 		t.Fatalf("%d %v", len(recent), err)
 	}
 	rej, _ := st.RecentEvents(ctx, "reviewer", 10, []string{"rejected"})
-	if len(rej) != 1 || rej[0].Device != "Ship33CABOL" || len(rej[0].Flags) == 0 {
+	if len(rej) != 1 || rej[0].Device != "Ship33CABOL" || len(rej[0].Reasons) == 0 {
 		t.Fatalf("%+v", rej)
 	}
 	pending, _ := st.RecentEvents(ctx, "reviewer", 10, []string{"pending"})

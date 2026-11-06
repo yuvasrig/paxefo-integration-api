@@ -53,6 +53,18 @@ By default a webhook is processed before it is answered (sync). A tenant can ins
 - **Backpressure:** a tenant with `QUEUE_MAX_DEPTH` jobs waiting gets `503` + `Retry-After` and nothing is stored, so a sender knows to slow down.
 - **Runtime settings:** rate limit, queue limit, worker bounds, lag target and attempts can be changed without a restart (see the admin console); the rest of the configuration needs a restart.
 
+## Admin console
+
+`/admin` is a small operator console. Set `ADMIN_TOKEN` to enable it (without the token the console does not exist); sign in with that token. It is server-rendered, uses no external scripts, and every action is also available as an `api` command.
+
+- **Dashboard:** per tenant, events arriving per minute, devices active in the last minute, completed per minute, queue and oldest wait, latency, plus the workers running and whether they are keeping up.
+- **Tenants:** add a tenant (this also issues its API key and shows the webhook URL and a ready-to-paste Tive setup, once), issue or revoke keys, set a tenant's ingest mode and conflict policy.
+- **Rules:** view the rules in force, edit, validate, publish (live on every instance within seconds) and reset; history lets you load an older version back into the editor.
+- **Config:** every setting, split into live ones you can edit here (rate limit, queue limit, worker bounds, lag target, attempts) and restart-required ones shown read-only. Secrets are never shown.
+- **Monitoring:** live rates and latency, recent rejects and events, workers, and a prediction of whether the workers are up to date or how long the current backlog needs to clear (from the last minute's arrival and completion rates), with links to `/metrics`, your logs (`LOGS_URL`) and dashboard (`DASHBOARD_URL`).
+
+Safety: the session cookie is HttpOnly and SameSite=Strict, state-changing requests must come from the same origin, ten wrong tokens lock sign-in for a minute, and pages are served with a strict content-security policy. Use it over HTTPS (Render provides it). For scripts, send the token in an `X-Admin-Token` header.
+
 ## Assumptions
 
 - **Addresses are split structurally, not validated against USPS rules.** From Tive's `FormattedAddress` we take everything before the city as `street`, and parse only the `<City>, <ST> <ZIP>, <Country>` tail (two capital letters and a 5-digit or ZIP+4 code); we do not check state codes, street suffixes (USPS Pub 28), secondary units or whether a ZIP exists, and non-US addresses only parse as `<city>, <country>`. `full_address` is always kept verbatim.

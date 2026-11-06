@@ -22,6 +22,8 @@ services:
       ROLE: all
       INGEST_MODE: sync
       LOG_LEVEL: info
+      ADMIN_TOKEN: local-admin-token   # enables the console at http://localhost:8080/admin (local use only)
+      SETTINGS_REFRESH_INTERVAL: 3s
     ports:
       - "8080:8080"
     depends_on:

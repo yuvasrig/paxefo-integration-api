@@ -22,6 +22,7 @@ type TenantStats struct {
 	Processing              int            // claimed by a worker right now
 	OldestPendingAge        time.Duration  // how long the oldest waiting job has waited
 	Dead                    int            // events whose job failed every attempt
+	LatencyP50, LatencyP95  time.Duration  // received -> outcome written, for outcomes of the last 5 minutes
 }
 
 // TenantStats gathers the figures for one tenant.
@@ -43,6 +44,18 @@ func (s *PGStore) TenantStats(ctx context.Context, tenantID string) (TenantStats
 		}
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM event_outcomes WHERE tenant_id = $1 AND status = 'dead'`, tenantID).Scan(&st.Dead); err != nil {
 			return err
+		}
+		var p50, p95 *float64
+		if err := tx.QueryRow(ctx, `
+			SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY lat), percentile_cont(0.95) WITHIN GROUP (ORDER BY lat)
+			FROM (SELECT EXTRACT(EPOCH FROM o.processed_at - r.received_at) AS lat
+			      FROM event_outcomes o JOIN raw_events r ON r.id = o.raw_event_id
+			      WHERE o.tenant_id = $1 AND o.processed_at > now() - interval '5 minutes') x`, tenantID).Scan(&p50, &p95); err != nil {
+			return err
+		}
+		if p50 != nil && p95 != nil {
+			st.LatencyP50 = time.Duration(*p50 * float64(time.Second))
+			st.LatencyP95 = time.Duration(*p95 * float64(time.Second))
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT status, count(*) FROM event_outcomes WHERE tenant_id = $1 AND processed_at > now() - interval '15 minutes' GROUP BY status`, tenantID)
@@ -85,6 +98,7 @@ type RecentEvent struct {
 	Device     string
 	Status     string // "pending" while it waits for a worker
 	Flags      []string
+	Reasons    []string // why it was rejected
 	Error      string
 }
 
@@ -99,7 +113,7 @@ func (s *PGStore) RecentEvents(ctx context.Context, tenantID string, limit int, 
 	var out []RecentEvent
 	err := s.WithTenantTx(ctx, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT r.id, r.received_at, COALESCE(r.payload->>'DeviceName', r.payload->>'DeviceId', ''), COALESCE(o.status, 'pending'), o.flags, COALESCE(o.error, '')
+			SELECT r.id, r.received_at, COALESCE(r.payload->>'DeviceName', r.payload->>'DeviceId', ''), COALESCE(o.status, 'pending'), o.flags, o.reasons, COALESCE(o.error, '')
 			FROM raw_events r LEFT JOIN event_outcomes o ON o.raw_event_id = r.id
 			WHERE r.tenant_id = $1 AND (cardinality($3::text[]) = 0 OR COALESCE(o.status, 'pending') = ANY($3::text[]))
 			ORDER BY r.received_at DESC, r.id DESC LIMIT $2`, tenantID, limit, statuses)
@@ -109,8 +123,8 @@ func (s *PGStore) RecentEvents(ctx context.Context, tenantID string, limit int, 
 		defer rows.Close()
 		for rows.Next() {
 			var e RecentEvent
-			var flags []byte
-			if err := rows.Scan(&e.ID, &e.ReceivedAt, &e.Device, &e.Status, &flags, &e.Error); err != nil {
+			var flags, reasons []byte
+			if err := rows.Scan(&e.ID, &e.ReceivedAt, &e.Device, &e.Status, &flags, &reasons, &e.Error); err != nil {
 				return err
 			}
 			var fl []struct {
@@ -119,6 +133,13 @@ func (s *PGStore) RecentEvents(ctx context.Context, tenantID string, limit int, 
 			_ = json.Unmarshal(flags, &fl)
 			for _, f := range fl {
 				e.Flags = append(e.Flags, f.Code)
+			}
+			var rs []struct {
+				Code string `json:"code"`
+			}
+			_ = json.Unmarshal(reasons, &rs)
+			for _, r := range rs {
+				e.Reasons = append(e.Reasons, r.Code)
 			}
 			out = append(out, e)
 		}

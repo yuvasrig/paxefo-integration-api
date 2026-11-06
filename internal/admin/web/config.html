@@ -1,0 +1,22 @@
+{{define "config"}}{{template "head" .}}
+<h2>Live settings</h2>
+<p>These take effect on every instance within {{.Refresh}} seconds, with no restart. The default is the environment variable's value.</p>
+<table>
+  <thead><tr><th>Setting</th><th>Value</th><th>Default</th><th>Allowed</th><th></th></tr></thead>
+  <tbody>
+  {{range .Rows}}<tr>
+    <td><strong>{{.Title}}</strong><br><span class="muted">{{.Help}}</span>{{if .Overridden}}<br><span class="muted">changed by {{.UpdatedBy}}, {{ago .UpdatedAt}}</span>{{end}}</td>
+    <td colspan="1"><form method="post" action="/admin/config/set" class="inline"><input type="hidden" name="key" value="{{.Key}}"><input name="value" value="{{.Value}}" size="8" aria-label="{{.Title}}"><button>Save</button></form></td>
+    <td>{{.Default}}</td><td>{{num .Min}} to {{num .Max}}</td>
+    <td>{{if .Overridden}}<form method="post" action="/admin/config/reset"><input type="hidden" name="key" value="{{.Key}}"><button class="link">Reset</button></form>{{end}}</td>
+  </tr>{{end}}
+  </tbody>
+</table>
+<h2>Needs a restart</h2>
+<p>Set these as environment variables on the service. They are shown here for reference; secrets are never shown.</p>
+<table>
+  <thead><tr><th>Name</th><th>Value</th><th>What it does</th></tr></thead>
+  <tbody>{{range .Restart}}<tr><td><code>{{.Name}}</code></td><td>{{.Value}}</td><td class="muted">{{.Note}}</td></tr>{{end}}</tbody>
+</table>
+<p class="muted">Not here: the tenant ingest mode and conflict policy (<a href="/admin/tenants">Tenants</a>) and the payload rules (<a href="/admin/rules">Rules</a>) are also live.</p>
+{{template "foot" .}}{{end}}

@@ -1,0 +1,29 @@
+{{define "monitoring"}}{{template "head" .}}
+<p class="muted">This page refreshes itself every 3 seconds.</p>
+<div id="live" data-live-url="/admin/monitoring/live" data-interval="3000">{{template "monitoring_live" .}}</div>
+<h2>Links</h2>
+<ul class="links">
+{{range .Links}}<li><a href="{{.URL}}">{{.Title}}</a> <span class="muted">{{.Note}}</span></li>{{end}}
+</ul>
+{{template "foot" .}}{{end}}
+
+{{define "monitoring_live"}}
+{{template "prediction" .Snap}}
+<section class="cards">
+  <div class="card"><span class="big">{{.Snap.ArrivalsPerMin}}</span><span>arriving / min</span></div>
+  <div class="card"><span class="big">{{.Snap.CompletedPerMin}}</span><span>finished / min</span></div>
+  <div class="card"><span class="big">{{.Snap.Pending}}</span><span>waiting · oldest {{dur .Snap.OldestAge}}</span></div>
+  <div class="card"><span class="big">{{dur .Snap.LatencyP95}}</span><span>slowest tenant p95 (received to processed)</span></div>
+  <div class="card"><span class="big {{if .Snap.Dead}}bad{{end}}">{{.Snap.Dead}}</span><span>dead events (need replay)</span></div>
+</section>
+<p class="muted">Lag target {{.Snap.Limits.LagSLOSeconds}}s · queue limit {{.Snap.Limits.QueueMaxDepth}} per tenant · workers {{.Snap.Limits.WorkersMin}}-{{.Snap.Limits.WorkersMax}} per process · rules {{.Snap.RulesVersion}}</p>
+<h2>Tenants</h2>
+{{template "tenant_table" .Snap}}
+<h2>Workers</h2>
+{{template "workers_table" .Snap}}
+<h2>Recent rejects, conflicts and failures</h2>
+{{template "events_table" .Snap.Rejects}}
+<h2>Recent events</h2>
+{{template "events_table" .Snap.Recent}}
+<p class="muted">Updated {{ts .Snap.At}}</p>
+{{end}}

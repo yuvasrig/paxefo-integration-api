@@ -26,3 +26,5 @@ services:
         value: sync
       - key: LOG_LEVEL
         value: info
+      - key: ADMIN_TOKEN   # enables /admin; you type the value into the Render dashboard (never committed)
+        sync: false

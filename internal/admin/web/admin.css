@@ -1,0 +1,29 @@
+:root { --bg:#f6f7f9; --fg:#1b2430; --muted:#667085; --card:#fff; --line:#e1e5ea; --accent:#0b6bcb; --ok:#14833b; --warn:#b26a00; --bad:#c42b1c; }
+@media (prefers-color-scheme: dark) { :root { --bg:#12161c; --fg:#e6e9ee; --muted:#9aa4b2; --card:#1b212a; --line:#2c3440; --accent:#5aa8ff; --ok:#4cc27a; --warn:#e0a13a; --bad:#ff6b5e; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+header { display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; padding:10px 20px; background:var(--card); border-bottom:1px solid var(--line); }
+header nav { display:flex; gap:4px; flex:1; flex-wrap:wrap; }
+header nav a { padding:6px 12px; border-radius:6px; color:var(--fg); text-decoration:none; }
+header nav a.on, header nav a:hover { background:var(--bg); color:var(--accent); }
+main { max-width:1200px; margin:0 auto; padding:16px 20px 48px; }
+h1 { font-size:22px; margin:8px 0 12px; } h2 { font-size:17px; margin:26px 0 8px; } h3 { font-size:16px; margin:0 0 8px; }
+a { color:var(--accent); } code, pre { font:13px ui-monospace,Menlo,Consolas,monospace; } pre { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; overflow:auto; }
+.muted { color:var(--muted); font-size:13px; font-weight:normal; }
+.flash { background:color-mix(in srgb,var(--ok) 14%,var(--card)); border:1px solid var(--ok); border-radius:6px; padding:8px 12px; }
+.error { background:color-mix(in srgb,var(--bad) 14%,var(--card)); border:1px solid var(--bad); border-radius:6px; padding:8px 12px; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin:8px 0 16px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:0 0 12px; display:flex; flex-direction:column; }
+.cards .card { margin:0; } .card.narrow { max-width:360px; margin:60px auto; gap:12px; } .card.secret { border-color:var(--warn); }
+.big { font-size:28px; font-weight:600; line-height:1.2; } .big.bad, td.bad { color:var(--bad); font-weight:600; }
+.pred { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; background:var(--card); border:1px solid var(--line); border-left-width:6px; border-radius:6px; padding:10px 14px; margin:8px 0 16px; }
+.pred.up_to_date { border-left-color:var(--ok); } .pred.catching_up { border-left-color:var(--warn); } .pred.falling_behind, .pred.stalled { border-left-color:var(--bad); } .pred .eta { font-weight:600; }
+table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:8px; display:block; overflow-x:auto; }
+th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; } th { font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); } .n { text-align:right; white-space:nowrap; }
+.tag { padding:1px 8px; border-radius:10px; font-size:12px; background:var(--bg); border:1px solid var(--line); } .tag.accepted { color:var(--ok); } .tag.flagged, .tag.conflict, .tag.duplicate, .tag.pending { color:var(--warn); } .tag.rejected, .tag.dead, .tag.failed { color:var(--bad); }
+form.inline { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin:6px 0 12px; } label { display:flex; flex-direction:column; gap:2px; font-size:13px; color:var(--muted); }
+input, select, textarea, button { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
+textarea { width:100%; font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; } button { cursor:pointer; } button:hover { border-color:var(--accent); }
+button.primary { background:var(--accent); border-color:var(--accent); color:#fff; } button.link { border:0; background:none; color:var(--accent); padding:0; } button.danger, button.link.danger { color:var(--bad); }
+.actions { display:flex; gap:10px; margin:8px 0; } ul.links { padding-left:18px; } .editor { margin-bottom:12px; }
+@media (max-width:640px) { main { padding:12px; } th, td { padding:6px; } }

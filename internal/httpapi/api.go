@@ -31,6 +31,7 @@ type API struct {
 	Ready    func(context.Context) (ReadyInfo, error) // /readyz
 	Metrics  http.Handler                             // /metrics (nil disables it)
 	Observer middleware.RequestObserver               // request metrics (may be nil)
+	Admin    http.Handler                             // the admin console (mounted at /admin when set; it does its own sign-in)
 	// WorkerOnly serves just the probes and metrics (the worker role has no public API).
 	WorkerOnly bool
 }
@@ -58,6 +59,11 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST /api/v1/events/{id}/replay", secured(a.replay))
 	mux.Handle("GET /api/v1/readings", secured(a.readings))
 	mux.Handle("GET /api/v1/rules", secured(a.getRules))
+
+	if a.Admin != nil {
+		mux.Handle("/admin", a.Admin)
+		mux.Handle("/admin/", a.Admin)
+	}
 
 	// Unauthenticated: probes, metrics and the API contract.
 	mux.HandleFunc("GET /healthz", a.healthz)

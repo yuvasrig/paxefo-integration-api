@@ -1,0 +1,6 @@
+{{define "login"}}{{template "head" .}}
+<form method="post" action="/admin/login" class="card narrow">
+  <label>Admin token <input type="password" name="token" autocomplete="current-password" autofocus required></label>
+  <button>Sign in</button>
+</form>
+{{template "foot" .}}{{end}}

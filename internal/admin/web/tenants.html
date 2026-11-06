@@ -1,0 +1,55 @@
+{{define "tenants"}}{{template "head" .}}
+{{if .NewKey}}
+<section class="card secret">
+  <h2>Set up Tive for {{.NewTenant}}</h2>
+  <p><strong>Copy the key now. It is shown once and cannot be recovered.</strong></p>
+  <p>In Tive's webhook / integration settings use:</p>
+  <pre>URL:     {{.NewWebhook}}
+Method:  POST
+Header:  X-API-Key: {{.NewKey}}
+Body:    JSON (Tive's standard payload)</pre>
+  <p>Check it from a terminal:</p>
+  <pre>curl -i -X POST '{{.NewWebhook}}' \
+  -H 'X-API-Key: {{.NewKey}}' \
+  -H 'Content-Type: application/json' \
+  -d @sample.json</pre>
+</section>
+{{end}}
+
+<h2>Add a tenant</h2>
+<form method="post" action="/admin/tenants" class="inline">
+  <label>Id <input name="id" placeholder="acme-pharma" pattern="[a-z0-9][a-z0-9-]{1,39}" required></label>
+  <label>Name <input name="name" placeholder="Acme Pharma"></label>
+  <label>Ingest <select name="mode"><option value="sync">sync (processed before the answer)</option><option value="async">async (queued, answered 202)</option></select></label>
+  <button>Create tenant and key</button>
+</form>
+
+<h2>Tenants</h2>
+{{range .Tenants}}
+<section class="card" id="{{.Info.ID}}">
+  <h3>{{.Info.ID}} <span class="muted">{{.Info.Name}} · {{.Info.Status}} · created {{ts .Info.CreatedAt}}</span></h3>
+  <p>Webhook: <code>{{.Webhook}}</code> (send the tenant's key in <code>X-API-Key</code>)</p>
+  <form method="post" action="/admin/tenants/{{.Info.ID}}/settings" class="inline">
+    <label>Ingest <select name="mode"><option value="sync" {{if eq .Mode "sync"}}selected{{end}}>sync</option><option value="async" {{if eq .Mode "async"}}selected{{end}}>async</option></select></label>
+    <label>On conflicting duplicate <select name="policy">
+      <option value="keep_first" {{if eq .Policy.Policy "keep_first"}}selected{{end}}>keep first</option>
+      <option value="keep_last" {{if eq .Policy.Policy "keep_last"}}selected{{end}}>keep last</option>
+      <option value="reject" {{if eq .Policy.Policy "reject"}}selected{{end}}>reject</option></select></label>
+    <label>Answer with <select name="http_status"><option value="200" {{if eq .Policy.HTTPStatus 200}}selected{{end}}>200</option><option value="409" {{if eq .Policy.HTTPStatus 409}}selected{{end}}>409</option></select></label>
+    <button>Save</button>
+  </form>
+  <table>
+    <thead><tr><th>Key</th><th>Name</th><th>Created</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {{range .Keys}}<tr><td><code>{{.Prefix}}…</code></td><td>{{.Name}}</td><td>{{ago .CreatedAt}}</td>
+      <td>{{if .RevokedAt}}revoked{{else}}active{{end}}</td>
+      <td>{{if not .RevokedAt}}<form method="post" action="/admin/tenants/{{.TenantID}}/keys/{{.ID}}/revoke"><button class="link danger">Revoke</button></form>{{end}}</td></tr>
+    {{else}}<tr><td colspan="5">No keys.</td></tr>{{end}}
+    </tbody>
+  </table>
+  <form method="post" action="/admin/tenants/{{.Info.ID}}/keys" class="inline">
+    <label>New key name <input name="name" placeholder="tive-prod"></label><button>Issue another key</button>
+  </form>
+</section>
+{{else}}<p>No tenants yet.</p>{{end}}
+{{template "foot" .}}{{end}}

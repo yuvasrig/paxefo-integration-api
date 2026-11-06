@@ -1,0 +1,79 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · PAXAFE admin</title>
+<link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+{{if not .Bare}}<header>
+  <strong class="brand">PAXAFE Integration API</strong>
+  <nav>
+    <a href="/admin/" {{if eq .Nav "dashboard"}}class="on"{{end}}>Dashboard</a>
+    <a href="/admin/tenants" {{if eq .Nav "tenants"}}class="on"{{end}}>Tenants</a>
+    <a href="/admin/rules" {{if eq .Nav "rules"}}class="on"{{end}}>Rules</a>
+    <a href="/admin/config" {{if eq .Nav "config"}}class="on"{{end}}>Config</a>
+    <a href="/admin/monitoring" {{if eq .Nav "monitoring"}}class="on"{{end}}>Monitoring</a>
+  </nav>
+  <form method="post" action="/admin/logout"><button class="link">Sign out</button></form>
+</header>{{end}}
+<main>
+<h1>{{.Title}}</h1>
+{{if .Flash}}<p class="flash">{{.Flash}}</p>{{end}}
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+{{end}}
+
+{{define "foot"}}</main>
+<script src="/admin/admin.js"></script>
+</body>
+</html>
+{{end}}
+
+{{define "prediction"}}
+<div class="pred {{.Prediction.State}}">
+  <strong>{{if eq .Prediction.State "up_to_date"}}Up to date{{else if eq .Prediction.State "catching_up"}}Catching up{{else if eq .Prediction.State "falling_behind"}}Falling behind{{else}}Stalled{{end}}</strong>
+  <span>{{.Prediction.Text}}</span>
+  {{if .Prediction.HasETA}}<span class="eta">About {{dur .Prediction.ETA}} to clear</span>{{end}}
+</div>
+{{end}}
+
+{{define "tenant_table"}}
+<table>
+  <thead><tr>
+    <th>Tenant</th><th>Mode</th><th class="n">Events / min</th><th class="n">Active devices (1 min)</th>
+    <th class="n">Done / min</th><th class="n">Waiting</th><th class="n">Processing</th><th class="n">Oldest wait</th><th class="n">Dead</th>
+    <th class="n">Latency p50 / p95</th><th class="n">Events total</th>
+  </tr></thead>
+  <tbody>
+  {{range .Tenants}}<tr>
+    <td><a href="/admin/tenants#{{.Info.ID}}">{{.Info.ID}}</a></td><td>{{.Mode}}</td>
+    <td class="n">{{.Stats.EventsLastMinute}}</td><td class="n">{{.Stats.ActiveDevicesLastMinute}}</td>
+    <td class="n">{{.Stats.CompletedLastMinute}}</td><td class="n">{{.Stats.Pending}}</td><td class="n">{{.Stats.Processing}}</td>
+    <td class="n">{{dur .Stats.OldestPendingAge}}</td><td class="n {{if .Stats.Dead}}bad{{end}}">{{.Stats.Dead}}</td>
+    <td class="n">{{dur .Stats.LatencyP50}} / {{dur .Stats.LatencyP95}}</td><td class="n">{{.Stats.TotalEvents}}</td>
+  </tr>{{else}}<tr><td colspan="11">No tenants yet. <a href="/admin/tenants">Add one.</a></td></tr>{{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "workers_table"}}
+<table>
+  <thead><tr><th>Process</th><th>Role</th><th class="n">Workers</th><th class="n">In flight</th><th class="n">Processed</th><th>Up since</th><th>Last report</th></tr></thead>
+  <tbody>
+  {{range .Workers}}<tr><td>{{.Instance}}</td><td>{{.Role}}</td><td class="n">{{.Workers}}</td><td class="n">{{.InFlight}}</td><td class="n">{{.ProcessedTotal}}</td><td>{{ago .StartedAt}}</td><td>{{ago .LastSeen}}</td></tr>
+  {{else}}<tr><td colspan="7">No process has reported in the last 30 seconds.</td></tr>{{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "events_table"}}
+<table>
+  <thead><tr><th>Received</th><th>Tenant</th><th>Device</th><th>Status</th><th>Flags / error</th><th>Event</th></tr></thead>
+  <tbody>
+  {{range .}}<tr><td>{{ago .ReceivedAt}}</td><td>{{.Tenant}}</td><td>{{.Device}}</td><td><span class="tag {{.Status}}">{{.Status}}</span></td>
+    <td>{{if .Reasons}}<strong>{{join .Reasons ", "}}</strong> {{end}}{{join .Flags ", "}}{{if .Error}} {{.Error}}{{end}}</td><td><code>{{.ID}}</code></td></tr>
+  {{else}}<tr><td colspan="6">Nothing yet.</td></tr>{{end}}
+  </tbody>
+</table>
+{{end}}

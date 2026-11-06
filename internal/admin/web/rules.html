@@ -1,0 +1,24 @@
+{{define "rules"}}{{template "head" .}}
+<p>Rules in force: version <strong>{{.Active.Version}}</strong> ({{.Active.Rules}} rules) from <strong>{{.Active.Source}}</strong>, loaded {{ago .Active.LoadedAt}} on this instance.
+Rules are data: change them here and every instance adopts the new ruleset without a restart. An invalid ruleset can never replace the working one.</p>
+<form method="post" class="editor">
+  <textarea name="yaml" spellcheck="false" rows="28">{{.YAML}}</textarea>
+  {{if .Validation}}<p class="flash">{{.Validation}}</p>{{end}}
+  <div class="actions">
+    <button formaction="/admin/rules/validate">Validate</button>
+    <button formaction="/admin/rules/publish" class="primary">Publish</button>
+  </div>
+  <p class="muted">Change <code>version:</code> before publishing: it is recorded on every event. Events already stored keep their old result until you replay them (<code>api replay</code>).</p>
+</form>
+<form method="post" action="/admin/rules/reset" onsubmit="return confirm('Go back to the built-in default rules?')">
+  <button class="danger">Reset to the default rules</button>
+</form>
+<h2>History</h2>
+<table>
+  <thead><tr><th>Version</th><th>Published</th><th>By</th><th></th><th></th></tr></thead>
+  <tbody>
+  {{range .History}}<tr><td>{{.Version}}</td><td>{{ts .CreatedAt}}</td><td>{{.CreatedBy}}</td><td>{{if .Active}}<span class="tag accepted">active</span>{{end}}</td><td><a href="/admin/rules?from={{.ID}}">Load into editor</a></td></tr>
+  {{else}}<tr><td colspan="5">Nothing published from here yet; the built-in default is in force.</td></tr>{{end}}
+  </tbody>
+</table>
+{{template "foot" .}}{{end}}

@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yuvasrig/paxefo-integration-api/internal/admin"
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
 	"github.com/yuvasrig/paxefo-integration-api/internal/config"
 	"github.com/yuvasrig/paxefo-integration-api/internal/httpapi"
@@ -197,6 +198,16 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 		},
 	}
 
+	if cfg.AdminToken != "" && cfg.Role != "worker" {
+		api.Admin = (&admin.Console{
+			Store: st, Token: cfg.AdminToken, Settings: live, Defaults: defaults, Rules: holder,
+			ReloadRules: reloader.Refresh, ReloadSettings: syncer.Refresh, DefaultMode: cfg.IngestMode,
+			Restart: restartConfig(cfg), PublicBaseURL: cfg.PublicBaseURL, LogsURL: cfg.LogsURL, DashboardURL: cfg.DashboardURL,
+			RefreshSeconds: int(cfg.SettingsRefresh.Seconds()), Log: log,
+		}).Handler()
+		log.Info("admin console enabled at /admin")
+	}
+
 	// Workers (roles all and worker): claim queued payloads and process them like a synchronous request would.
 	poolDone := make(chan struct{})
 	if cfg.Role == "all" || cfg.Role == "worker" {
@@ -242,4 +253,32 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 		}
 		return nil
 	}
+}
+
+// restartConfig lists the settings that need a restart, for the admin console's config page. Secrets are left out.
+func restartConfig(cfg config.Server) []admin.ConfigItem {
+	ms := func(d time.Duration) string { return d.String() }
+	return []admin.ConfigItem{
+		{Name: "PORT", Value: cfg.Port, Note: "Port the server listens on."},
+		{Name: "ROLE", Value: cfg.Role, Note: "all = API and workers in one process; api = webhooks only; worker = workers only."},
+		{Name: "INGEST_MODE", Value: cfg.IngestMode, Note: "Default for tenants with no mode of their own."},
+		{Name: "DATABASE_URL", Value: "(set)", Note: "Postgres connection. Never shown."},
+		{Name: "DB_MAX_CONNS", Value: fmt.Sprint(cfg.DBMaxConns), Note: "Database connection pool size; keep workers x instances within it."},
+		{Name: "QUERY_TIMEOUT", Value: ms(cfg.QueryTimeout), Note: "Per-query timeout."},
+		{Name: "BODY_LIMIT_BYTES", Value: fmt.Sprint(cfg.BodyLimitBytes), Note: "Largest accepted webhook body."},
+		{Name: "RULES_PATH", Value: orNone(cfg.RulesPath), Note: "Base ruleset file; a ruleset published from the console overrides it."},
+		{Name: "RULES_REFRESH_INTERVAL", Value: ms(cfg.RulesRefresh), Note: "How often each instance checks for a newly published ruleset."},
+		{Name: "SETTINGS_REFRESH_INTERVAL", Value: ms(cfg.SettingsRefresh), Note: "How often each instance checks for changed live settings."},
+		{Name: "LOG_LEVEL", Value: cfg.LogLevel, Note: "debug, info, warn or error."},
+		{Name: "PUBLIC_BASE_URL", Value: orNone(cfg.PublicBaseURL), Note: "Address shown in webhook setup instructions."},
+		{Name: "LOGS_URL / DASHBOARD_URL", Value: orNone(cfg.LogsURL) + " / " + orNone(cfg.DashboardURL), Note: "Links on the monitoring page."},
+		{Name: "ADMIN_TOKEN", Value: "(set)", Note: "Enables this console. Never shown."},
+	}
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "(not set)"
+	}
+	return s
 }
