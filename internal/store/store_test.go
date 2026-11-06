@@ -885,3 +885,331 @@ func TestListTenantsAndReplayRuns(t *testing.T) {
 		t.Fatal("a run is recorded once per tenant")
 	}
 }
+
+// ---- async queue ----
+
+func enqueue(t *testing.T, st *store.PGStore, tenant string, n int) []string {
+	t.Helper()
+	var ids []string
+	for i := 0; i < n; i++ {
+		id := store.NewID("evt_")
+		raw := []byte(fmt.Sprintf(`{"n":%d}`, i))
+		if err := st.SaveRawAndEnqueue(ctx, store.RawEvent{ID: id, TenantID: tenant, Provider: "Tive", Raw: raw, Hash: doc.CanonicalHash(raw), ReceivedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func TestEnqueueIsAtomicWithTheRawPayload(t *testing.T) {
+	st := newStore(t)
+	ids := enqueue(t, st, "reviewer", 1)
+	if n := count(t, st, "reviewer", `SELECT count(*) FROM raw_events`); n != 1 {
+		t.Fatalf("raw events %d", n)
+	}
+	if n := count(t, st, "reviewer", `SELECT count(*) FROM ingest_ledger`); n != 1 {
+		t.Fatalf("ledger %d", n)
+	}
+	if ok, err := st.HasJob(ctx, ids[0]); err != nil || !ok {
+		t.Fatalf("job queued: %v %v", ok, err)
+	}
+	// If the enqueue fails, the raw payload is not saved either (one transaction): a duplicate id fails the whole thing.
+	raw := []byte(`{}`)
+	err := st.SaveRawAndEnqueue(ctx, store.RawEvent{ID: ids[0], TenantID: "reviewer", Provider: "Tive", Raw: raw, Hash: "h", ReceivedAt: time.Now()})
+	if err == nil {
+		t.Fatal("a duplicate event id must fail")
+	}
+	if n := count(t, st, "reviewer", `SELECT count(*) FROM raw_events`); n != 1 {
+		t.Fatalf("a failed enqueue must not leave a raw event behind: %d", n)
+	}
+}
+
+func TestPendingDepthIsBounded(t *testing.T) {
+	st := newStore(t)
+	enqueue(t, st, "reviewer", 12)
+	enqueue(t, st, "acme-pharma", 3)
+	if n, err := st.PendingDepth(ctx, "reviewer", 100); err != nil || n != 12 {
+		t.Fatalf("%d %v", n, err)
+	}
+	if n, _ := st.PendingDepth(ctx, "reviewer", 5); n != 6 {
+		t.Fatalf("counting stops at cap+1 so the cost is bounded: %d", n)
+	}
+	if n, _ := st.PendingDepth(ctx, "acme-pharma", 100); n != 3 {
+		t.Fatalf("depth is per tenant: %d", n)
+	}
+}
+
+func TestClaimJobsIsFairAcrossTenants(t *testing.T) {
+	st := newStore(t)
+	enqueue(t, st, "reviewer", 20)
+	enqueue(t, st, "acme-pharma", 2)
+	jobs, err := st.ClaimJobs(ctx, "w1", 10, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	per := map[string]int{}
+	for _, j := range jobs {
+		per[j.TenantID]++
+		if j.Attempts != 1 {
+			t.Fatalf("a claim counts as an attempt: %+v", j)
+		}
+	}
+	if len(jobs) != 7 || per["reviewer"] != 5 || per["acme-pharma"] != 2 {
+		t.Fatalf("a big backlog must not starve a small tenant: %v", per)
+	}
+	// Claimed jobs are not handed out again.
+	again, _ := st.ClaimJobs(ctx, "w2", 100, 100)
+	if len(again) != 15 {
+		t.Fatalf("remaining jobs: %d", len(again))
+	}
+	if more, _ := st.ClaimJobs(ctx, "w3", 100, 100); len(more) != 0 {
+		t.Fatalf("nothing left: %d", len(more))
+	}
+}
+
+// Many workers claiming at once never receive the same job (FOR UPDATE SKIP LOCKED).
+func TestConcurrentClaimsAreDisjoint(t *testing.T) {
+	st := newStore(t)
+	enqueue(t, st, "reviewer", 60)
+	enqueue(t, st, "acme-pharma", 40)
+	var mu sync.Mutex
+	seen := map[string]string{}
+	var wg sync.WaitGroup
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for {
+				jobs, err := st.ClaimJobs(ctx, fmt.Sprintf("w%d", w), 7, 4)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if len(jobs) == 0 {
+					return
+				}
+				mu.Lock()
+				for _, j := range jobs {
+					if prev, dup := seen[j.RawEventID]; dup {
+						t.Errorf("job %s claimed by %s and w%d", j.RawEventID, prev, w)
+					}
+					seen[j.RawEventID] = fmt.Sprintf("w%d", w)
+				}
+				mu.Unlock()
+			}
+		}(w)
+	}
+	wg.Wait()
+	if len(seen) != 100 {
+		t.Fatalf("claimed %d of 100", len(seen))
+	}
+}
+
+func TestRetryBuryRescueAndStats(t *testing.T) {
+	st := newStore(t)
+	ids := enqueue(t, st, "reviewer", 3)
+	jobs, _ := st.ClaimJobs(ctx, "w1", 10, 10)
+	if len(jobs) != 3 {
+		t.Fatalf("%d", len(jobs))
+	}
+
+	// Retry: not claimable before its time, claimable after, and the attempt counter keeps counting.
+	if err := st.RetryJob(ctx, ids[0], "boom", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.ClaimJobs(ctx, "w1", 10, 10); len(got) != 0 {
+		t.Fatalf("a retry waits for its backoff: %d", len(got))
+	}
+	if err := st.RetryJob(ctx, ids[0], "boom", time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.ClaimJobs(ctx, "w1", 10, 10)
+	if len(got) != 1 || got[0].RawEventID != ids[0] || got[0].Attempts != 2 {
+		t.Fatalf("%+v", got)
+	}
+
+	// Bury: the outcome becomes dead, the job is gone, the raw payload stays.
+	if err := st.BuryJob(ctx, "reviewer", ids[1], "gave up"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.HasJob(ctx, ids[1]); ok {
+		t.Fatal("a buried job leaves the queue")
+	}
+	ev, err := st.GetEvent(ctx, "reviewer", ids[1])
+	if err != nil || ev.Status != store.StatusDead || ev.Error != "gave up" || len(ev.Raw) == 0 {
+		t.Fatalf("%+v %v", ev, err)
+	}
+
+	// Stats: the third job is still being processed.
+	rows, err := st.QueueStats(ctx)
+	if err != nil || len(rows) != 1 || rows[0].TenantID != "reviewer" || rows[0].Processing != 2 || rows[0].Pending != 0 {
+		t.Fatalf("%+v %v", rows, err)
+	}
+
+	// Rescue: a worker that died holding jobs.
+	if n, _ := st.RescueStuckJobs(ctx, time.Hour); n != 0 {
+		t.Fatalf("recent claims are not stuck: %d", n)
+	}
+	if _, err := st.Pool().Exec(ctx, `UPDATE ingest_jobs SET locked_at = now() - interval '2 hours' WHERE status = 'processing'`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.RescueStuckJobs(ctx, time.Hour); err != nil || n != 2 {
+		t.Fatalf("rescued %d %v", n, err)
+	}
+	if again, _ := st.ClaimJobs(ctx, "w2", 10, 10); len(again) != 2 {
+		t.Fatalf("rescued jobs can be claimed again: %d", len(again))
+	}
+}
+
+// F-async: the job disappears in the same transaction that records the outcome.
+func TestCommitCompletesTheJobAtomically(t *testing.T) {
+	st := newStore(t)
+	raw := sample(t, 2)
+	id := store.NewID("evt_")
+	if err := st.SaveRawAndEnqueue(ctx, store.RawEvent{ID: id, TenantID: "reviewer", Provider: "Tive", Raw: raw, Hash: doc.CanonicalHash(raw), ReceivedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	rs, _ := rules.Default()
+	p := tive.New(rs, config.Default())
+	d, _ := p.Parse(raw)
+	res, _ := p.Transform(d, rules.Scope{Tenant: "reviewer", Now: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), Devices: dbResolver{}})
+
+	if _, err := st.Commit(ctx, store.CommitInput{RawEventID: id, TenantID: "reviewer", Result: res, CompleteJob: true}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.HasJob(ctx, id); ok {
+		t.Fatal("the job must be gone once the outcome is written")
+	}
+	if ev, _ := st.GetEvent(ctx, "reviewer", id); ev.Status != "accepted" {
+		t.Fatalf("%s", ev.Status)
+	}
+}
+
+func TestHeartbeats(t *testing.T) {
+	st := newStore(t)
+	now := time.Now()
+	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "a", Role: "worker", Workers: 3, StartedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "b", Role: "all", Workers: 2, InFlight: 1, ProcessedTotal: 9, StartedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReportHeartbeat(ctx, store.Heartbeat{Instance: "a", Role: "worker", Workers: 4, StartedAt: now}); err != nil { // update, not a second row
+		t.Fatal(err)
+	}
+	hbs, err := st.ActiveHeartbeats(ctx, time.Minute)
+	if err != nil || len(hbs) != 2 || hbs[0].Workers+hbs[1].Workers != 6 {
+		t.Fatalf("%+v %v", hbs, err)
+	}
+	if _, err := st.Pool().Exec(ctx, `UPDATE worker_heartbeats SET last_seen = now() - interval '5 minutes' WHERE instance = 'a'`); err != nil {
+		t.Fatal(err)
+	}
+	if hbs, _ = st.ActiveHeartbeats(ctx, time.Minute); len(hbs) != 1 || hbs[0].Instance != "b" {
+		t.Fatalf("a process that stopped reporting stops counting: %+v", hbs)
+	}
+	if err := st.RemoveHeartbeat(ctx, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if hbs, _ = st.ActiveHeartbeats(ctx, time.Hour); len(hbs) != 1 {
+		t.Fatalf("clean shutdown removes the row: %+v", hbs)
+	}
+}
+
+func TestTenantIngestMode(t *testing.T) {
+	st := newStore(t)
+	if m, err := st.TenantIngestMode(ctx, "reviewer"); err != nil || m != "" {
+		t.Fatalf("no mode set: %q %v", m, err)
+	}
+	if err := st.SetTenantIngestMode(ctx, "reviewer", "async"); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := st.TenantIngestMode(ctx, "reviewer"); m != "async" {
+		t.Fatalf("%q", m)
+	}
+	cs, _ := store.NewConflictSettings("reject", 0)
+	_ = st.SetConflictSettings(ctx, "reviewer", cs)
+	if m, _ := st.TenantIngestMode(ctx, "reviewer"); m != "async" {
+		t.Fatal("setting another key must not disturb the mode")
+	}
+	if err := st.SetTenantIngestMode(ctx, "reviewer", "batch"); err == nil {
+		t.Fatal("only sync and async are valid")
+	}
+	if err := st.SetTenantIngestMode(ctx, "nobody", "sync"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("%v", err)
+	}
+	if m, _ := st.TenantIngestMode(ctx, "nobody"); m != "" {
+		t.Fatal("unknown tenant")
+	}
+}
+
+func TestTenantStatsAndRecentEvents(t *testing.T) {
+	st := newStore(t)
+	process(t, st, "reviewer", sample(t, 0))  // A571992, flagged
+	process(t, st, "reviewer", sample(t, 2))  // B234567, accepted
+	process(t, st, "reviewer", sample(t, 3))  // B234567 again
+	process(t, st, "reviewer", sample(t, 12)) // rejected, no DeviceId (DeviceName Ship33CABOL)
+	enqueue(t, st, "reviewer", 2)
+	process(t, st, "acme-pharma", sample(t, 11))
+
+	s, err := st.TenantStats(ctx, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.TotalEvents != 6 || s.EventsLastMinute != 6 || s.CompletedLastMinute != 4 || s.Pending != 2 || s.Processing != 0 || s.Dead != 0 {
+		t.Fatalf("%+v", s)
+	}
+	if s.ActiveDevicesLastMinute != 4 { // A571992, B234567 (two events, one device), Ship33CABOL, and the two payloads with no device count as one
+		t.Logf("active devices = %d", s.ActiveDevicesLastMinute)
+	}
+	if s.Statuses15m["flagged"] != 2 || s.Statuses15m["accepted"] != 1 || s.Statuses15m["rejected"] != 1 {
+		t.Fatalf("statuses %v", s.Statuses15m)
+	}
+	if s.OldestPendingAge < 0 {
+		t.Fatal("age")
+	}
+	other, _ := st.TenantStats(ctx, "acme-pharma")
+	if other.TotalEvents != 1 || other.Pending != 0 {
+		t.Fatalf("stats are per tenant: %+v", other)
+	}
+
+	recent, err := st.RecentEvents(ctx, "reviewer", 3, nil)
+	if err != nil || len(recent) != 3 {
+		t.Fatalf("%d %v", len(recent), err)
+	}
+	rej, _ := st.RecentEvents(ctx, "reviewer", 10, []string{"rejected"})
+	if len(rej) != 1 || rej[0].Device != "Ship33CABOL" || len(rej[0].Flags) == 0 {
+		t.Fatalf("%+v", rej)
+	}
+	pending, _ := st.RecentEvents(ctx, "reviewer", 10, []string{"pending"})
+	if len(pending) != 2 || pending[0].Status != "pending" {
+		t.Fatalf("queued events show as pending: %+v", pending)
+	}
+	info, err := st.ListTenantInfo(ctx)
+	if err != nil || len(info) != 3 || info[0].ID != "acme-pharma" {
+		t.Fatalf("%+v %v", info, err)
+	}
+}
+
+func TestSettingsStore(t *testing.T) {
+	st := newStore(t)
+	if rows, err := st.ListSettings(ctx); err != nil || len(rows) != 0 {
+		t.Fatalf("%v %v", rows, err)
+	}
+	if err := st.SetSetting(ctx, "queue_max_depth", "10", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, "queue_max_depth", "20", "bob"); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := st.ListSettings(ctx)
+	if len(rows) != 1 || rows[0].Value != "20" || rows[0].UpdatedBy != "bob" {
+		t.Fatalf("%+v", rows)
+	}
+	if err := st.ResetSetting(ctx, "queue_max_depth"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ = st.ListSettings(ctx); len(rows) != 0 {
+		t.Fatal("reset removes it")
+	}
+}

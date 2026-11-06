@@ -16,6 +16,7 @@ type ReadyInfo struct {
 	MigrationVersion int64  `json:"migration_version"`
 	StorageBackend   string `json:"storage_backend"`
 	IngestMode       string `json:"ingest_mode"`
+	Role             string `json:"role,omitempty"`
 }
 
 // healthz is liveness: the process is up (F13-R3).

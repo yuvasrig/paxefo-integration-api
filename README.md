@@ -44,6 +44,15 @@ api replay runs                                                                 
 - **Order and conflicts:** events are processed oldest received first, so under `keep_last` the last received wins, and an older event never overwrites a later one. Replaying the same window twice changes nothing the second time.
 - **Operator only:** tenant API keys cannot start a replay. The API's `POST /api/v1/events/{id}/replay` still replays one failed or rejected event.
 
+## Async mode and workers
+
+By default a webhook is processed before it is answered (sync). A tenant can instead be **async**: the webhook stores the raw payload and queues a job, answers `202 {"status":"queued"}`, and a worker pool processes it. Choose it per tenant (`tenants.config.ingest_mode`) or for everyone with `INGEST_MODE=async`.
+
+- **Workers** live inside the API process (`ROLE=all`, the default) or run separately (`ROLE=worker`; `ROLE=api` only accepts webhooks). Each process grows its pool with the backlog (between `WORKERS_MIN` and `WORKERS_MAX`) and shrinks it slowly.
+- **Safe by construction:** the job is created in the same transaction as the raw payload, claimed with `FOR UPDATE SKIP LOCKED` (never twice), removed in the transaction that writes the outcome, retried with backoff, and marked `dead` (replayable) after `MAX_ATTEMPTS`. A worker that dies mid-job loses nothing: its jobs return to the queue.
+- **Backpressure:** a tenant with `QUEUE_MAX_DEPTH` jobs waiting gets `503` + `Retry-After` and nothing is stored, so a sender knows to slow down.
+- **Runtime settings:** rate limit, queue limit, worker bounds, lag target and attempts can be changed without a restart (see the admin console); the rest of the configuration needs a restart.
+
 ## Assumptions
 
 - **Addresses are split structurally, not validated against USPS rules.** From Tive's `FormattedAddress` we take everything before the city as `street`, and parse only the `<City>, <ST> <ZIP>, <Country>` tail (two capital letters and a 5-digit or ZIP+4 code); we do not check state codes, street suffixes (USPS Pub 28), secondary units or whether a ZIP exists, and non-US addresses only parse as `<city>, <country>`. `full_address` is always kept verbatim.

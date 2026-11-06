@@ -117,3 +117,54 @@ func (s *PGStore) LookupKey(ctx context.Context, hash string) (auth.KeyRecord, e
 	}
 	return auth.KeyRecord{ID: k.ID, TenantID: k.TenantID, Name: k.Name, ExpiresAt: k.ExpiresAt, RevokedAt: k.RevokedAt}, nil
 }
+
+// SettingRow is a runtime setting overriding an environment default.
+type SettingRow struct {
+	Key       string
+	Value     string
+	UpdatedBy string
+	UpdatedAt time.Time
+}
+
+// ListSettings returns every runtime setting that has been changed.
+func (s *PGStore) ListSettings(ctx context.Context) ([]SettingRow, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	rows, err := s.pool.Query(ctx, `SELECT key, value, updated_by, updated_at FROM settings ORDER BY key`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list settings: %w", err)
+	}
+	defer rows.Close()
+	var out []SettingRow
+	for rows.Next() {
+		var r SettingRow
+		if err := rows.Scan(&r.Key, &r.Value, &r.UpdatedBy, &r.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("store: scan setting: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetSetting stores a runtime setting. The caller validates it (package settings).
+func (s *PGStore) SetSetting(ctx context.Context, key, value, by string) error {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_by) VALUES ($1, $2, $3)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`, key, value, by)
+	if err != nil {
+		return fmt.Errorf("store: set setting: %w", err)
+	}
+	return nil
+}
+
+// ResetSetting removes a runtime setting, so the environment default applies again.
+func (s *PGStore) ResetSetting(ctx context.Context, key string) error {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	if _, err := s.pool.Exec(ctx, `DELETE FROM settings WHERE key = $1`, key); err != nil {
+		return fmt.Errorf("store: reset setting: %w", err)
+	}
+	return nil
+}

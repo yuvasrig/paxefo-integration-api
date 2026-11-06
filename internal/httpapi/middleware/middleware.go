@@ -110,7 +110,10 @@ func BodyLimit(max int64) func(http.Handler) http.Handler {
 type RateLimiter struct {
 	Rate  float64 // tokens per second
 	Burst int
-	Now   func() time.Time
+	// Limits, when set, supplies the rate and burst on every call, so a limit changed at runtime (admin console)
+	// takes effect at once. Rate and Burst are used when it is nil.
+	Limits func() (rate float64, burst int)
+	Now    func() time.Time
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
@@ -128,19 +131,23 @@ func (l *RateLimiter) Allow(tenant string) (ok bool, retryAfter time.Duration) {
 	if l.buckets == nil {
 		l.buckets = map[string]*bucket{}
 	}
+	rate, burst := l.Rate, l.Burst
+	if l.Limits != nil {
+		rate, burst = l.Limits()
+	}
 	now := l.Now()
 	b, found := l.buckets[tenant]
 	if !found {
-		b = &bucket{tokens: float64(l.Burst), last: now}
+		b = &bucket{tokens: float64(burst), last: now}
 		l.buckets[tenant] = b
 	}
-	b.tokens = math.Min(float64(l.Burst), b.tokens+now.Sub(b.last).Seconds()*l.Rate)
+	b.tokens = math.Min(float64(burst), b.tokens+now.Sub(b.last).Seconds()*rate)
 	b.last = now
 	if b.tokens >= 1 {
 		b.tokens--
 		return true, 0
 	}
-	return false, time.Duration((1 - b.tokens) / l.Rate * float64(time.Second))
+	return false, time.Duration((1 - b.tokens) / rate * float64(time.Second))
 }
 
 // RateLimit applies the limiter per authenticated tenant; it must run after Auth.

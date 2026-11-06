@@ -41,8 +41,11 @@ func TestFromEnvErrors_F13R2(t *testing.T) {
 		want string
 	}{
 		{"no database", map[string]string{}, "DATABASE_URL"},
-		{"async not built", map[string]string{"INGEST_MODE": "async"}, "INGEST_MODE"},
-		{"unknown role", map[string]string{"ROLE": "worker"}, "ROLE"},
+		{"bad mode", map[string]string{"INGEST_MODE": "batch"}, "INGEST_MODE"},
+		{"unknown role", map[string]string{"ROLE": "scheduler"}, "ROLE"},
+		{"min above max", map[string]string{"WORKERS_MIN": "9", "WORKERS_MAX": "4"}, "WORKERS_MIN"},
+		{"bad min", map[string]string{"WORKERS_MIN": "-1"}, "WORKERS_MIN"},
+		{"bad settings refresh", map[string]string{"SETTINGS_REFRESH_INTERVAL": "soon"}, "SETTINGS_REFRESH_INTERVAL"},
 		{"bad port", map[string]string{"PORT": "abc"}, "PORT"},
 		{"bad level", map[string]string{"LOG_LEVEL": "loud"}, "LOG_LEVEL"},
 		{"bad body limit", map[string]string{"BODY_LIMIT_BYTES": "0"}, "BODY_LIMIT_BYTES"},
@@ -66,5 +69,20 @@ func TestFromEnvErrors_F13R2(t *testing.T) {
 				t.Fatalf("err = %v, want it to mention %s", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestFromEnvAsyncAndWorkers(t *testing.T) {
+	s, err := FromEnv(env(map[string]string{"DATABASE_URL": "postgres://x"}))
+	if err != nil || s.QueueMaxDepth != 5000 || s.WorkersMin != 2 || s.WorkersMax != 8 || s.JobsPerWorker != 50 || s.LagSLOSeconds != 10 || s.MaxAttempts != 5 || s.SettingsRefresh != 10*time.Second || s.AdminToken != "" {
+		t.Fatalf("defaults: %+v %v", s, err)
+	}
+	s, err = FromEnv(env(map[string]string{
+		"DATABASE_URL": "postgres://x", "INGEST_MODE": "async", "ROLE": "worker", "WORKERS_MIN": "0", "WORKERS_MAX": "3", "QUEUE_MAX_DEPTH": "10",
+		"JOBS_PER_WORKER": "5", "LAG_SLO_SECONDS": "2", "MAX_ATTEMPTS": "3", "SETTINGS_REFRESH_INTERVAL": "0", "ADMIN_TOKEN": "t", "PUBLIC_BASE_URL": "https://x", "LOGS_URL": "https://logs", "DASHBOARD_URL": "https://dash",
+	}))
+	if err != nil || s.IngestMode != "async" || s.Role != "worker" || s.WorkersMin != 0 || s.WorkersMax != 3 || s.QueueMaxDepth != 10 || s.JobsPerWorker != 5 ||
+		s.LagSLOSeconds != 2 || s.MaxAttempts != 3 || s.SettingsRefresh != 0 || s.AdminToken != "t" || s.PublicBaseURL != "https://x" || s.LogsURL != "https://logs" || s.DashboardURL != "https://dash" {
+		t.Fatalf("overrides: %+v %v", s, err)
 	}
 }

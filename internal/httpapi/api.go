@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -30,11 +31,21 @@ type API struct {
 	Ready    func(context.Context) (ReadyInfo, error) // /readyz
 	Metrics  http.Handler                             // /metrics (nil disables it)
 	Observer middleware.RequestObserver               // request metrics (may be nil)
+	// WorkerOnly serves just the probes and metrics (the worker role has no public API).
+	WorkerOnly bool
 }
 
 // Handler returns the router with the middleware chain applied.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if a.WorkerOnly {
+		mux.HandleFunc("GET /healthz", a.healthz)
+		mux.HandleFunc("GET /readyz", a.readyz)
+		if a.Metrics != nil {
+			mux.Handle("GET /metrics", a.Metrics)
+		}
+		return middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(a.Log, a.Observer), middleware.Recover(a.Log))
+	}
 
 	secured := func(h http.HandlerFunc, extra ...func(http.Handler) http.Handler) http.Handler {
 		chain := append([]func(http.Handler) http.Handler{middleware.Auth(a.Authenticator, a.Log), middleware.RateLimit(a.Limiter)}, extra...)
@@ -85,6 +96,13 @@ func (a *API) webhook(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.Ingest.Ingest(r.Context(), ingest.Request{
 		TenantID: p.TenantID, RequestID: middleware.RequestIDFrom(r.Context()), Body: body,
 	})
+	var full *ingest.ErrBackpressure
+	if errors.As(err, &full) {
+		// The tenant's queue is full: nothing was saved, so the sender must keep the payload and try again.
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(full.RetryAfter.Seconds()))))
+		middleware.WriteProblem(w, r, http.StatusServiceUnavailable, "QUEUE_FULL", "the ingest queue is full; retry later")
+		return
+	}
 	if err != nil {
 		// The raw payload was not saved, so nothing is acknowledged: the sender should retry.
 		a.Log.Error("could not save raw event", "request_id", middleware.RequestIDFrom(r.Context()), "tenant_id", p.TenantID, "error", err)

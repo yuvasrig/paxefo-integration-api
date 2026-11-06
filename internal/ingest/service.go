@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/doc"
 	"github.com/yuvasrig/paxefo-integration-api/internal/paxafe"
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
+	"github.com/yuvasrig/paxefo-integration-api/internal/settings"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
 )
 
@@ -25,6 +27,10 @@ type Store interface {
 	ResolveDevice(ctx context.Context, tenantID, name string) (imei string, ok bool, err error)
 	Commit(ctx context.Context, in store.CommitInput) (store.CommitResult, error)
 	RecordFailure(ctx context.Context, tenantID, rawEventID, message string) error
+	SaveRawAndEnqueue(ctx context.Context, ev store.RawEvent) error
+	PendingDepth(ctx context.Context, tenantID string, cap int) (int, error)
+	TenantIngestMode(ctx context.Context, tenantID string) (string, error)
+	HasJob(ctx context.Context, rawEventID string) (bool, error)
 	GetEvent(ctx context.Context, tenantID, id string) (*store.EventRecord, error)
 	ListReadings(ctx context.Context, tenantID string, q store.ReadingsQuery) (store.ReadingsPage, error)
 
@@ -41,6 +47,27 @@ type Observer interface {
 	Outcome(status string, flags []rules.Flag, errs []rules.Problem)
 }
 
+// ErrBackpressure is returned when a tenant's queue is full: the caller answers 503 with Retry-After and the sender
+// tries again later (Tive buffers what it could not send). Nothing was saved.
+type ErrBackpressure struct {
+	RetryAfter time.Duration
+	Depth      int
+}
+
+func (e *ErrBackpressure) Error() string {
+	return fmt.Sprintf("ingest queue is full (%d jobs waiting); retry in %s", e.Depth, e.RetryAfter)
+}
+
+// Ingest modes. In sync mode the request does everything and answers with the result. In async mode the request only
+// saves the raw payload and queues a job (202); workers process it. The mode is per tenant (tenants.config.ingest_mode),
+// with Service.DefaultMode for tenants that have none.
+const (
+	ModeSync  = "sync"
+	ModeAsync = "async"
+)
+
+const modeCacheTTL = 5 * time.Second
+
 // Service runs the pipeline for one provider.
 type Service struct {
 	Store    Store
@@ -48,6 +75,18 @@ type Service struct {
 	Now      func() time.Time
 	Observer Observer
 	Log      *slog.Logger
+
+	DefaultMode string           // ModeSync when empty
+	Settings    *settings.Holder // queue limit; nil means no backpressure
+	RetryAfter  time.Duration    // how long a 503 asks the sender to wait (default 5s)
+
+	modeMu sync.Mutex
+	modes  map[string]cachedMode
+}
+
+type cachedMode struct {
+	mode string
+	at   time.Time
 }
 
 // Request is one incoming payload. The tenant is the API key's; the payload's AccountId never routes or validates anything.
@@ -70,10 +109,41 @@ type Response struct {
 	cause      error                  // why processing failed (status failed); used by replay reports, never serialized
 }
 
+// ModeFor returns the tenant's ingest mode. It is cached briefly, so changing a tenant's mode takes effect within a few
+// seconds without a query on every request; an unreadable or invalid value means the default.
+func (s *Service) ModeFor(ctx context.Context, tenantID string) string {
+	def := s.DefaultMode
+	if def != ModeAsync {
+		def = ModeSync
+	}
+	now := time.Now()
+	s.modeMu.Lock()
+	if c, ok := s.modes[tenantID]; ok && now.Sub(c.at) < modeCacheTTL {
+		s.modeMu.Unlock()
+		return c.mode
+	}
+	s.modeMu.Unlock()
+
+	mode, err := s.Store.TenantIngestMode(ctx, tenantID)
+	if err != nil || (mode != ModeSync && mode != ModeAsync) {
+		mode = def
+	}
+	s.modeMu.Lock()
+	if s.modes == nil {
+		s.modes = map[string]cachedMode{}
+	}
+	s.modes[tenantID] = cachedMode{mode: mode, at: now}
+	s.modeMu.Unlock()
+	return mode
+}
+
 // Ingest handles one webhook payload. An error means the raw payload could not be saved: nothing was
 // acknowledged and the sender should retry. Once the raw payload is saved, failures are reported in the
 // Response (status failed, HTTP 500) and can be replayed.
 func (s *Service) Ingest(ctx context.Context, req Request) (Response, error) {
+	if s.ModeFor(ctx, req.TenantID) == ModeAsync {
+		return s.enqueue(ctx, req)
+	}
 	id := store.NewID("evt_")
 	t0 := time.Now()
 	err := s.Store.SaveRaw(ctx, store.RawEvent{
@@ -87,6 +157,57 @@ func (s *Service) Ingest(ctx context.Context, req Request) (Response, error) {
 	return s.process(ctx, run{eventID: id, requestID: req.RequestID, tenant: req.TenantID, body: req.Body}), nil
 }
 
+// enqueue is async ingest: backpressure check, then the raw payload, the ledger row and a job in one transaction,
+// then 202. Workers do the rest. Once the 202 is sent the payload is safe: it is either processed or still in the queue.
+func (s *Service) enqueue(ctx context.Context, req Request) (Response, error) {
+	if s.Settings != nil {
+		limit := s.Settings.Current().QueueMaxDepth
+		depth, err := s.Store.PendingDepth(ctx, req.TenantID, limit)
+		if err != nil {
+			return Response{}, fmt.Errorf("ingest: check queue depth: %w", err)
+		}
+		if depth >= limit {
+			wait := s.RetryAfter
+			if wait <= 0 {
+				wait = 5 * time.Second
+			}
+			return Response{}, &ErrBackpressure{RetryAfter: wait, Depth: depth}
+		}
+	}
+	id := store.NewID("evt_")
+	t0 := time.Now()
+	err := s.Store.SaveRawAndEnqueue(ctx, store.RawEvent{
+		ID: id, TenantID: req.TenantID, Provider: s.Provider.Name(),
+		Raw: req.Body, Hash: doc.CanonicalHash(req.Body), ReceivedAt: s.Now(), RequestID: req.RequestID,
+	})
+	s.stage("raw_save", t0)
+	if err != nil {
+		return Response{}, fmt.Errorf("ingest: save and enqueue: %w", err)
+	}
+	if s.Observer != nil {
+		s.Observer.Outcome("queued", nil, nil)
+	}
+	return Response{EventID: id, RequestID: req.RequestID, Status: "queued", Flags: []rules.Flag{}, Errors: []rules.Problem{}, HTTPStatus: 202}, nil
+}
+
+// ProcessJob runs one queued payload through the same pipeline a synchronous request uses, and removes its job in the
+// transaction that records the outcome. A returned error means the attempt failed and the worker should retry; the event
+// keeps no outcome until it succeeds or is given up as dead.
+func (s *Service) ProcessJob(ctx context.Context, job store.Job) error {
+	ev, err := s.Store.GetEvent(ctx, job.TenantID, job.RawEventID)
+	if err != nil {
+		return fmt.Errorf("load queued event: %w", err)
+	}
+	resp := s.process(ctx, run{
+		eventID: ev.ID, requestID: ev.RequestID, tenant: ev.TenantID, body: ev.Raw,
+		async: true, completeJob: true,
+	})
+	if resp.Status == store.StatusFailed {
+		return resp.cause
+	}
+	return nil
+}
+
 // Replay re-runs a failed, rejected, duplicate, conflict or never-finished event from its stored raw payload (F7-R2).
 // It is idempotent: readings are unique per key and the raw payload is never changed.
 func (s *Service) Replay(ctx context.Context, tenantID, eventID, requestID string) (Response, error) {
@@ -96,8 +217,13 @@ func (s *Service) Replay(ctx context.Context, tenantID, eventID, requestID strin
 	}
 	// Only a failed, rejected or never-finished event can be replayed. A processed one (including a duplicate or a
 	// conflict) would, under a keep_last policy, put an old version back over a newer reading.
-	if ev.HasOutcome && ev.Status != provider.StatusRejected && ev.Status != store.StatusFailed {
+	if ev.HasOutcome && ev.Status != provider.StatusRejected && ev.Status != store.StatusFailed && ev.Status != store.StatusDead {
 		return Response{}, ErrNotReplayable
+	}
+	if queued, err := s.Store.HasJob(ctx, eventID); err != nil {
+		return Response{}, err
+	} else if queued {
+		return Response{}, ErrNotReplayable // a worker still owns it
 	}
 	return s.process(ctx, run{eventID: ev.ID, requestID: requestID, tenant: ev.TenantID, body: ev.Raw}), nil
 }
@@ -115,6 +241,11 @@ func (s *Service) Readings(ctx context.Context, tenantID string, q store.Reading
 type run struct {
 	eventID, requestID, tenant string
 	body                       []byte
+
+	// Set when a worker processes a queued job: the job is removed with the outcome, and a failure is the worker's to
+	// retry, so nothing is recorded as failed here.
+	async       bool
+	completeJob bool
 
 	// Set only when an operator replays stored events (replay.go).
 	replayRunID string                                                               // non-empty: the event is reprocessed (old outcome archived, own readings removed first)
@@ -138,7 +269,7 @@ func (s *Service) process(ctx context.Context, r run) Response {
 	if commit == nil {
 		commit = s.Store.Commit
 	}
-	out, err := commit(ctx, store.CommitInput{RawEventID: r.eventID, TenantID: r.tenant, Result: res, ReplayRunID: r.replayRunID})
+	out, err := commit(ctx, store.CommitInput{RawEventID: r.eventID, TenantID: r.tenant, Result: res, ReplayRunID: r.replayRunID, CompleteJob: r.completeJob})
 	s.stage("normalize_save", t0)
 	if err != nil {
 		return s.fail(ctx, r, resp, err)
@@ -200,7 +331,7 @@ func (s *Service) fail(ctx context.Context, r run, resp Response, cause error) R
 	s.log().Error("event processing failed", "event_id", r.eventID, "tenant_id", r.tenant, "error", cause)
 	// A failed replay must leave the event's existing outcome alone (its transaction rolled back), so it records
 	// nothing; the operator sees the error in the replay report. A live failure is recorded so it can be replayed.
-	if r.replayRunID == "" {
+	if r.replayRunID == "" && !r.async {
 		// Use a context that survives a cancelled request so the failure is still recorded.
 		if err := s.Store.RecordFailure(context.WithoutCancel(ctx), r.tenant, r.eventID, cause.Error()); err != nil {
 			s.log().Error("could not record failure", "event_id", r.eventID, "error", err)
@@ -208,7 +339,7 @@ func (s *Service) fail(ctx context.Context, r run, resp Response, cause error) R
 	}
 	resp.Status, resp.HTTPStatus, resp.cause = store.StatusFailed, 500, cause
 	resp.Errors = []rules.Problem{{Code: "INTERNAL", Message: "processing failed after the payload was saved; it can be replayed"}}
-	if s.Observer != nil && !r.quiet {
+	if s.Observer != nil && !r.quiet && !r.async {
 		s.Observer.Outcome(resp.Status, nil, resp.Errors)
 	}
 	return resp

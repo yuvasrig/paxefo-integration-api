@@ -18,24 +18,40 @@ import (
 // SaveRaw is transaction 1: the raw payload and one ledger row, committed before anything else (F1-R2).
 // It does no validation, so even garbage bytes are kept.
 func (s *PGStore) SaveRaw(ctx context.Context, ev RawEvent) error {
+	return s.WithTenantTx(ctx, ev.TenantID, func(tx pgx.Tx) error { return insertRaw(ctx, tx, ev) })
+}
+
+// SaveRawAndEnqueue is transaction 1 for async ingest: the raw payload, the ledger row and a job, in one
+// transaction, so an acknowledged payload is always either processed or waiting in the queue (no dual write).
+func (s *PGStore) SaveRawAndEnqueue(ctx context.Context, ev RawEvent) error {
+	return s.WithTenantTx(ctx, ev.TenantID, func(tx pgx.Tx) error {
+		if err := insertRaw(ctx, tx, ev); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO ingest_jobs (raw_event_id, tenant_id) VALUES ($1, $2)`, ev.ID, ev.TenantID); err != nil {
+			return fmt.Errorf("store: enqueue job: %w", err)
+		}
+		return nil
+	})
+}
+
+func insertRaw(ctx context.Context, tx pgx.Tx, ev RawEvent) error {
 	// jsonb cannot hold \u0000; the exact bytes are always kept in payload_raw regardless.
 	var payload any
 	if json.Valid(ev.Raw) && !bytes.Contains(ev.Raw, []byte(`\u0000`)) {
 		payload = json.RawMessage(ev.Raw)
 	}
-	return s.WithTenantTx(ctx, ev.TenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
-			INSERT INTO raw_events (id, tenant_id, provider, payload_raw, payload, payload_hash, received_at, request_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			ev.ID, ev.TenantID, ev.Provider, ev.Raw, payload, ev.Hash, ev.ReceivedAt, ev.RequestID)
-		if err != nil {
-			return fmt.Errorf("store: insert raw event: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO ingest_ledger (raw_event_id, tenant_id) VALUES ($1, $2)`, ev.ID, ev.TenantID); err != nil {
-			return fmt.Errorf("store: insert ledger: %w", err)
-		}
-		return nil
-	})
+	_, err := tx.Exec(ctx, `
+		INSERT INTO raw_events (id, tenant_id, provider, payload_raw, payload, payload_hash, received_at, request_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		ev.ID, ev.TenantID, ev.Provider, ev.Raw, payload, ev.Hash, ev.ReceivedAt, ev.RequestID)
+	if err != nil {
+		return fmt.Errorf("store: insert raw event: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO ingest_ledger (raw_event_id, tenant_id) VALUES ($1, $2)`, ev.ID, ev.TenantID); err != nil {
+		return fmt.Errorf("store: insert ledger: %w", err)
+	}
+	return nil
 }
 
 // Commit is transaction 2. Inside one transaction it decides duplicate / conflict for the reading key,
@@ -72,6 +88,11 @@ func CommitTx(ctx context.Context, tx pgx.Tx, in CommitInput) (CommitResult, err
 	}
 	if err := upsertOutcome(ctx, tx, in, out); err != nil {
 		return CommitResult{}, err
+	}
+	if in.CompleteJob { // the job disappears in the same transaction that records its outcome
+		if _, err := tx.Exec(ctx, `DELETE FROM ingest_jobs WHERE raw_event_id = $1`, in.RawEventID); err != nil {
+			return CommitResult{}, fmt.Errorf("store: complete job: %w", err)
+		}
 	}
 	return out, nil
 }

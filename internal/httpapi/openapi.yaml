@@ -38,6 +38,13 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IngestResponse' }
+        '202':
+          description: |
+            Queued (tenants in async ingest mode only). The raw payload and its queue job are committed; a worker
+            processes the event shortly after. Read the result with `GET /api/v1/events/{id}`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestResponse' }
         '400': { $ref: '#/components/responses/InvalidJson' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409':
@@ -55,6 +62,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/IngestResponse' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503':
+          description: |
+            The tenant's queue is full (async ingest mode, `code: QUEUE_FULL`). Nothing was stored; retry after the
+            number of seconds in `Retry-After`.
+          headers: { Retry-After: { schema: { type: integer } } }
         '500':
           description: Failure after the raw payload was saved; event status `failed`, recoverable via replay
           content:

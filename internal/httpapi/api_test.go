@@ -59,6 +59,7 @@ type env struct {
 	logs    *syncBuffer
 	holder  *rules.Holder
 	metrics *observability.Metrics
+	ing     *ingest.Service
 }
 
 type syncBuffer struct {
@@ -108,8 +109,9 @@ func newEnv(t *testing.T) *env {
 	log := slog.New(slog.NewJSONHandler(e.logs, nil))
 	metrics := observability.NewMetrics(pg.Pool().Stat)
 	e.metrics = metrics
+	e.ing = &ingest.Service{Store: e.st, Provider: tive.NewDynamic(e.holder, config.Default()), Now: func() time.Time { return e.now }, Log: log, Observer: metrics}
 	api := &httpapi.API{
-		Ingest:   &ingest.Service{Store: e.st, Provider: tive.NewDynamic(e.holder, config.Default()), Now: func() time.Time { return e.now }, Log: log, Observer: metrics},
+		Ingest:   e.ing,
 		Rules:    e.holder,
 		Metrics:  metrics.Handler(),
 		Observer: metrics,

@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
+	"github.com/yuvasrig/paxefo-integration-api/internal/store"
 )
 
 // NewLogger returns a JSON logger at the given level (debug, info, warn or error).
@@ -34,6 +35,10 @@ type Metrics struct {
 	events     *prometheus.CounterVec
 	reloads    *prometheus.CounterVec
 	rulesGauge *prometheus.GaugeVec
+	jobs       *prometheus.CounterVec
+	queueDepth *prometheus.GaugeVec
+	queueAge   *prometheus.GaugeVec
+	workers    prometheus.Gauge
 }
 
 // NewMetrics registers the RED metrics, per-stage latency, quality counters, Go runtime and (if pool is not nil)
@@ -47,10 +52,14 @@ func NewMetrics(pool func() *pgxpool.Stat) *Metrics {
 		flags:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "quality_flags_total", Help: "Quality flags raised, by code."}, []string{"code"}),
 		rejects:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "rejects_total", Help: "Rejected or failed payloads, by reason."}, []string{"reason"}),
 		events:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "events_total", Help: "Processed events by final status."}, []string{"status"}),
+		jobs:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "jobs_finished_total", Help: "Queue jobs finished by result (done, retry, dead)."}, []string{"result"}),
+		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "queue_depth", Help: "Jobs waiting in the ingest queue, by tenant."}, []string{"tenant"}),
+		queueAge:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "queue_oldest_seconds", Help: "How long the oldest waiting job has waited, by tenant."}, []string{"tenant"}),
+		workers:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "workers_active", Help: "Workers running in this process."}),
 		reloads:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "rules_reloads_total", Help: "Runtime ruleset reload attempts by result (changed, invalid, error)."}, []string{"result"}),
 		rulesGauge: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "rules_active_info", Help: "The ruleset in force (value 1), by version and source."}, []string{"version", "source"}),
 	}
-	m.registry.MustRegister(m.requests, m.duration, m.stages, m.flags, m.rejects, m.events, m.reloads, m.rulesGauge,
+	m.registry.MustRegister(m.requests, m.duration, m.stages, m.flags, m.rejects, m.events, m.reloads, m.rulesGauge, m.jobs, m.queueDepth, m.queueAge, m.workers,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	if pool != nil {
 		m.registry.MustRegister(&poolCollector{stat: pool})
@@ -86,6 +95,20 @@ func (m *Metrics) Outcome(status string, flags []rules.Flag, errs []rules.Proble
 	for _, e := range errs {
 		m.rejects.WithLabelValues(e.Code).Inc()
 	}
+}
+
+// JobFinished implements worker.Observer.
+func (m *Metrics) JobFinished(result string) { m.jobs.WithLabelValues(result).Inc() }
+
+// QueueState implements worker.Observer: the queue per tenant and this process's worker count.
+func (m *Metrics) QueueState(rows []store.QueueRow, workers int) {
+	m.queueDepth.Reset()
+	m.queueAge.Reset()
+	for _, r := range rows {
+		m.queueDepth.WithLabelValues(r.TenantID).Set(float64(r.Pending))
+		m.queueAge.WithLabelValues(r.TenantID).Set(r.OldestPendingAge.Seconds())
+	}
+	m.workers.Set(float64(workers))
 }
 
 // RulesReload implements rulesync.Observer.

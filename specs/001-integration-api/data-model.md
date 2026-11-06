@@ -56,8 +56,14 @@ The store runs `SET LOCAL ROLE paxafe_app` (no `BYPASSRLS`, no UPDATE/DELETE on 
 
 Policy per table: `USING (tenant_id = current_setting('app.tenant_id', true))`. `Store.WithTenantTx(ctx, tenantID, fn)` runs `SET LOCAL app.tenant_id` inside the transaction. Unset setting → no rows.
 
+## Async ingest (migration 00005)
+- **ingest_jobs**: `raw_event_id` PK · `tenant_id` · `status` (pending|processing) · `attempts` · `enqueued_at` · `next_attempt_at` · `locked_at` · `locked_by` · `last_error`. One row per event waiting for a worker; inserted with the raw event, deleted with the outcome. Workers claim with `FOR UPDATE SKIP LOCKED`. Global (not row-level secured): workers serve every tenant.
+- **worker_heartbeats**: `instance` PK · `role` · `workers` · `in_flight` · `processed_total` · `started_at` · `last_seen`. A process reports every few seconds; rows older than a minute are ignored.
+- **settings**: `key` PK · `value` · `updated_by` · `updated_at`. Runtime overrides of the environment defaults.
+- `event_outcomes.status` also allows `dead` (gave up after `MAX_ATTEMPTS`).
+
 ## Not in M0–M7
-`ingest_jobs`, `alerts`, `reconciliation_runs`, Timescale hypertables.
+`alerts`, `reconciliation_runs`, Timescale hypertables.
 
 ## Invariants
 1. Every normalized row has a `raw_event_id` that exists.

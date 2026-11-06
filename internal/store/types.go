@@ -14,6 +14,7 @@ const (
 	StatusDuplicate = "duplicate"
 	StatusConflict  = "conflict"
 	StatusFailed    = "failed"
+	StatusDead      = "dead" // an async job that failed every attempt; its raw payload is kept and it can be replayed
 )
 
 // RawEvent is a payload exactly as received, saved before any 2xx (F1-R2).
@@ -35,6 +36,8 @@ type CommitInput struct {
 	// ReplayRunID is set when the event is being reprocessed (`api replay --apply`): its previous outcome is archived,
 	// and its own readings and conflict row are removed, before the new result is written.
 	ReplayRunID string
+	// CompleteJob deletes the event's queue job in the same transaction (async ingest).
+	CompleteJob bool
 }
 
 // CommitResult is what was decided inside the transaction.

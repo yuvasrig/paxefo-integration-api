@@ -24,7 +24,9 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rulesync"
+	"github.com/yuvasrig/paxefo-integration-api/internal/settings"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
+	"github.com/yuvasrig/paxefo-integration-api/internal/worker"
 )
 
 const shutdownTimeout = 10 * time.Second // F13-R5
@@ -148,22 +150,41 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	go reloader.Run(ctx)
 	rs := holder.Current()
 
+	// Runtime settings: environment variables are the defaults; values changed in the admin console override them.
+	defaults := settings.Values{
+		RateLimitPerSec: cfg.RateLimitPerSec, RateLimitBurst: cfg.RateLimitBurst, QueueMaxDepth: cfg.QueueMaxDepth,
+		WorkersMin: cfg.WorkersMin, WorkersMax: cfg.WorkersMax, JobsPerWorker: cfg.JobsPerWorker,
+		LagSLOSeconds: cfg.LagSLOSeconds, MaxAttempts: cfg.MaxAttempts,
+	}
+	live := settings.NewHolder(defaults)
+	syncer := &settings.Syncer{Source: st, Holder: live, Base: defaults, Interval: cfg.SettingsRefresh, Log: log}
+	if err := syncer.Refresh(ctx); err != nil {
+		return fmt.Errorf("load runtime settings: %w", err)
+	}
+	go syncer.Run(ctx)
+
 	svc := &ingest.Service{
-		Store:    st,
-		Provider: tive.NewDynamic(holder, config.Default()),
-		Now:      time.Now,
-		Observer: metrics,
-		Log:      log,
+		Store:       st,
+		Provider:    tive.NewDynamic(holder, config.Default()),
+		Now:         time.Now,
+		Observer:    metrics,
+		Log:         log,
+		DefaultMode: cfg.IngestMode,
+		Settings:    live,
 	}
 	api := &httpapi.API{
 		Ingest:        svc,
 		Authenticator: &auth.Authenticator{Keys: st, Now: time.Now},
-		Limiter:       &middleware.RateLimiter{Rate: cfg.RateLimitPerSec, Burst: cfg.RateLimitBurst, Now: time.Now},
-		BodyLimit:     cfg.BodyLimitBytes,
-		Log:           log,
-		Rules:         holder,
-		Metrics:       metrics.Handler(),
-		Observer:      metrics,
+		Limiter: &middleware.RateLimiter{Now: time.Now, Limits: func() (float64, int) {
+			v := live.Current()
+			return v.RateLimitPerSec, v.RateLimitBurst
+		}},
+		BodyLimit:  cfg.BodyLimitBytes,
+		Log:        log,
+		Rules:      holder,
+		Metrics:    metrics.Handler(),
+		Observer:   metrics,
+		WorkerOnly: cfg.Role == "worker",
 		Ready: func(c context.Context) (httpapi.ReadyInfo, error) {
 			if err := st.Ping(c); err != nil {
 				return httpapi.ReadyInfo{}, err
@@ -172,8 +193,21 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 			if err != nil {
 				return httpapi.ReadyInfo{}, err
 			}
-			return httpapi.ReadyInfo{MigrationVersion: v, StorageBackend: "postgres", IngestMode: cfg.IngestMode}, nil
+			return httpapi.ReadyInfo{MigrationVersion: v, StorageBackend: "postgres", IngestMode: cfg.IngestMode, Role: cfg.Role}, nil
 		},
+	}
+
+	// Workers (roles all and worker): claim queued payloads and process them like a synchronous request would.
+	poolDone := make(chan struct{})
+	if cfg.Role == "all" || cfg.Role == "worker" {
+		host, _ := os.Hostname()
+		pool := &worker.Pool{
+			Source: st, Processor: svc, Settings: live, Role: cfg.Role, Log: log, Observer: metrics,
+			Instance: fmt.Sprintf("%s-%d-%s", host, os.Getpid(), store.NewID("")[20:]),
+		}
+		go func() { pool.Run(ctx); close(poolDone) }()
+	} else {
+		close(poolDone)
 	}
 
 	srv := &http.Server{
@@ -185,7 +219,7 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", ln.Addr().String(), "ingest_mode", cfg.IngestMode, "rules_version", rs.Version, "rules_source", holder.Loaded().Source, "rules_refresh", cfg.RulesRefresh.String())
+		log.Info("listening", "addr", ln.Addr().String(), "role", cfg.Role, "ingest_mode", cfg.IngestMode, "rules_version", rs.Version, "rules_source", holder.Loaded().Source, "rules_refresh", cfg.RulesRefresh.String())
 		errCh <- srv.Serve(ln)
 	}()
 
@@ -201,6 +235,10 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 		defer cancel()
 		if err := srv.Shutdown(shutCtx); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
+		}
+		select { // workers finish the jobs they already claimed before the database closes
+		case <-poolDone:
+		case <-shutCtx.Done():
 		}
 		return nil
 	}

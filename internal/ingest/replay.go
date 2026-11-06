@@ -62,6 +62,7 @@ type ReplayReport struct {
 	Reprocessed int            `json:"reprocessed"` // computed without error
 	Unchanged   int            `json:"unchanged"`
 	Changed     int            `json:"changed"` // status, flags or PAXAFE output differ from before
+	Queued      int            `json:"queued"`  // still waiting for a worker: left alone
 	Errors      int            `json:"errors"`
 	Transitions map[string]int `json:"transitions"` // "conflict -> accepted": 3
 	Changes     []EventChange  `json:"changes"`     // the first few
@@ -155,6 +156,13 @@ func (s *Service) ReplayAllTenants(ctx context.Context, opts ReplayOptions) ([]R
 func (s *Service) reprocess(ctx context.Context, ev store.ReplayEvent, opts ReplayOptions,
 	commit func(context.Context, store.CommitInput) (store.CommitResult, error), rep *ReplayReport) {
 
+	// An event with no outcome that still has a queued job belongs to its worker; replaying it too would race.
+	if ev.Status == "pending" {
+		if queued, err := s.Store.HasJob(ctx, ev.ID); err == nil && queued {
+			rep.Queued++
+			return
+		}
+	}
 	runID := opts.RunID
 	if !opts.Apply {
 		runID = "dry-run"
