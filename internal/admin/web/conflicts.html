@@ -1,7 +1,7 @@
 {{define "conflicts"}}{{template "head" .}}
 <p>A <strong>conflict</strong> is a second payload for a reading we already have (same device, same time) with different content. What happens to it is the tenant's conflict policy (<a href="/admin/tenants">Tenants</a>): keep the first, keep the last, or reject. Both versions are always stored; this page shows what differed.</p>
 <form method="get" action="/admin/conflicts" class="inline">
-  <label>Tenant <select name="tenant" onchange="this.form.submit()">{{range .Tenants}}<option value="{{.Info.ID}}" {{if eq .Info.ID $.TenantID}}selected{{end}}>{{.Info.ID}}</option>{{end}}</select></label>
+  <label>Tenant <select name="tenant" data-autosubmit>{{range .Tenants}}<option value="{{.Info.ID}}" {{if eq .Info.ID $.TenantID}}selected{{end}}>{{.Info.ID}}</option>{{end}}</select></label>
   <noscript><button>Show</button></noscript>
 </form>
 
@@ -12,7 +12,7 @@
   <input type="hidden" name="tenant" value="{{.TenantID}}">
   <label>Window (hours back) <input name="hours" size="5" value="{{.Hours}}"></label>
   <button name="mode" value="preview">Preview (dry run)</button>
-  <button name="mode" value="apply" class="primary" onclick="return confirm('Apply the replay for {{.TenantID}}? Previous outcomes are archived, raw payloads are never changed.')">Apply</button>
+  <button name="mode" value="apply" class="primary" data-confirm="Apply the replay for {{.TenantID}}? Previous outcomes are archived, raw payloads are never changed.">Apply</button>
 </form>
 {{with .Replay}}
 <section class="card">

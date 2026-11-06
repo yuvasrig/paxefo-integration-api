@@ -110,9 +110,9 @@ func BodyLimit(max int64) func(http.Handler) http.Handler {
 type RateLimiter struct {
 	Rate  float64 // tokens per second
 	Burst int
-	// Limits, when set, supplies the rate and burst on every call, so a limit changed at runtime (admin console)
-	// takes effect at once. Rate and Burst are used when it is nil.
-	Limits func() (rate float64, burst int)
+	// Limits, when set, supplies the rate and burst for a tenant on every call, so a limit changed at runtime (admin
+	// console) takes effect at once, and a tenant can have limits of its own. Rate and Burst are used when it is nil.
+	Limits func(tenant string) (rate float64, burst int)
 	Now    func() time.Time
 
 	mu      sync.Mutex
@@ -133,7 +133,7 @@ func (l *RateLimiter) Allow(tenant string) (ok bool, retryAfter time.Duration) {
 	}
 	rate, burst := l.Rate, l.Burst
 	if l.Limits != nil {
-		rate, burst = l.Limits()
+		rate, burst = l.Limits(tenant)
 	}
 	now := l.Now()
 	b, found := l.buckets[tenant]

@@ -16,3 +16,20 @@
   }
   setInterval(tick, every);
 })();
+
+// Page behaviour that must not be inline (the content-security policy forbids inline handlers).
+//   data-confirm="text"  on a button or a form: ask before it submits.
+//   data-autosubmit      on a select: submit its form when the choice changes.
+(function () {
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-confirm]');
+    if (b && !confirm(b.getAttribute('data-confirm'))) e.preventDefault();
+  });
+  document.addEventListener('submit', function (e) {
+    var q = e.target.getAttribute && e.target.getAttribute('data-confirm');
+    if (q && !confirm(q)) e.preventDefault();
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.matches && e.target.matches('select[data-autosubmit]')) e.target.form.submit();
+  });
+})();

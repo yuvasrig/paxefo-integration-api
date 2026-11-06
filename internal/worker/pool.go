@@ -148,7 +148,7 @@ func (p *Pool) run(ctx context.Context, j store.Job) {
 		return
 	}
 
-	if j.Attempts >= p.Settings.Current().MaxAttempts {
+	if j.Attempts >= p.Settings.For(j.TenantID).MaxAttempts {
 		p.Log.Error("job failed every attempt: marked dead", "event_id", j.RawEventID, "tenant_id", j.TenantID, "attempts", j.Attempts, "error", err)
 		if berr := p.Source.BuryJob(ctx, j.TenantID, j.RawEventID, err.Error()); berr != nil {
 			p.Log.Error("could not mark job dead", "event_id", j.RawEventID, "error", berr)

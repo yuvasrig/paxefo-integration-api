@@ -34,14 +34,16 @@ type Tenant struct {
 	Workers     int
 	Rejected15m int // outcomes rejected in the last 15 minutes
 	Total15m    int // outcomes of any status in the last 15 minutes
+
+	// The tenant's own thresholds (its settings on top of the global ones).
+	LagSLO        time.Duration // a job waiting longer than this is behind
+	QueueLimit    int           // jobs it may have waiting before ingest answers 503
+	RejectPercent int           // alert when this share of recent events is rejected (0 turns that rule off)
 }
 
 // Input is everything the rules look at.
 type Input struct {
-	Tenants       []Tenant
-	LagSLO        time.Duration // a job waiting longer than this is behind
-	QueueLimit    int           // jobs a tenant may have waiting before ingest answers 503
-	RejectPercent int           // alert when this share of recent events is rejected (0 turns that rule off)
+	Tenants []Tenant
 }
 
 // Thresholds that are not settings.
@@ -64,25 +66,25 @@ func Evaluate(in Input) []Alert {
 			add(Alert{Key: "no-workers:" + t.ID, Severity: Critical, Tenant: t.ID, Title: "No workers",
 				Detail: fmt.Sprintf("%s has %d jobs waiting and no worker is running for it.", t.ID, t.Pending)})
 		}
-		if t.Pending > 0 && in.LagSLO > 0 && t.OldestWait > in.LagSLO {
+		if t.Pending > 0 && t.LagSLO > 0 && t.OldestWait > t.LagSLO {
 			sev := Warning
-			if t.OldestWait > criticalLagFactor*in.LagSLO {
+			if t.OldestWait > criticalLagFactor*t.LagSLO {
 				sev = Critical
 			}
 			add(Alert{Key: "lag:" + t.ID, Severity: sev, Tenant: t.ID, Title: "Workers are behind",
-				Detail: fmt.Sprintf("%s: the oldest job has waited %s (target %s), %d waiting.", t.ID, t.OldestWait.Round(time.Second), in.LagSLO, t.Pending)})
+				Detail: fmt.Sprintf("%s: the oldest job has waited %s (target %s), %d waiting.", t.ID, t.OldestWait.Round(time.Second), t.LagSLO, t.Pending)})
 		}
-		if in.QueueLimit > 0 && t.Pending*100 >= in.QueueLimit*queueWarnPercent {
+		if t.QueueLimit > 0 && t.Pending*100 >= t.QueueLimit*queueWarnPercent {
 			sev := Warning
-			if t.Pending >= in.QueueLimit {
+			if t.Pending >= t.QueueLimit {
 				sev = Critical
 			}
 			add(Alert{Key: "queue:" + t.ID, Severity: sev, Tenant: t.ID, Title: "Queue nearly full",
-				Detail: fmt.Sprintf("%s has %d of %d jobs allowed waiting; at the limit new payloads are refused with 503.", t.ID, t.Pending, in.QueueLimit)})
+				Detail: fmt.Sprintf("%s has %d of %d jobs allowed waiting; at the limit new payloads are refused with 503.", t.ID, t.Pending, t.QueueLimit)})
 		}
-		if in.RejectPercent > 0 && t.Total15m >= minEventsForReject && t.Rejected15m*100 >= t.Total15m*in.RejectPercent {
+		if t.RejectPercent > 0 && t.Total15m >= minEventsForReject && t.Rejected15m*100 >= t.Total15m*t.RejectPercent {
 			add(Alert{Key: "rejects:" + t.ID, Severity: Warning, Tenant: t.ID, Title: "High reject rate",
-				Detail: fmt.Sprintf("%s: %d of %d events in the last 15 minutes were rejected (alert at %d%%). Check the sender or the rules.", t.ID, t.Rejected15m, t.Total15m, in.RejectPercent)})
+				Detail: fmt.Sprintf("%s: %d of %d events in the last 15 minutes were rejected (alert at %d%%). Check the sender or the rules.", t.ID, t.Rejected15m, t.Total15m, t.RejectPercent)})
 		}
 	}
 	rank := map[string]int{Critical: 0, Warning: 1}

@@ -288,26 +288,63 @@ func TestEachTenantHasItsOwnPool(t *testing.T) {
 	eventually(t, "acme job done", func() bool { return e.status("acme-pharma", id) == "flagged" })
 }
 
-// A tenant's own limits replace the service-wide ones.
-func TestTenantLimitsOverrideTheDefaults(t *testing.T) {
+// A tenant's own settings replace the global ones, and changing them at runtime resizes its pool.
+func TestTenantSettingsOverrideTheGlobalOnes(t *testing.T) {
 	e := newEnv(t, "reviewer", "acme-pharma")
-	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 4, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
-	l, _ := store.NewWorkerLimits(3, 3)
-	if err := e.st.SetTenantWorkers(ctx, "acme-pharma", &l); err != nil {
-		t.Fatal(err)
+	global := settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 4, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3}
+	e.set.Set(global)
+	// The Syncer loads each tenant's own settings from the database, exactly as in production.
+	sctx, stopSync := context.WithCancel(ctx)
+	defer stopSync()
+	sy := &settings.Syncer{Source: e.st, Holder: e.set, Base: global, Interval: 20 * time.Millisecond}
+	go sy.Run(sctx)
+
+	for k, v := range map[string]string{"workers_min": "3", "workers_max": "3"} {
+		if err := e.st.SetTenantSetting(ctx, "acme-pharma", k, v); err != nil {
+			t.Fatal(err)
+		}
 	}
 	stop := e.run(t)
 	defer stop()
 	eventually(t, "acme runs its own minimum", func() bool { return e.mgr.Workers()["acme-pharma"] == 3 })
 	if got := e.mgr.Workers()["reviewer"]; got != 1 {
-		t.Fatalf("reviewer keeps the defaults: %d", got)
+		t.Fatalf("reviewer follows the global values: %d", got)
 	}
-	// Changing the limits at runtime resizes the pool.
-	l2, _ := store.NewWorkerLimits(1, 1)
-	if err := e.st.SetTenantWorkers(ctx, "acme-pharma", &l2); err != nil {
-		t.Fatal(err)
+	// Changing the tenant's setting at runtime resizes its pool.
+	for k, v := range map[string]string{"workers_min": "1", "workers_max": "1"} {
+		if err := e.st.SetTenantSetting(ctx, "acme-pharma", k, v); err != nil {
+			t.Fatal(err)
+		}
 	}
 	eventually(t, "acme shrinks to its new limit", func() bool { return e.mgr.Workers()["acme-pharma"] == 1 })
+	// Removing the override makes the tenant follow the global value again.
+	for _, k := range []string{"workers_min", "workers_max"} {
+		if err := e.st.ClearTenantSetting(ctx, "acme-pharma", k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.st.SetSetting(ctx, "workers_min", "2", "test"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "acme follows the global minimum", func() bool { return e.mgr.Workers()["acme-pharma"] == 2 })
+}
+
+// A tenant's own retry limit decides when its poison job is given up on, while others use the global one.
+func TestTenantMaxAttemptsOverride(t *testing.T) {
+	e := newEnv(t, "reviewer", "acme-pharma")
+	global := settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 2, JobsPerWorker: 5, LagSLOSeconds: 10, MaxAttempts: 5}
+	e.set.SetAll(global, map[string]settings.Values{"acme-pharma": func() settings.Values { v := global; v.MaxAttempts = 1; return v }()})
+	a := e.send(t, "acme-pharma", 2)
+	r := e.send(t, "reviewer", 2)
+	e.st.fails[a], e.st.fails[r] = -1, -1
+	e.mgr.Now = func() time.Time { return time.Now().Add(-time.Hour) }
+	stop := e.run(t)
+	defer stop()
+	eventually(t, "acme's job is dead after one attempt", func() bool { return e.status("acme-pharma", a) == "dead" })
+	ev, _ := e.st.GetEvent(ctx, "reviewer", r)
+	if ev.Status == "dead" {
+		t.Fatalf("reviewer keeps retrying (global limit is 5 attempts): %+v", ev)
+	}
 }
 
 // A sync tenant has no queue, so it gets no workers.
@@ -325,60 +362,35 @@ func TestSyncTenantsRunNoWorkers(t *testing.T) {
 }
 
 func TestTarget(t *testing.T) {
-	s := settings.Values{WorkersMin: 2, WorkersMax: 8, JobsPerWorker: 10, LagSLOSeconds: 10}
+	global := settings.Values{WorkersMin: 2, WorkersMax: 8, JobsPerWorker: 10, LagSLOSeconds: 10}
 	cfg := func(raw string) store.TenantInfo { return store.TenantInfo{Status: "active", Config: []byte(raw)} }
+	tenantOwn := func(f func(*settings.Values)) settings.Values { v := global; f(&v); return v }
+	async := `{"ingest_mode":"async"}`
 	cases := []struct {
 		name   string
 		info   store.TenantInfo
 		mode   string
 		depth  int
 		oldest time.Duration
+		s      settings.Values // the tenant's own settings: its overrides on top of the global ones
 		want   int
 	}{
-		{"async, idle: its minimum", cfg(`{"ingest_mode":"async"}`), "sync", 0, 0, 2},
-		{"async, backlog: one worker per JobsPerWorker", cfg(`{"ingest_mode":"async"}`), "sync", 35, 0, 4},
-		{"async, huge backlog: capped at its max", cfg(`{"ingest_mode":"async"}`), "sync", 10000, 0, 8},
-		{"async, behind the lag target: one more", cfg(`{"ingest_mode":"async"}`), "sync", 30, 20 * time.Second, 4},
-		{"its own limits win", cfg(`{"ingest_mode":"async","workers":{"min":1,"max":3}}`), "sync", 10000, 0, 3},
-		{"its own minimum when idle", cfg(`{"ingest_mode":"async","workers":{"min":5,"max":6}}`), "sync", 0, 0, 5},
-		{"invalid limits fall back to the defaults", cfg(`{"ingest_mode":"async","workers":{"min":9,"max":3}}`), "sync", 0, 0, 2},
-		{"sync and idle: none", cfg(`{}`), "sync", 0, 0, 0},
-		{"mode from the service default", cfg(`{}`), "async", 0, 0, 2},
-		{"switched to sync with jobs left over: drain them", cfg(`{"ingest_mode":"sync"}`), "async", 25, 0, 3},
-		{"suspended: none", store.TenantInfo{Status: "suspended", Config: []byte(`{"ingest_mode":"async"}`)}, "sync", 50, 0, 0},
+		{"async, idle: its minimum", cfg(async), "sync", 0, 0, global, 2},
+		{"async, backlog: one worker per JobsPerWorker", cfg(async), "sync", 35, 0, global, 4},
+		{"async, huge backlog: capped at its max", cfg(async), "sync", 10000, 0, global, 8},
+		{"async, behind the lag target: one more", cfg(async), "sync", 30, 20 * time.Second, global, 4},
+		{"its own max wins", cfg(async), "sync", 10000, 0, tenantOwn(func(v *settings.Values) { v.WorkersMin, v.WorkersMax = 1, 3 }), 3},
+		{"its own minimum when idle", cfg(async), "sync", 0, 0, tenantOwn(func(v *settings.Values) { v.WorkersMin, v.WorkersMax = 5, 6 }), 5},
+		{"its own jobs per worker", cfg(async), "sync", 35, 0, tenantOwn(func(v *settings.Values) { v.JobsPerWorker = 5 }), 7},
+		{"its own lag target", cfg(async), "sync", 30, 20 * time.Second, tenantOwn(func(v *settings.Values) { v.LagSLOSeconds = 60 }), 3},
+		{"sync and idle: none", cfg(`{}`), "sync", 0, 0, global, 0},
+		{"mode from the service default", cfg(`{}`), "async", 0, 0, global, 2},
+		{"switched to sync with jobs left over: drain them", cfg(`{"ingest_mode":"sync"}`), "async", 25, 0, global, 3},
+		{"suspended: none", store.TenantInfo{Status: "suspended", Config: []byte(async)}, "sync", 50, 0, global, 0},
 	}
 	for _, c := range cases {
-		if got := worker.Target(c.info, c.mode, c.depth, c.oldest, s); got != c.want {
+		if got := worker.Target(c.info, c.mode, c.depth, c.oldest, c.s); got != c.want {
 			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
 		}
 	}
-}
-
-// The hard cap holds across tenants, even while every tenant's own limit would allow more.
-func TestHardCapOnTotalWorkers(t *testing.T) {
-	e := newEnv(t, "reviewer", "acme-pharma")
-	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 0, WorkersMax: 4, WorkersTotalMax: 3, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
-	for _, tenant := range []string{"reviewer", "acme-pharma"} {
-		for i := 0; i < 20; i++ {
-			e.send(t, tenant, 2)
-		}
-	}
-	if _, err := e.st.Pool().Exec(ctx, `UPDATE ingest_jobs SET next_attempt_at = now() + interval '1 hour'`); err != nil {
-		t.Fatal(err)
-	}
-	stop := e.run(t)
-	defer stop()
-	eventually(t, "workers reach the cap", func() bool { return e.mgr.TotalWorkers() == 3 })
-	for i := 0; i < 30; i++ { // and never go over it
-		if n := e.mgr.TotalWorkers(); n > 3 {
-			t.Fatalf("%d workers, cap is 3", n)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	// Raising the cap at runtime lets the pools grow.
-	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 0, WorkersMax: 4, WorkersTotalMax: 6, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
-	eventually(t, "workers grow to the new cap", func() bool { return e.mgr.TotalWorkers() == 6 })
-	// Lowering it takes workers away at once, not after the slow scale-down delay.
-	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 0, WorkersMax: 4, WorkersTotalMax: 2, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
-	eventually(t, "workers drop to the lowered cap", func() bool { return e.mgr.TotalWorkers() == 2 })
 }

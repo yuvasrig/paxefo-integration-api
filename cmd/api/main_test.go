@@ -556,23 +556,40 @@ func TestRealMainUsageAndConfigErrors(t *testing.T) {
 	}
 }
 
-func TestTenantsSetWorkers(t *testing.T) {
+func TestTenantsSetSettingAndWorkers(t *testing.T) {
 	st, _ := openTestStore(t)
-	out, err := run(t, st, "tenants", "create", "--id", "pool-co")
-	if err != nil {
+	if out, err := run(t, st, "tenants", "create", "--id", "pool-co"); err != nil {
 		t.Fatal(out, err)
 	}
-	if out, err = run(t, st, "tenants", "set-workers", "--tenant", "pool-co", "--min", "1", "--max", "5"); err != nil || !strings.Contains(out, "workers 1 to 5") {
+	if out, err := run(t, st, "tenants", "set-setting", "--tenant", "pool-co", "--key", "queue_max_depth", "--value", "50"); err != nil || !strings.Contains(out, "queue_max_depth = 50") {
 		t.Fatalf("%q %v", out, err)
+	}
+	if out, err := run(t, st, "tenants", "set-workers", "--tenant", "pool-co", "--min", "1", "--max", "5"); err != nil || !strings.Contains(out, "workers 1 to 5") {
+		t.Fatalf("%q %v", out, err)
+	}
+	out, err := run(t, st, "tenants", "show", "--tenant", "pool-co")
+	if err != nil || !strings.Contains(out, "queue_max_depth = 50") || !strings.Contains(out, "workers_max = 5") || !strings.Contains(out, "own settings (override the global values)") {
+		t.Fatalf("show lists the tenant's own settings: %q %v", out, err)
 	}
 	if out, err = run(t, st, "tenants", "set-workers", "--tenant", "pool-co", "--clear"); err != nil || !strings.Contains(out, "cleared") {
 		t.Fatalf("%q %v", out, err)
 	}
+	if out, err = run(t, st, "tenants", "set-setting", "--tenant", "pool-co", "--key", "queue_max_depth", "--clear"); err != nil || !strings.Contains(out, "uses the global value") {
+		t.Fatalf("%q %v", out, err)
+	}
+	if out, _ = run(t, st, "tenants", "show", "--tenant", "pool-co"); !strings.Contains(out, "none (uses the global values)") {
+		t.Fatalf("%q", out)
+	}
 	for name, args := range map[string][]string{
-		"no tenant":  {"set-workers", "--max", "3"},
-		"no limits":  {"set-workers", "--tenant", "pool-co"},
-		"min > max":  {"set-workers", "--tenant", "pool-co", "--min", "5", "--max", "2"},
-		"no tenant2": {"set-workers", "--tenant", "ghost", "--max", "2"},
+		"no tenant":       {"set-setting", "--key", "queue_max_depth", "--value", "1"},
+		"no value":        {"set-setting", "--tenant", "pool-co", "--key", "queue_max_depth"},
+		"unknown setting": {"set-setting", "--tenant", "pool-co", "--key", "nonsense", "--value", "1"},
+		"global only":     {"set-setting", "--tenant", "pool-co", "--key", "workers_total_max", "--value", "4"},
+		"bad value":       {"set-setting", "--tenant", "pool-co", "--key", "queue_max_depth", "--value", "banana"},
+		"out of range":    {"set-setting", "--tenant", "pool-co", "--key", "queue_max_depth", "--value", "-5"},
+		"unknown tenant":  {"set-setting", "--tenant", "ghost", "--key", "queue_max_depth", "--value", "5"},
+		"min above max":   {"set-workers", "--tenant", "pool-co", "--min", "5", "--max", "2"},
+		"workers no max":  {"set-workers", "--tenant", "pool-co"},
 	} {
 		if _, err := run(t, st, "tenants", args...); err == nil {
 			t.Errorf("%s should fail", name)

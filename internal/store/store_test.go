@@ -18,6 +18,7 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider"
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
+	"github.com/yuvasrig/paxefo-integration-api/internal/settings"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
 	"github.com/yuvasrig/paxefo-integration-api/internal/testutil/pgtest"
 )
@@ -1231,7 +1232,7 @@ func TestSettingsStore(t *testing.T) {
 	}
 }
 
-func TestTenantWorkerLimits(t *testing.T) {
+func TestTenantSettings(t *testing.T) {
 	st := newStore(t)
 	cfg := func() []byte {
 		for _, i := range mustList(t, st) {
@@ -1241,39 +1242,102 @@ func TestTenantWorkerLimits(t *testing.T) {
 		}
 		return nil
 	}
-	if _, ok := store.ParseWorkerLimits(cfg()); ok {
-		t.Fatal("no limits by default")
+	if len(settings.TenantOverrides(cfg())) != 0 {
+		t.Fatal("no overrides by default")
 	}
-	l, err := store.NewWorkerLimits(1, 6)
-	if err != nil {
+	if err := st.SetTenantSetting(ctx, "reviewer", "queue_max_depth", "10"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetTenantWorkers(ctx, "reviewer", &l); err != nil {
+	if err := st.SetTenantSetting(ctx, "reviewer", "workers_max", "4"); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := store.ParseWorkerLimits(cfg()); !ok || got != l {
-		t.Fatalf("%+v %v", got, ok)
+	if got := settings.TenantOverrides(cfg()); got["queue_max_depth"] != "10" || got["workers_max"] != "4" || len(got) != 2 {
+		t.Fatalf("%v", got)
 	}
-	// Other config keys survive, in both directions.
+	// Setting again replaces; other config keys survive in both directions.
+	if err := st.SetTenantSetting(ctx, "reviewer", "queue_max_depth", "20"); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.SetTenantIngestMode(ctx, "reviewer", "async"); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := store.ParseWorkerLimits(cfg()); !ok || got != l || store.ParseIngestMode(cfg()) != "async" {
-		t.Fatalf("%s", cfg())
-	}
-	if err := st.SetTenantWorkers(ctx, "reviewer", nil); err != nil {
+	cs, _ := store.NewConflictSettings("reject", 0)
+	if err := st.SetConflictSettings(ctx, "reviewer", cs); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := store.ParseWorkerLimits(cfg()); ok || store.ParseIngestMode(cfg()) != "async" {
-		t.Fatalf("clearing removes only the limits: %s", cfg())
+	got := settings.TenantOverrides(cfg())
+	if got["queue_max_depth"] != "20" || got["workers_max"] != "4" || store.ParseIngestMode(cfg()) != "async" {
+		t.Fatalf("%v %s", got, cfg())
 	}
-	if err := st.SetTenantWorkers(ctx, "nobody", &l); !errors.Is(err, store.ErrNotFound) {
+	if c, _ := store.ParseConflictSettings(cfg()); c.Policy != "reject" {
+		t.Fatalf("settings must not disturb the conflict policy: %s", cfg())
+	}
+	// Clearing one leaves the rest.
+	if err := st.ClearTenantSetting(ctx, "reviewer", "queue_max_depth"); err != nil {
+		t.Fatal(err)
+	}
+	if got := settings.TenantOverrides(cfg()); len(got) != 1 || got["workers_max"] != "4" {
+		t.Fatalf("%v", got)
+	}
+	if err := st.ClearTenantSetting(ctx, "reviewer", "never_set"); err != nil {
+		t.Fatalf("clearing something that is not set is fine: %v", err)
+	}
+	if err := st.SetTenantSetting(ctx, "nobody", "queue_max_depth", "1"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("%v", err)
 	}
-	for _, bad := range [][2]int{{-1, 3}, {0, 0}, {4, 2}, {1, 5000}} {
-		if _, err := store.NewWorkerLimits(bad[0], bad[1]); err == nil {
-			t.Fatalf("%v should be refused", bad)
+	if err := st.ClearTenantSetting(ctx, "nobody", "queue_max_depth"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("%v", err)
+	}
+	// Another tenant is untouched.
+	for _, i := range mustList(t, st) {
+		if i.ID == "acme-pharma" && len(settings.TenantOverrides(i.Config)) != 0 {
+			t.Fatalf("overrides are per tenant: %s", i.Config)
 		}
+	}
+}
+
+// The migration moves worker limits stored the earlier way (config.workers = {min, max}) into ordinary settings.
+func TestMigrationMovesOldWorkerLimits(t *testing.T) {
+	st := newStore(t)
+	sql, err := os.ReadFile("../../migrations/00007_tenant_settings.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := strings.SplitN(strings.SplitN(string(sql), "-- +goose Up", 2)[1], "-- +goose Down", 2)[0]
+	for id, cfg := range map[string]string{
+		"old-limits":  `{"ingest_mode":"async","workers":{"min":1,"max":4}}`,
+		"old-keeps":   `{"settings":{"queue_max_depth":"7"},"workers":{"min":0,"max":2}}`,
+		"old-garbage": `{"workers":{"mode":"shared","weight":1}}`,
+		"untouched":   `{"ingest_mode":"sync"}`,
+	} {
+		if err := st.CreateTenant(ctx, id, id, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Pool().Exec(ctx, `UPDATE tenants SET config = $2::jsonb WHERE id = $1`, id, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.Pool().Exec(ctx, up); err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+	cfgOf := map[string][]byte{}
+	for _, i := range mustList(t, st) {
+		cfgOf[i.ID] = i.Config
+	}
+	if got := settings.TenantOverrides(cfgOf["old-limits"]); got["workers_min"] != "1" || got["workers_max"] != "4" || store.ParseIngestMode(cfgOf["old-limits"]) != "async" {
+		t.Fatalf("%s", cfgOf["old-limits"])
+	}
+	if got := settings.TenantOverrides(cfgOf["old-keeps"]); got["queue_max_depth"] != "7" || got["workers_max"] != "2" {
+		t.Fatalf("existing settings survive: %s", cfgOf["old-keeps"])
+	}
+	if strings.Contains(string(cfgOf["old-limits"]), `"workers":`) || strings.Contains(string(cfgOf["old-garbage"]), `"workers":`) {
+		t.Fatalf("the old key is gone: %s %s", cfgOf["old-limits"], cfgOf["old-garbage"])
+	}
+	if got := settings.TenantOverrides(cfgOf["old-garbage"]); len(got) != 0 {
+		t.Fatalf("an unrecognised shape is dropped, not turned into settings: %v", got)
+	}
+	if string(cfgOf["untouched"]) != `{"ingest_mode": "sync"}` && !strings.Contains(string(cfgOf["untouched"]), `"sync"`) {
+		t.Fatalf("%s", cfgOf["untouched"])
 	}
 }
 

@@ -5,7 +5,7 @@ Source: DESIGN.md §7, §7.2. Postgres 16. Every tenant table carries `tenant_id
 ## Tables
 
 ### tenants
-`id` text PK · `name` · `status` · `plan` · `retention_days` · `config` jsonb · `created_at`. `config.conflict = {policy: keep_first|keep_last|reject, http_status: 200|409}` sets the tenant's conflict handling (default keep_first / 200); set it with `api tenants set-conflict`. `config.ingest_mode` (sync|async) and `config.workers = {min, max}` (the tenant's worker pool limits; `api tenants set-workers`) are the other optional keys.
+`id` text PK · `name` · `status` · `plan` · `retention_days` · `config` jsonb · `created_at`. `config.conflict = {policy: keep_first|keep_last|reject, http_status: 200|409}` sets the tenant's conflict handling (default keep_first / 200); set it with `api tenants set-conflict`. `config.ingest_mode` (sync|async) and `config.settings = {key: value}` (the tenant's own runtime settings, overriding the global `settings` table; `api tenants set-setting`) are the other optional keys.
 Seeded by `api seed`: `reviewer`, `acme-pharma`, `bioco`. The tenant of a request is the API key's; there is no account-to-tenant mapping.
 
 ### api_keys

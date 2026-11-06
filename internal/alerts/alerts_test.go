@@ -22,7 +22,11 @@ func keys(as []Alert) string {
 }
 
 func TestEvaluate(t *testing.T) {
-	in := Input{LagSLO: 10 * time.Second, QueueLimit: 100, RejectPercent: 25}
+	in := Input{}
+	defaults := func(t Tenant) Tenant {
+		t.LagSLO, t.QueueLimit, t.RejectPercent = 10*time.Second, 100, 25
+		return t
+	}
 	cases := []struct {
 		name string
 		t    Tenant
@@ -42,22 +46,23 @@ func TestEvaluate(t *testing.T) {
 		{"too few events to judge", Tenant{ID: "a", Total15m: 4, Rejected15m: 4}, ""},
 	}
 	for _, c := range cases {
-		in.Tenants = []Tenant{c.t}
+		in.Tenants = []Tenant{defaults(c.t)}
 		if got := keys(Evaluate(in)); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
 	}
-	in.RejectPercent = 0
-	in.Tenants = []Tenant{{ID: "a", Total15m: 40, Rejected15m: 40}}
+	off := defaults(Tenant{ID: "a", Total15m: 40, Rejected15m: 40})
+	off.RejectPercent = 0
+	in.Tenants = []Tenant{off}
 	if got := Evaluate(in); len(got) != 0 {
 		t.Errorf("a reject percent of 0 turns the rule off: %v", got)
 	}
 }
 
 func TestEvaluateOrdersMostSevereFirst(t *testing.T) {
-	got := Evaluate(Input{LagSLO: time.Second, QueueLimit: 10, Tenants: []Tenant{
-		{ID: "b", Dead: 1},
-		{ID: "a", Async: true, Pending: 2, Workers: 0},
+	got := Evaluate(Input{Tenants: []Tenant{
+		{ID: "b", Dead: 1, LagSLO: time.Second, QueueLimit: 10},
+		{ID: "a", Async: true, Pending: 2, Workers: 0, LagSLO: time.Second, QueueLimit: 10},
 	}})
 	if keys(got) != "c:no-workers:a w:dead:b" {
 		t.Fatalf("%s", keys(got))
@@ -157,5 +162,14 @@ func TestNotifierSurvivesEvaluationErrorsAndNoURL(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("a notifier with no URL must not run")
+	}
+}
+
+// Each tenant is judged by its own thresholds, so one tenant's stricter limit does not alert another.
+func TestEvaluateUsesEachTenantsOwnThresholds(t *testing.T) {
+	strict := Tenant{ID: "strict", Async: true, Pending: 3, Workers: 1, OldestWait: 5 * time.Second, LagSLO: 2 * time.Second, QueueLimit: 100}
+	relaxed := Tenant{ID: "relaxed", Async: true, Pending: 3, Workers: 1, OldestWait: 5 * time.Second, LagSLO: 60 * time.Second, QueueLimit: 100}
+	if got := keys(Evaluate(Input{Tenants: []Tenant{strict, relaxed}})); got != "w:lag:strict" {
+		t.Fatalf("only the tenant with the tighter lag target alerts: %q", got)
 	}
 }

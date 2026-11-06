@@ -10,7 +10,7 @@ Rules are data: change them here and every instance adopts the new ruleset witho
   </div>
   <p class="muted">Change <code>version:</code> before publishing: it is recorded on every event. Events already stored keep their old result until you replay them (<code>api replay</code>).</p>
 </form>
-<form method="post" action="/admin/rules/reset" onsubmit="return confirm('Go back to the built-in default rules?')">
+<form method="post" action="/admin/rules/reset" data-confirm="Go back to the built-in default rules?">
   <button class="danger">Reset to the default rules</button>
 </form>
 <h2>History</h2>

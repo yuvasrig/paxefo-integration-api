@@ -161,7 +161,7 @@ func (s *Service) Ingest(ctx context.Context, req Request) (Response, error) {
 // then 202. Workers do the rest. Once the 202 is sent the payload is safe: it is either processed or still in the queue.
 func (s *Service) enqueue(ctx context.Context, req Request) (Response, error) {
 	if s.Settings != nil {
-		limit := s.Settings.Current().QueueMaxDepth
+		limit := s.Settings.For(req.TenantID).QueueMaxDepth // the tenant's own limit, else the global one
 		depth, err := s.Store.PendingDepth(ctx, req.TenantID, limit)
 		if err != nil {
 			return Response{}, fmt.Errorf("ingest: check queue depth: %w", err)

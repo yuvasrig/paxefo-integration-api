@@ -1,22 +1,42 @@
 {{define "config"}}{{template "head" .}}
-<h2>Live settings</h2>
-<p>These take effect on every instance within {{.Refresh}} seconds, with no restart. The default is the environment variable's value.</p>
+<form method="get" action="/admin/config" class="inline">
+  <label>Settings for
+    <select name="tenant" data-autosubmit>
+      <option value="" {{if eq .Scope ""}}selected{{end}}>All tenants (global)</option>
+      {{range .Tenants}}<option value="{{.Info.ID}}" {{if eq .Info.ID $.Scope}}selected{{end}}>{{.Info.ID}}</option>{{end}}
+    </select>
+  </label>
+  <noscript><button>Show</button></noscript>
+</form>
+
+{{if .Scope}}
+<p>Settings for <strong>{{.Scope}}</strong>. Each value is this tenant's own, or the global one when it has none. A value saved here <strong>overrides the global value for this tenant only</strong>; <em>Use global</em> removes the override. Changes reach every instance within {{.Refresh}} seconds, with no restart.</p>
+{{else}}
+<p>These are the <strong>global</strong> settings: they apply to every tenant that has no value of its own. To give one tenant different values, pick it above. Changes reach every instance within {{.Refresh}} seconds, with no restart. The default is the environment variable's value.</p>
+{{end}}
+
+<h2>{{if .Scope}}Settings for {{.Scope}}{{else}}Live settings{{end}}</h2>
 <table>
-  <thead><tr><th>Setting</th><th>Value</th><th>Default</th><th>Allowed</th><th></th></tr></thead>
+  <thead><tr><th>Setting</th><th>Value</th><th>{{if .Scope}}Global value{{else}}Default{{end}}</th><th>Allowed</th>{{if .Scope}}<th>Source</th>{{end}}<th></th></tr></thead>
   <tbody>
   {{range .Rows}}<tr>
-    <td><strong>{{.Title}}</strong><br><span class="muted">{{.Help}}</span>{{if .Overridden}}<br><span class="muted">changed by {{.UpdatedBy}}, {{ago .UpdatedAt}}</span>{{end}}</td>
-    <td colspan="1"><form method="post" action="/admin/config/set" class="inline"><input type="hidden" name="key" value="{{.Key}}"><input name="value" value="{{.Value}}" size="8" aria-label="{{.Title}}"><button>Save</button></form></td>
+    <td><strong>{{.Title}}</strong><br><span class="muted">{{.Help}}</span>{{if and .Overridden (not $.Scope)}}<br><span class="muted">changed by {{.UpdatedBy}}, {{ago .UpdatedAt}}</span>{{end}}</td>
+    <td><form method="post" action="/admin/config/set" class="inline"><input type="hidden" name="tenant" value="{{$.Scope}}"><input type="hidden" name="key" value="{{.Key}}"><input name="value" value="{{.Value}}" size="8" aria-label="{{.Title}}"><button>Save</button></form></td>
     <td>{{.Default}}</td><td>{{num .Min}} to {{num .Max}}</td>
-    <td>{{if .Overridden}}<form method="post" action="/admin/config/reset"><input type="hidden" name="key" value="{{.Key}}"><button class="link">Reset</button></form>{{end}}</td>
+    {{if $.Scope}}<td>{{if .Overridden}}<span class="tag flagged">this tenant</span>{{else}}<span class="muted">global</span>{{end}}</td>{{end}}
+    <td>{{if .Overridden}}<form method="post" action="/admin/config/reset"><input type="hidden" name="tenant" value="{{$.Scope}}"><input type="hidden" name="key" value="{{.Key}}"><button class="link">{{if $.Scope}}Use global{{else}}Reset{{end}}</button></form>{{end}}</td>
   </tr>{{end}}
   </tbody>
 </table>
+{{if .Scope}}<p class="muted">Not here: the total worker cap and the settings that need a restart apply to the whole process, so they are global only. See <a href="/admin/config">the global settings</a>.</p>{{end}}
+
+{{if not .Scope}}
 <h2>Needs a restart</h2>
 <p>Set these as environment variables on the service. They are shown here for reference; secrets are never shown.</p>
 <table>
   <thead><tr><th>Name</th><th>Value</th><th>What it does</th></tr></thead>
   <tbody>{{range .Restart}}<tr><td><code>{{.Name}}</code></td><td>{{.Value}}</td><td class="muted">{{.Note}}</td></tr>{{end}}</tbody>
 </table>
-<p class="muted">Not here: the tenant ingest mode and conflict policy (<a href="/admin/tenants">Tenants</a>) and the payload rules (<a href="/admin/rules">Rules</a>) are also live.</p>
+<p class="muted">Not here: each tenant's ingest mode and conflict policy (<a href="/admin/tenants">Tenants</a>) and the payload rules (<a href="/admin/rules">Rules</a>) are also live.</p>
+{{end}}
 {{template "foot" .}}{{end}}

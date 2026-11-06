@@ -488,33 +488,83 @@ func TestAssetsAreServed(t *testing.T) {
 	}
 }
 
-func TestTenantWorkerLimitsForm(t *testing.T) {
+func TestPerTenantSettingsOverrideGlobalOnes(t *testing.T) {
 	e := newEnv(t)
 	e.signIn()
 	e.post("/admin/tenants", url.Values{"id": {"pool-co"}})
-	if code, _, _ := e.post("/admin/tenants/pool-co/workers", url.Values{"min": {"1"}, "max": {"6"}}); code != 303 {
+	e.post("/admin/tenants", url.Values{"id": {"plain-co"}})
+
+	page := e.get("/admin/config?tenant=pool-co")
+	has(t, page, "Settings for <strong>pool-co</strong>", "Queue limit per tenant", "5000", `<span class="muted">global</span>`)
+	if strings.Contains(page, "Needs a restart") || strings.Contains(page, "Workers: hard cap") {
+		t.Fatal("process-wide settings are global only")
+	}
+
+	// A tenant's own value applies to that tenant only.
+	if code, _, hdr := e.post("/admin/config/set", url.Values{"tenant": {"pool-co"}, "key": {"queue_max_depth"}, "value": {"10"}}); code != 303 || !strings.Contains(hdr.Get("Location"), "tenant=pool-co") {
+		t.Fatalf("%d %q", code, hdr.Get("Location"))
+	}
+	if e.live.For("pool-co").QueueMaxDepth != 10 || e.live.For("plain-co").QueueMaxDepth != 5000 || e.live.Current().QueueMaxDepth != 5000 {
+		t.Fatalf("pool-co %d, plain-co %d, global %d", e.live.For("pool-co").QueueMaxDepth, e.live.For("plain-co").QueueMaxDepth, e.live.Current().QueueMaxDepth)
+	}
+	has(t, e.get("/admin/config?tenant=pool-co"), `<span class="tag flagged">this tenant</span>`, "Use global")
+	has(t, e.get("/admin/tenants"), "<code>queue_max_depth=10</code>", "edit settings for pool-co")
+
+	// Changing the global value moves the tenants that follow it, and not the one that overrides it.
+	e.post("/admin/config/set", url.Values{"key": {"queue_max_depth"}, "value": {"777"}})
+	if e.live.For("pool-co").QueueMaxDepth != 10 || e.live.For("plain-co").QueueMaxDepth != 777 {
+		t.Fatalf("per tenant beats global: %d %d", e.live.For("pool-co").QueueMaxDepth, e.live.For("plain-co").QueueMaxDepth)
+	}
+
+	// Validation is against the tenant's own values: it cannot put its minimum above its maximum.
+	e.post("/admin/config/set", url.Values{"tenant": {"pool-co"}, "key": {"workers_max"}, "value": {"3"}})
+	_, body, _ := e.post("/admin/config/set", url.Values{"tenant": {"pool-co"}, "key": {"workers_min"}, "value": {"5"}})
+	has(t, body, "Not saved", "workers_min (5) cannot be more than workers_max (3)")
+	for _, bad := range []url.Values{
+		{"tenant": {"pool-co"}, "key": {"queue_max_depth"}, "value": {"banana"}},
+		{"tenant": {"pool-co"}, "key": {"workers_total_max"}, "value": {"4"}},
+		{"tenant": {"pool-co"}, "key": {"nonsense"}, "value": {"1"}},
+	} {
+		_, body, _ := e.post("/admin/config/set", bad)
+		has(t, body, "Not saved")
+	}
+	if e.live.For("pool-co").WorkersMin != 2 || e.live.For("pool-co").WorkersMax != 3 {
+		t.Fatalf("a refused change must change nothing: %+v", e.live.For("pool-co"))
+	}
+	if code, _, _ := e.post("/admin/config/set", url.Values{"tenant": {"ghost"}, "key": {"queue_max_depth"}, "value": {"1"}}); code != 404 {
+		t.Fatalf("unknown tenant: %d", code)
+	}
+	if code, _, _ := e.do("GET", "/admin/config?tenant=ghost", nil); code != 404 {
+		t.Fatalf("unknown tenant page: %d", code)
+	}
+
+	// "Use global" removes the override.
+	if code, _, _ := e.post("/admin/config/reset", url.Values{"tenant": {"pool-co"}, "key": {"queue_max_depth"}}); code != 303 {
 		t.Fatalf("%d", code)
 	}
-	info, _ := e.st.ListTenantInfo(ctx)
-	for _, i := range info {
-		if i.ID == "pool-co" {
-			if l, ok := store.ParseWorkerLimits(i.Config); !ok || l.Min != 1 || l.Max != 6 {
-				t.Fatalf("%s", i.Config)
+	if e.live.For("pool-co").QueueMaxDepth != 777 {
+		t.Fatalf("back to the global value: %d", e.live.For("pool-co").QueueMaxDepth)
+	}
+}
+
+// The console's content-security policy forbids inline handlers, so confirmations must be data attributes that
+// admin.js handles; an inline onclick would silently never ask.
+func TestNoInlineHandlersAndConfirmsAreWired(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "confirm-co", "Confirm Co", nil)) // the replay form needs a tenant
+	for _, p := range []string{"/admin/", "/admin/tenants", "/admin/conflicts", "/admin/rules", "/admin/config", "/admin/monitoring"} {
+		page := e.get(p)
+		for _, bad := range []string{" onclick=", " onsubmit=", " onchange=", " onload="} {
+			if strings.Contains(page, bad) {
+				t.Fatalf("%s has an inline handler %q that the CSP blocks", p, bad)
 			}
 		}
 	}
-	for _, bad := range []url.Values{{"min": {"5"}, "max": {"2"}}, {"min": {"x"}, "max": {"2"}}, {"min": {"1"}}} {
-		_, body, _ := e.post("/admin/tenants/pool-co/workers", bad)
-		if !strings.Contains(body, `class="error"`) {
-			t.Fatalf("%v should be refused", bad)
-		}
-	}
-	if code, _, _ := e.post("/admin/tenants/pool-co/workers", url.Values{}); code != 303 { // both empty: back to defaults
-		t.Fatalf("%d", code)
-	}
-	if code, _, _ := e.post("/admin/tenants/ghost/workers", url.Values{"min": {"1"}, "max": {"2"}}); code != 404 {
-		t.Fatalf("%d", code)
-	}
+	has(t, e.get("/admin/conflicts"), "data-confirm=", "data-autosubmit")
+	has(t, e.get("/admin/rules"), `data-confirm="Go back to the built-in default rules?"`)
+	_, js, _ := e.do("GET", "/admin/admin.js", nil)
+	has(t, js, "data-confirm", "data-autosubmit")
 }
 
 func (e *env) send(tenant string, n int) {

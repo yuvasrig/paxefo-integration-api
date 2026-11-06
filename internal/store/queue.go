@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Job is a queued payload waiting for, or being given to, a worker.
@@ -252,39 +251,6 @@ func (s *PGStore) SetTenantIngestMode(ctx context.Context, tenantID, mode string
 	return nil
 }
 
-// WorkerLimits bounds one tenant's worker pool. A tenant with none uses the service-wide WORKERS_MIN and WORKERS_MAX.
-type WorkerLimits struct {
-	Min int `json:"min"`
-	Max int `json:"max"`
-}
-
-// NewWorkerLimits validates a tenant's limits.
-func NewWorkerLimits(min, max int) (WorkerLimits, error) {
-	switch {
-	case min < 0:
-		return WorkerLimits{}, fmt.Errorf("workers min must be 0 or more (got %d)", min)
-	case max < 1 || max > maxTenantWorkers:
-		return WorkerLimits{}, fmt.Errorf("workers max must be between 1 and %d (got %d)", maxTenantWorkers, max)
-	case min > max:
-		return WorkerLimits{}, fmt.Errorf("workers min (%d) cannot be more than max (%d)", min, max)
-	}
-	return WorkerLimits{Min: min, Max: max}, nil
-}
-
-const maxTenantWorkers = 1000
-
-// ParseWorkerLimits reads a tenant's limits from its config; ok is false when it has none (or they are invalid).
-func ParseWorkerLimits(config []byte) (WorkerLimits, bool) {
-	var c struct {
-		Workers *WorkerLimits `json:"workers"`
-	}
-	if json.Unmarshal(config, &c) != nil || c.Workers == nil {
-		return WorkerLimits{}, false
-	}
-	l, err := NewWorkerLimits(c.Workers.Min, c.Workers.Max)
-	return l, err == nil
-}
-
 // ParseIngestMode reads a tenant's own ingest mode from its config ("" when it has none).
 func ParseIngestMode(config []byte) string {
 	var c struct {
@@ -296,24 +262,34 @@ func ParseIngestMode(config []byte) string {
 	return c.IngestMode
 }
 
-// SetTenantWorkers stores the tenant's worker limits, or clears them (nil) so it uses the service-wide defaults.
-func (s *PGStore) SetTenantWorkers(ctx context.Context, tenantID string, l *WorkerLimits) error {
+// SetTenantSetting stores one of the tenant's own runtime settings (tenants.config.settings), leaving the rest of its
+// config alone. The caller validates key and value (package settings).
+func (s *PGStore) SetTenantSetting(ctx context.Context, tenantID, key, value string) error {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
-	const obj = `CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END`
-	var tag pgconn.CommandTag
-	var err error
-	if l == nil {
-		tag, err = s.pool.Exec(ctx, `UPDATE tenants SET config = `+obj+` - 'workers' WHERE id = $1`, tenantID)
-	} else {
-		b, merr := json.Marshal(l)
-		if merr != nil {
-			return fmt.Errorf("store: marshal worker limits: %w", merr)
-		}
-		tag, err = s.pool.Exec(ctx, `UPDATE tenants SET config = jsonb_set(`+obj+`, '{workers}', $2::jsonb) WHERE id = $1`, tenantID, string(b))
-	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tenants SET config = jsonb_set(
+			CASE WHEN jsonb_typeof(config) = 'object' THEN config ELSE '{}'::jsonb END, '{settings}',
+			COALESCE(CASE WHEN jsonb_typeof(config->'settings') = 'object' THEN config->'settings' END, '{}'::jsonb) || jsonb_build_object($2::text, $3::text))
+		WHERE id = $1`, tenantID, key, value)
 	if err != nil {
-		return fmt.Errorf("store: set tenant workers: %w", err)
+		return fmt.Errorf("store: set tenant setting: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ClearTenantSetting removes one of the tenant's own settings, so it uses the global value again.
+func (s *PGStore) ClearTenantSetting(ctx context.Context, tenantID, key string) error {
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tenants SET config = CASE WHEN jsonb_typeof(config) = 'object' THEN config #- ARRAY['settings', $2::text] ELSE config END
+		WHERE id = $1`, tenantID, key)
+	if err != nil {
+		return fmt.Errorf("store: clear tenant setting: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

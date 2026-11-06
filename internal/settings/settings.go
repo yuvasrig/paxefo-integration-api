@@ -2,12 +2,19 @@
 // admin console (or `api settings set`) while the service runs. Environment variables give the defaults; a value
 // stored in the database overrides its default, and every running instance picks the change up within the refresh
 // interval, with no restart. Anything not listed here (ports, the database URL, the log level) needs a restart.
+//
+// Settings are global, and a tenant may override most of them (tenants.config.settings). A tenant's own value wins
+// over the global one, and a tenant that sets nothing uses the global values. The few process-wide settings
+// (GlobalOnly) cannot be overridden per tenant.
 package settings
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"sort"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -177,24 +184,115 @@ func Apply(base Values, overrides []store.SettingRow) (Values, []error) {
 	return v, errs
 }
 
-// Holder is the settings in force; readers call Current() on every use so a change takes effect at once.
-type Holder struct{ v atomic.Pointer[Values] }
+// GlobalOnly settings describe the whole process, not one tenant, so a tenant cannot override them.
+func GlobalOnly(key string) bool { return key == "workers_total_max" }
 
-// NewHolder starts with v.
+// TenantDefs lists the settings a tenant may override.
+func TenantDefs() []Def {
+	var out []Def
+	for _, d := range defs {
+		if !GlobalOnly(d.Key) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// TenantOverrides reads a tenant's own settings from its config (tenants.config.settings). Values are stored as
+// text (numbers are accepted too); nothing is validated here, Resolve does that.
+func TenantOverrides(config []byte) map[string]string {
+	var c struct {
+		Settings map[string]any `json:"settings"`
+	}
+	if json.Unmarshal(config, &c) != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range c.Settings {
+		switch t := v.(type) {
+		case string:
+			out[k] = t
+		case float64:
+			out[k] = strconv.FormatFloat(t, 'f', -1, 64)
+		}
+	}
+	return out
+}
+
+// Resolve applies a tenant's overrides on top of the global values: the tenant's value wins. An override that is
+// unknown, global-only or invalid is skipped and reported, never applied, and a tenant whose workers_min ends up above
+// its workers_max falls back to the global worker limits, so a bad row can not stop that tenant's workers.
+func Resolve(global Values, overrides map[string]string) (Values, []error) {
+	keys := make([]string, 0, len(overrides))
+	for k := range overrides {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	v := global
+	var errs []error
+	for _, k := range keys {
+		if _, ok := Lookup(k); !ok || GlobalOnly(k) {
+			errs = append(errs, fmt.Errorf("tenant setting %q ignored: not a per-tenant setting", k))
+			continue
+		}
+		next, err := v.With(k, overrides[k])
+		if err != nil {
+			errs = append(errs, fmt.Errorf("tenant setting %s=%q ignored: %w", k, overrides[k], err))
+			continue
+		}
+		v = next
+	}
+	if v.WorkersMin > v.WorkersMax {
+		errs = append(errs, fmt.Errorf("tenant workers_min (%d) is above workers_max (%d): using the global worker limits", v.WorkersMin, v.WorkersMax))
+		v.WorkersMin, v.WorkersMax = global.WorkersMin, global.WorkersMax
+	}
+	return v, errs
+}
+
+type state struct {
+	global  Values
+	tenants map[string]Values // only tenants that override something
+}
+
+// Holder is the settings in force: the global values and each tenant's own. Readers call Current() or For() on every
+// use so a change takes effect at once.
+type Holder struct{ v atomic.Pointer[state] }
+
+// NewHolder starts with global values v and no tenant overrides.
 func NewHolder(v Values) *Holder { h := &Holder{}; h.Set(v); return h }
 
-// Set replaces the settings in force.
-func (h *Holder) Set(v Values) { h.v.Store(&v) }
+// Set replaces the global settings and clears every tenant's overrides.
+func (h *Holder) Set(v Values) { h.v.Store(&state{global: v}) }
 
-// Current returns the settings in force.
-func (h *Holder) Current() Values { return *h.v.Load() }
+// SetAll replaces the global settings and the tenants' effective settings together.
+func (h *Holder) SetAll(global Values, tenants map[string]Values) {
+	h.v.Store(&state{global: global, tenants: tenants})
+}
+
+// Current returns the global settings.
+func (h *Holder) Current() Values { return h.v.Load().global }
+
+// For returns the settings in force for one tenant: its own overrides on top of the global values.
+func (h *Holder) For(tenant string) Values {
+	st := h.v.Load()
+	if v, ok := st.tenants[tenant]; ok {
+		return v
+	}
+	return st.global
+}
+
+func (h *Holder) same(global Values, tenants map[string]Values) bool {
+	st := h.v.Load()
+	return st.global == global && reflect.DeepEqual(st.tenants, tenants)
+}
 
 // Source lists the stored overrides (implemented by *store.PGStore).
 type Source interface {
 	ListSettings(ctx context.Context) ([]store.SettingRow, error)
+	ListTenantInfo(ctx context.Context) ([]store.TenantInfo, error)
 }
 
-// Syncer keeps a Holder current with the stored overrides.
+// Syncer keeps a Holder current with the stored overrides, global and per tenant.
 type Syncer struct {
 	Source   Source
 	Holder   *Holder
@@ -209,14 +307,30 @@ func (s *Syncer) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	v, errs := Apply(s.Base, rows)
+	infos, err := s.Source.ListTenantInfo(ctx)
+	if err != nil {
+		return err
+	}
+	global, errs := Apply(s.Base, rows)
+	tenants := map[string]Values{}
+	for _, info := range infos {
+		over := TenantOverrides(info.Config)
+		if len(over) == 0 {
+			continue
+		}
+		v, es := Resolve(global, over)
+		for _, e := range es {
+			errs = append(errs, fmt.Errorf("tenant %s: %w", info.ID, e))
+		}
+		tenants[info.ID] = v
+	}
 	for _, e := range errs {
 		if s.Log != nil {
 			s.Log.Warn("runtime setting ignored", "error", e)
 		}
 	}
-	if v != s.Holder.Current() {
-		s.Holder.Set(v)
+	if !s.Holder.same(global, tenants) {
+		s.Holder.SetAll(global, tenants)
 		if s.Log != nil {
 			s.Log.Info("runtime settings changed")
 		}

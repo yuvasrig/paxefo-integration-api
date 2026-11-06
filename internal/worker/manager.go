@@ -137,17 +137,15 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 }
 
-// Target is the number of workers a tenant's pool should run. It is a pure function of the tenant's settings and its
-// backlog, so the rule is easy to test: async tenants run between their min and max; a sync tenant has no workers
-// unless jobs are left over from before it was switched.
+// Target is the number of workers a tenant's pool should run. s is the tenant's own settings (its overrides on top of
+// the global values), so the minimum, maximum, jobs per worker and lag target can all differ per tenant. It is a pure
+// function of its arguments, so the rule is easy to test: async tenants run between their min and max; a sync tenant
+// has no workers unless jobs are left over from before it was switched.
 func Target(info store.TenantInfo, defaultMode string, depth int, oldest time.Duration, s settings.Values) int {
 	if info.Status != "active" {
 		return 0
 	}
-	min, max := s.WorkersMin, s.WorkersMax
-	if l, ok := store.ParseWorkerLimits(info.Config); ok {
-		min, max = l.Min, l.Max
-	}
+	min := s.WorkersMin
 	mode := store.ParseIngestMode(info.Config)
 	if mode == "" {
 		mode = defaultMode
@@ -155,7 +153,7 @@ func Target(info store.TenantInfo, defaultMode string, depth int, oldest time.Du
 	if mode != "async" {
 		min = 0
 	}
-	return Desired(depth, oldest, SizeConfig{Min: min, Max: max, JobsPerWorker: s.JobsPerWorker, LagSLO: time.Duration(s.LagSLOSeconds) * time.Second})
+	return Desired(depth, oldest, SizeConfig{Min: min, Max: s.WorkersMax, JobsPerWorker: s.JobsPerWorker, LagSLO: time.Duration(s.LagSLOSeconds) * time.Second})
 }
 
 // control resizes every tenant's pool from its own backlog.
@@ -174,19 +172,19 @@ func (m *Manager) control(ctx context.Context) {
 	for _, r := range rows {
 		queue[r.TenantID] = r
 	}
-	s := m.Settings.Current()
+	global := m.Settings.Current()
 
 	seen := map[string]bool{}
 	targets := map[string]int{}
 	for _, info := range infos {
 		seen[info.ID] = true
 		q := queue[info.ID]
-		targets[info.ID] = Target(info, m.DefaultMode, q.Pending, q.OldestPendingAge, s)
+		targets[info.ID] = Target(info, m.DefaultMode, q.Pending, q.OldestPendingAge, m.Settings.For(info.ID))
 	}
-	for id, n := range CapTotal(targets, s.WorkersTotalMax) { // the process-wide hard cap, on the targets
+	for id, n := range CapTotal(targets, global.WorkersTotalMax) { // the process-wide hard cap, on the targets
 		m.scale(ctx, id, n)
 	}
-	m.enforceCap(ctx, s.WorkersTotalMax)
+	m.enforceCap(ctx, global.WorkersTotalMax)
 	m.mu.Lock()
 	for id, p := range m.pools { // a tenant that no longer exists keeps no workers
 		if !seen[id] {

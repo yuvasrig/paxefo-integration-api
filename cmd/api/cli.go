@@ -21,6 +21,7 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rulesync"
 	"github.com/yuvasrig/paxefo-integration-api/internal/seed"
+	"github.com/yuvasrig/paxefo-integration-api/internal/settings"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
 )
 
@@ -45,7 +46,8 @@ const adminUsage = `usage:
                                                        Without --apply it is a dry run: it reports what would change and writes nothing.
   api replay runs [--limit N]                          applied replays so far (audit)
   api tenants show --tenant T                          print the tenant's config
-  api tenants set-workers --tenant T (--min N --max N | --clear)   the tenant's own worker pool limits
+  api tenants set-setting --tenant T --key K (--value V | --clear)   a setting for one tenant only; it overrides the global value
+  api tenants set-workers --tenant T (--min N --max N | --clear)   shortcut for the tenant's workers_min / workers_max
   api tenants set-conflict --tenant T --policy keep_first|keep_last|reject [--http-status 200|409]
                                                        what to do when the same device and time arrive with different content
 `
@@ -194,37 +196,65 @@ func runTenants(ctx context.Context, st *store.PGStore, args []string, out io.Wr
 			cs = store.DefaultConflictSettings()
 		}
 		fmt.Fprintf(out, "config: %s\nconflict policy: %s (HTTP %d)\n", cfg, cs.Policy, cs.HTTPStatus)
+		if own := settings.TenantOverrides(cfg); len(own) > 0 {
+			var keys []string
+			for k := range own {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			fmt.Fprintln(out, "own settings (override the global values):")
+			for _, k := range keys {
+				fmt.Fprintf(out, "  %s = %s\n", k, own[k])
+			}
+		} else {
+			fmt.Fprintln(out, "own settings: none (uses the global values)")
+		}
+		return nil
+	case "set-setting":
+		fs := newFlags("tenants set-setting", out)
+		tenant := fs.String("tenant", "", "tenant id (required)")
+		key := fs.String("key", "", "setting name, for example queue_max_depth or workers_max (required)")
+		value := fs.String("value", "", "the tenant's own value; it overrides the global one for this tenant")
+		clear := fs.Bool("clear", false, "remove the tenant's own value so it uses the global one")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if *tenant == "" || *key == "" || (*value == "" && !*clear) {
+			return errors.New("tenants set-setting: --tenant, --key and either --value or --clear are required")
+		}
+		if err := setTenantSetting(ctx, st, *tenant, *key, *value, *clear); err != nil {
+			return fmt.Errorf("tenants set-setting: %w", err)
+		}
+		if *clear {
+			fmt.Fprintf(out, "tenant %s: %s now uses the global value\n", *tenant, *key)
+		} else {
+			fmt.Fprintf(out, "tenant %s: %s = %s (overrides the global value)\n", *tenant, *key, *value)
+		}
 		return nil
 	case "set-workers":
 		fs := newFlags("tenants set-workers", out)
 		tenant := fs.String("tenant", "", "tenant id (required)")
 		min := fs.Int("min", 0, "fewest workers the tenant's pool keeps running")
 		max := fs.Int("max", 0, "most workers the tenant's pool runs")
-		clear := fs.Bool("clear", false, "remove the tenant's limits so it uses WORKERS_MIN and WORKERS_MAX")
+		clear := fs.Bool("clear", false, "remove the tenant's worker limits so it uses WORKERS_MIN and WORKERS_MAX")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
 		if *tenant == "" || (!*clear && *max == 0) {
 			return errors.New("tenants set-workers: --tenant and either --max (with --min) or --clear are required")
 		}
-		var limits *store.WorkerLimits
-		if !*clear {
-			l, err := store.NewWorkerLimits(*min, *max)
-			if err != nil {
+		if !*clear && *min > *max {
+			return fmt.Errorf("tenants set-workers: --min (%d) cannot be more than --max (%d)", *min, *max)
+		}
+		for _, kv := range [][2]string{{"workers_min", strconv.Itoa(*min)}, {"workers_max", strconv.Itoa(*max)}} {
+			if err := setTenantSetting(ctx, st, *tenant, kv[0], kv[1], *clear); err != nil {
 				return fmt.Errorf("tenants set-workers: %w", err)
 			}
-			limits = &l
 		}
-		if err := st.SetTenantWorkers(ctx, *tenant, limits); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("tenants set-workers: tenant %q does not exist", *tenant)
-			}
-			return err
-		}
-		if limits == nil {
-			fmt.Fprintf(out, "tenant %s: worker limits cleared (service defaults)\n", *tenant)
+		if *clear {
+			fmt.Fprintf(out, "tenant %s: worker limits cleared (global values)\n", *tenant)
 		} else {
-			fmt.Fprintf(out, "tenant %s: workers %d to %d\n", *tenant, limits.Min, limits.Max)
+			fmt.Fprintf(out, "tenant %s: workers %d to %d\n", *tenant, *min, *max)
 		}
 		return nil
 	case "set-conflict":
@@ -563,4 +593,28 @@ func printReplay(out io.Writer, r ingest.ReplayReport) {
 		}
 		fmt.Fprintf(out, "    %s\n", f)
 	}
+}
+
+// setTenantSetting validates and stores (or, with clear, removes) one tenant's own setting.
+func setTenantSetting(ctx context.Context, st *store.PGStore, tenant, key, value string, clear bool) error {
+	if _, ok := settings.Lookup(key); !ok {
+		return fmt.Errorf("unknown setting %q", key)
+	}
+	if settings.GlobalOnly(key) {
+		return fmt.Errorf("%s applies to the whole process and cannot be set per tenant", key)
+	}
+	var err error
+	if clear {
+		err = st.ClearTenantSetting(ctx, tenant, key)
+	} else {
+		// Check the value on its own; at run time a tenant whose min ends up above its max falls back to the global limits.
+		if err := settings.Validate(settings.Values{WorkersMin: 0, WorkersMax: 1000}, key, value); err != nil {
+			return err
+		}
+		err = st.SetTenantSetting(ctx, tenant, key, value)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("tenant %q does not exist", tenant)
+	}
+	return err
 }

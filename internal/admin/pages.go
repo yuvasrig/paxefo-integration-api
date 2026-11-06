@@ -47,6 +47,7 @@ type view struct {
 	History    []store.RulesetRow
 
 	// config page
+	Scope   string // "" = global settings, else a tenant id
 	Rows    []settingRow
 	Restart []ConfigItem
 	Refresh int
@@ -73,8 +74,8 @@ type rulesInfo struct {
 
 type settingRow struct {
 	settings.Def
-	Value, Default string
-	Overridden     bool
+	Value, Default string // Default: the environment default (global) or the global value (a tenant)
+	Overridden     bool   // changed from its default (global) or set by this tenant
 	UpdatedBy      string
 	UpdatedAt      time.Time
 }
@@ -88,11 +89,10 @@ type TenantView struct {
 	Webhook string
 	Keys    []store.APIKey
 
-	Workers    int                // this tenant's workers running now, across all processes
-	InFlight   int                // jobs those workers are processing
-	Limits     store.WorkerLimits // the tenant's own limits, or the service-wide ones
-	OwnLimits  bool               // true when the tenant has limits of its own
-	Prediction worker.Prediction  // whether this tenant's workers are keeping up
+	Workers    int               // this tenant's workers running now, across all processes
+	InFlight   int               // jobs those workers are processing
+	Overrides  []string          // the tenant's own settings, "key=value": everything else is the global value
+	Prediction worker.Prediction // whether this tenant's workers are keeping up
 }
 
 // Snapshot is the live picture the dashboard and the monitoring page share.
@@ -195,7 +195,7 @@ func (c *Console) snapshot(ctx context.Context, r *http.Request, withEvents bool
 	for _, info := range infos {
 		tv := TenantView{Info: info, Mode: c.modeOf(info), Webhook: c.webhookURL(r)}
 		tv.Policy, _ = store.ParseConflictSettings(info.Config)
-		c.fillLimits(&tv)
+		tv.Overrides = overridesOf(info.Config)
 		if tv.Stats, err = c.Store.TenantStats(ctx, info.ID); err != nil {
 			return nil, err
 		}
@@ -276,19 +276,20 @@ func (c *Console) snapshot(ctx context.Context, r *http.Request, withEvents bool
 	return s, nil
 }
 
-// alertInput turns the live figures into what the alert rules look at.
+// alertInput turns the live figures into what the alert rules look at. Each tenant is judged by its own settings
+// (its overrides on top of the global values).
 func (c *Console) alertInput(s *Snapshot) alerts.Input {
-	in := alerts.Input{
-		LagSLO: time.Duration(s.Limits.LagSLOSeconds) * time.Second, QueueLimit: s.Limits.QueueMaxDepth, RejectPercent: s.Limits.AlertRejectPercent,
-	}
+	var in alerts.Input
 	for _, t := range s.Tenants {
 		total := 0
 		for _, n := range t.Stats.Statuses15m {
 			total += n
 		}
+		own := c.Settings.For(t.Info.ID)
 		in.Tenants = append(in.Tenants, alerts.Tenant{
 			ID: t.Info.ID, Async: t.Mode == ingest.ModeAsync, Pending: t.Stats.Pending, OldestWait: t.Stats.OldestPendingAge,
 			Dead: t.Stats.Dead, Workers: t.Workers, Rejected15m: t.Stats.Statuses15m["rejected"], Total15m: total,
+			LagSLO: time.Duration(own.LagSLOSeconds) * time.Second, QueueLimit: own.QueueMaxDepth, RejectPercent: own.AlertRejectPercent,
 		})
 	}
 	return in
@@ -304,14 +305,14 @@ func (c *Console) Alerts(ctx context.Context) ([]alerts.Alert, error) {
 	return s.Alerts, nil
 }
 
-// fillLimits sets the tenant's worker limits: its own if it has any, else the service-wide ones.
-func (c *Console) fillLimits(tv *TenantView) {
-	if l, ok := store.ParseWorkerLimits(tv.Info.Config); ok {
-		tv.Limits, tv.OwnLimits = l, true
-		return
+// overridesOf lists a tenant's own settings as "key=value", sorted.
+func overridesOf(config []byte) []string {
+	var out []string
+	for k, v := range settings.TenantOverrides(config) {
+		out = append(out, k+"="+v)
 	}
-	cur := c.Settings.Current()
-	tv.Limits = store.WorkerLimits{Min: cur.WorkersMin, Max: cur.WorkersMax}
+	sort.Strings(out)
+	return out
 }
 
 // overall summarizes the tenants' predictions: the worst state wins, and the text names the tenant it comes from.
@@ -410,7 +411,7 @@ func (c *Console) tenantViews(ctx context.Context, r *http.Request) ([]TenantVie
 	for _, info := range infos {
 		tv := TenantView{Info: info, Mode: c.modeOf(info), Webhook: c.webhookURL(r)}
 		tv.Policy, _ = store.ParseConflictSettings(info.Config)
-		c.fillLimits(&tv)
+		tv.Overrides = overridesOf(info.Config)
 		if tv.Keys, err = c.Store.ListAPIKeys(ctx, info.ID); err != nil {
 			return nil, err
 		}
@@ -545,37 +546,6 @@ func (c *Console) tenantSettings(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/tenants?done="+urlText("Saved "+id+". Ingest mode changes reach every instance within a few seconds."), http.StatusSeeOther)
 }
 
-// tenantWorkers sets one tenant's worker limits; leaving both fields empty goes back to the service-wide defaults.
-func (c *Console) tenantWorkers(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if ok, err := c.Store.TenantExists(r.Context(), id); err != nil || !ok {
-		http.NotFound(w, r)
-		return
-	}
-	minS, maxS := strings.TrimSpace(r.FormValue("min")), strings.TrimSpace(r.FormValue("max"))
-	var limits *store.WorkerLimits
-	if minS != "" || maxS != "" {
-		min, err1 := strconv.Atoi(minS)
-		max, err2 := strconv.Atoi(maxS)
-		if err1 != nil || err2 != nil {
-			c.renderTenants(w, r, view{Error: "Worker limits are whole numbers: give both a minimum and a maximum, or leave both empty to use the defaults."})
-			return
-		}
-		l, err := store.NewWorkerLimits(min, max)
-		if err != nil {
-			c.renderTenants(w, r, view{Error: err.Error()})
-			return
-		}
-		limits = &l
-	}
-	if err := c.Store.SetTenantWorkers(r.Context(), id, limits); err != nil {
-		c.fail(w, r, "could not set the worker limits", err)
-		return
-	}
-	c.Log.Info("admin: tenant worker limits changed", "tenant_id", id, "limits", limits)
-	http.Redirect(w, r, "/admin/tenants?done="+urlText("Saved worker limits for "+id+". Its pool resizes within a few seconds."), http.StatusSeeOther)
-}
-
 // ---- rules ----
 
 func (c *Console) rulesView(ctx context.Context, yaml string, v view) (view, error) {
@@ -697,29 +667,59 @@ func urlText(s string) string { return url.QueryEscape(s) }
 
 // ---- config ----
 
-func (c *Console) configView(ctx context.Context, v view) (view, error) {
-	overrides, err := c.Store.ListSettings(ctx)
+// configView builds the Config page for a scope: the global settings (scope ""), or one tenant's, where each value
+// is the tenant's own override or, failing that, the global value.
+func (c *Console) configView(ctx context.Context, scope string, v view) (view, error) {
+	infos, err := c.Store.ListTenantInfo(ctx)
 	if err != nil {
 		return v, err
 	}
-	byKey := map[string]store.SettingRow{}
-	for _, o := range overrides {
-		byKey[o.Key] = o
-	}
-	cur := c.Settings.Current()
-	for _, d := range settings.Defs() {
-		row := settingRow{Def: d, Value: cur.Get(d.Key), Default: c.Defaults.Get(d.Key)}
-		if o, ok := byKey[d.Key]; ok {
-			row.Overridden, row.UpdatedBy, row.UpdatedAt = true, o.UpdatedBy, o.UpdatedAt
+	var info *store.TenantInfo
+	for i := range infos {
+		v.Tenants = append(v.Tenants, TenantView{Info: infos[i]})
+		if infos[i].ID == scope {
+			info = &infos[i]
 		}
-		v.Rows = append(v.Rows, row)
+	}
+	if scope != "" && info == nil {
+		return v, errUnknownTenant
+	}
+	v.Scope = scope
+	if info == nil {
+		overrides, err := c.Store.ListSettings(ctx)
+		if err != nil {
+			return v, err
+		}
+		byKey := map[string]store.SettingRow{}
+		for _, o := range overrides {
+			byKey[o.Key] = o
+		}
+		cur := c.Settings.Current()
+		for _, d := range settings.Defs() {
+			row := settingRow{Def: d, Value: cur.Get(d.Key), Default: c.Defaults.Get(d.Key)}
+			if o, ok := byKey[d.Key]; ok {
+				row.Overridden, row.UpdatedBy, row.UpdatedAt = true, o.UpdatedBy, o.UpdatedAt
+			}
+			v.Rows = append(v.Rows, row)
+		}
+	} else {
+		own := settings.TenantOverrides(info.Config)
+		effective, global := c.Settings.For(scope), c.Settings.Current()
+		for _, d := range settings.TenantDefs() {
+			_, mine := own[d.Key]
+			v.Rows = append(v.Rows, settingRow{Def: d, Value: effective.Get(d.Key), Default: global.Get(d.Key), Overridden: mine})
+		}
 	}
 	v.Title, v.Nav, v.Restart, v.Refresh = "Config", "config", c.Restart, c.refresh()
 	return v, nil
 }
 
 func (c *Console) configPage(w http.ResponseWriter, r *http.Request) {
-	v, err := c.configView(r.Context(), view{Flash: r.URL.Query().Get("done")})
+	v, err := c.configView(r.Context(), r.URL.Query().Get("tenant"), view{Flash: r.URL.Query().Get("done")})
+	if errors.Is(err, errUnknownTenant) {
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		c.fail(w, r, "could not read settings", err)
 		return
@@ -727,39 +727,89 @@ func (c *Console) configPage(w http.ResponseWriter, r *http.Request) {
 	c.render(w, r, "config", v)
 }
 
+// configURL is where to return after a change: the same scope.
+func configURL(scope, done string) string {
+	q := "done=" + urlText(done)
+	if scope != "" {
+		q = "tenant=" + url.QueryEscape(scope) + "&" + q
+	}
+	return "/admin/config?" + q
+}
+
+// configSet saves a setting globally, or (with a tenant) as that tenant's own override. A tenant's value is validated
+// against the settings it would have with the change, so it can not, for example, put its minimum above its maximum.
 func (c *Console) configSet(w http.ResponseWriter, r *http.Request) {
-	key, raw := r.FormValue("key"), strings.TrimSpace(r.FormValue("value"))
-	if err := settings.Validate(c.Settings.Current(), key, raw); err != nil {
-		v, verr := c.configView(r.Context(), view{Error: "Not saved: " + err.Error()})
-		if verr != nil {
-			c.fail(w, r, "could not read settings", verr)
+	scope, key, raw := r.FormValue("tenant"), r.FormValue("key"), strings.TrimSpace(r.FormValue("value"))
+	base := c.Settings.Current()
+	if scope != "" {
+		if settings.GlobalOnly(key) {
+			c.configError(w, r, scope, "Not saved: "+key+" applies to the whole process and cannot be set per tenant.")
 			return
 		}
-		c.render(w, r, "config", v)
+		if ok, err := c.Store.TenantExists(r.Context(), scope); err != nil || !ok {
+			http.NotFound(w, r)
+			return
+		}
+		base = c.Settings.For(scope)
+	}
+	if err := settings.Validate(base, key, raw); err != nil {
+		c.configError(w, r, scope, "Not saved: "+err.Error())
 		return
 	}
-	if err := c.Store.SetSetting(r.Context(), key, raw, "admin-console"); err != nil {
+	var err error
+	if scope == "" {
+		err = c.Store.SetSetting(r.Context(), key, raw, "admin-console")
+	} else {
+		err = c.Store.SetTenantSetting(r.Context(), scope, key, raw)
+	}
+	if err != nil {
 		c.fail(w, r, "could not save the setting", err)
 		return
 	}
 	c.reloadSettings(r.Context())
-	c.Log.Info("admin: setting changed", "key", key, "value", raw)
-	http.Redirect(w, r, "/admin/config?done="+urlText(fmt.Sprintf("Saved %s = %s. Every instance applies it within %d seconds.", key, raw, c.refresh())), http.StatusSeeOther)
+	c.Log.Info("admin: setting changed", "tenant_id", scope, "key", key, "value", raw)
+	who := "globally"
+	if scope != "" {
+		who = "for " + scope
+	}
+	http.Redirect(w, r, configURL(scope, fmt.Sprintf("Saved %s = %s %s. Every instance applies it within %d seconds.", key, raw, who, c.refresh())), http.StatusSeeOther)
 }
 
+func (c *Console) configError(w http.ResponseWriter, r *http.Request, scope, msg string) {
+	v, err := c.configView(r.Context(), scope, view{Error: msg})
+	if err != nil {
+		c.fail(w, r, "could not read settings", err)
+		return
+	}
+	c.render(w, r, "config", v)
+}
+
+// configReset removes the global override (back to the environment default) or, for a tenant, its own override (back
+// to the global value).
 func (c *Console) configReset(w http.ResponseWriter, r *http.Request) {
-	key := r.FormValue("key")
+	scope, key := r.FormValue("tenant"), r.FormValue("key")
 	if _, ok := settings.Lookup(key); !ok {
 		http.NotFound(w, r)
 		return
 	}
-	if err := c.Store.ResetSetting(r.Context(), key); err != nil {
+	var err error
+	msg := "Reset " + key + " to its default."
+	if scope == "" {
+		err = c.Store.ResetSetting(r.Context(), key)
+	} else {
+		if err = c.Store.ClearTenantSetting(r.Context(), scope, key); errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		msg = scope + " now uses the global value of " + key + "."
+	}
+	if err != nil {
 		c.fail(w, r, "could not reset the setting", err)
 		return
 	}
 	c.reloadSettings(r.Context())
-	c.Log.Info("admin: setting reset", "key", key)
-	http.Redirect(w, r, "/admin/config?done="+urlText("Reset "+key+" to its default."), http.StatusSeeOther)
+	c.Log.Info("admin: setting reset", "tenant_id", scope, "key", key)
+	http.Redirect(w, r, configURL(scope, msg), http.StatusSeeOther)
 }
 
 func (c *Console) reloadSettings(ctx context.Context) {

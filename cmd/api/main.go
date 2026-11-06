@@ -177,8 +177,8 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	api := &httpapi.API{
 		Ingest:        svc,
 		Authenticator: &auth.Authenticator{Keys: st, Now: time.Now},
-		Limiter: &middleware.RateLimiter{Now: time.Now, Limits: func() (float64, int) {
-			v := live.Current()
+		Limiter: &middleware.RateLimiter{Now: time.Now, Limits: func(tenant string) (float64, int) {
+			v := live.For(tenant) // the tenant's own limits, else the global ones
 			return v.RateLimitPerSec, v.RateLimitBurst
 		}},
 		BodyLimit:  cfg.BodyLimitBytes,

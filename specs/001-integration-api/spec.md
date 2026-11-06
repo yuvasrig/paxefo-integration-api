@@ -197,7 +197,7 @@ A tenant can be switched to async ingest. The webhook then only stores the paylo
 - **F16-R6** THE SYSTEM SHALL never hand one job to two workers (`FOR UPDATE SKIP LOCKED`), and SHALL return jobs held by a worker that died to the queue.
 - **F16-R7** THE SYSTEM SHALL size each tenant's pool in each process from that tenant's backlog and its oldest job's age, between the tenant's own minimum and maximum (`tenants.config.workers`, else `WORKERS_MIN` and `WORKERS_MAX`), growing at once and shrinking slowly; a sync tenant SHALL have no workers; and workers SHALL finish already claimed jobs on shutdown.
 - **F16-R8** THE SYSTEM SHALL report each process's workers through heartbeats, and a replay SHALL leave events that still have a queued job to their worker.
-- **F16-R9** THE SYSTEM SHALL allow the queue limit, worker bounds, lag target, attempts and rate limit to be changed at runtime (table `settings`), taking effect on every instance within `SETTINGS_REFRESH_INTERVAL`.
+- **F16-R9** THE SYSTEM SHALL allow the queue limit, worker bounds, jobs per worker, lag target, attempts, rate limit and reject-rate alert to be changed at runtime, globally (table `settings`) and per tenant (`tenants.config.settings`), taking effect on every instance within `SETTINGS_REFRESH_INTERVAL`; a tenant's own value SHALL override the global one for that tenant only, a tenant without its own value SHALL follow the global one, and an invalid per-tenant value SHALL be ignored rather than applied.
 
 **Acceptance**
 - GIVEN an async tenant, THEN a webhook answers 202 and the event is `accepted` or `flagged` once a worker has run; a sync tenant is unchanged.

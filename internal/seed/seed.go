@@ -18,8 +18,8 @@ type tenantSpec struct {
 // Tenants in the demo. reviewer is sync (instant curl results); the others are async and each has its own worker pool.
 var tenants = []tenantSpec{
 	{"reviewer", "Reviewer", map[string]any{"ingest_mode": "sync"}},
-	{"acme-pharma", "Acme Pharma", map[string]any{"ingest_mode": "async", "workers": map[string]any{"min": 0, "max": 2}}},
-	{"bioco", "BioCo", map[string]any{"ingest_mode": "async", "workers": map[string]any{"min": 1, "max": 3}}},
+	{"acme-pharma", "Acme Pharma", map[string]any{"ingest_mode": "async", "settings": map[string]any{"workers_min": "0", "workers_max": "2"}}},
+	{"bioco", "BioCo", map[string]any{"ingest_mode": "async", "settings": map[string]any{"workers_min": "1", "workers_max": "3"}}},
 }
 
 // Run is idempotent: tenants are upserted, and a tenant that already has a seed key gets no new one.
