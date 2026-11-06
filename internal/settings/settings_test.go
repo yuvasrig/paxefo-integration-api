@@ -237,3 +237,20 @@ func TestSyncerAppliesTenantOverridesAndTheyBeatChangedGlobals(t *testing.T) {
 		t.Fatal("an error leaves everything as it was")
 	}
 }
+
+func TestWebhookRateLimitSettingIsPerTenantAndOffByDefault(t *testing.T) {
+	g := base()
+	if g.RateLimitWebhook != 0 {
+		t.Fatal("the webhook is not rate limited unless asked")
+	}
+	v, errs := Resolve(g, map[string]string{"rate_limit_webhook": "1"})
+	if len(errs) != 0 || v.RateLimitWebhook != 1 || g.RateLimitWebhook != 0 {
+		t.Fatalf("a tenant can switch it on for itself: %+v %v", v, errs)
+	}
+	if _, err := g.With("rate_limit_webhook", "2"); err == nil {
+		t.Fatal("only 0 or 1")
+	}
+	if g.Get("rate_limit_webhook") != "0" || v.Get("rate_limit_webhook") != "1" {
+		t.Fatal("Get reads it back")
+	}
+}

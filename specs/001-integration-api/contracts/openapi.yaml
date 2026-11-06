@@ -61,7 +61,12 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IngestResponse' }
-        '429': { $ref: '#/components/responses/RateLimited' }
+        '429':
+          description: |
+            Rate limited. This is **not** returned by the Tive webhook by default: Tive does not honour 429 or
+            `Retry-After`, so the webhook is exempt from the rate limit unless it is switched on for a tenant
+            (setting `rate_limit_webhook`). It applies to the read and replay endpoints.
+          headers: { Retry-After: { schema: { type: integer } } }
         '503':
           description: |
             The tenant's queue is full (async ingest mode, `code: QUEUE_FULL`). Nothing was stored; retry after the
@@ -87,7 +92,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '413': { $ref: '#/components/responses/TooLarge' }
         '422': { description: Unusable record, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
-        '429': { $ref: '#/components/responses/RateLimited' }
+        '429': { description: 'Same as the primary path: only if the webhook rate limit is switched on for the tenant (default off).', headers: { Retry-After: { schema: { type: integer } } } }
         '500': { description: Failure after raw save, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
 
   /api/v1/events/{id}:

@@ -154,7 +154,7 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 
 	// Runtime settings: environment variables are the defaults; values changed in the admin console override them.
 	defaults := settings.Values{
-		RateLimitPerSec: cfg.RateLimitPerSec, RateLimitBurst: cfg.RateLimitBurst, QueueMaxDepth: cfg.QueueMaxDepth,
+		RateLimitPerSec: cfg.RateLimitPerSec, RateLimitBurst: cfg.RateLimitBurst, RateLimitWebhook: cfg.RateLimitWebhook, QueueMaxDepth: cfg.QueueMaxDepth,
 		WorkersMin: cfg.WorkersMin, WorkersMax: cfg.WorkersMax, WorkersTotalMax: cfg.WorkersTotal, JobsPerWorker: cfg.JobsPerWorker,
 		LagSLOSeconds: cfg.LagSLOSeconds, MaxAttempts: cfg.MaxAttempts, AlertRejectPercent: cfg.AlertRejectPercent,
 	}
@@ -181,12 +181,13 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 			v := live.For(tenant) // the tenant's own limits, else the global ones
 			return v.RateLimitPerSec, v.RateLimitBurst
 		}},
-		BodyLimit:  cfg.BodyLimitBytes,
-		Log:        log,
-		Rules:      holder,
-		Metrics:    metrics.Handler(),
-		Observer:   metrics,
-		WorkerOnly: cfg.Role == "worker",
+		WebhookLimited: func(tenant string) bool { return live.For(tenant).RateLimitWebhook == 1 },
+		BodyLimit:      cfg.BodyLimitBytes,
+		Log:            log,
+		Rules:          holder,
+		Metrics:        metrics.Handler(),
+		Observer:       metrics,
+		WorkerOnly:     cfg.Role == "worker",
 		Ready: func(c context.Context) (httpapi.ReadyInfo, error) {
 			if err := st.Ping(c); err != nil {
 				return httpapi.ReadyInfo{}, err

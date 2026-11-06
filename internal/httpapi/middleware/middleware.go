@@ -150,15 +150,24 @@ func (l *RateLimiter) Allow(tenant string) (ok bool, retryAfter time.Duration) {
 	return false, time.Duration((1 - b.tokens) / rate * float64(time.Second))
 }
 
-// RateLimit applies the limiter per authenticated tenant; it must run after Auth.
+// RateLimit applies the limiter to every request of the authenticated tenant; it must run after Auth.
 func RateLimit(l *RateLimiter) func(http.Handler) http.Handler {
+	return RateLimitWhen(l, func(string) bool { return true })
+}
+
+// RateLimitWhen applies the limiter only to tenants for which applies returns true (nil applies to none). The Tive
+// webhook uses it: Tive does not retry a 429, so refusing its traffic would lose data, and the webhook is only
+// limited when an operator turns that on for a tenant.
+func RateLimitWhen(l *RateLimiter, applies func(tenant string) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p, _ := auth.FromContext(r.Context())
-			if ok, wait := l.Allow(p.TenantID); !ok {
-				w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
-				WriteProblem(w, r, http.StatusTooManyRequests, "RATE_LIMITED", "rate limit exceeded for this tenant")
-				return
+			if applies != nil && applies(p.TenantID) {
+				if ok, wait := l.Allow(p.TenantID); !ok {
+					w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
+					WriteProblem(w, r, http.StatusTooManyRequests, "RATE_LIMITED", "rate limit exceeded for this tenant")
+					return
+				}
 			}
 			next.ServeHTTP(w, r)
 		})

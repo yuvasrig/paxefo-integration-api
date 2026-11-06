@@ -351,7 +351,7 @@ Same pipeline code in both; the toggle only changes where it runs. `INGEST_MODE`
 - Errors: exponential backoff via `next_attempt_at`; after 5 attempts → outcome `dead`, job deleted (replay recovers).
 - Stuck jobs: `processing` with `locked_at` > 5 min → back to `pending`.
 - Wake-up: `LISTEN/NOTIFY` on enqueue, with backoff polling as fallback.
-- Backpressure: pending depth > `QUEUE_MAX_DEPTH` → 503 + `Retry-After` (Tive retries buffer the excess).
+- Backpressure: pending depth > `QUEUE_MAX_DEPTH` → 503 + `Retry-After`. Tive's documentation says it retries a 5xx once and then gives up (data is then recoverable through Tive's API, which is out of scope here), and Tive cannot be throttled, so this 503 is a last resort, not flow control: size the queue limit so it is not reached in normal operation.
 - Depth metric from a gauge or `pg_class` estimate, not `count(*)` (except the small demo).
 - Upgrades: River (Postgres job queue) as drop-in; Kafka/SQS when ingest must survive a DB outage or exceed one DB's write throughput.
 
@@ -1019,6 +1019,8 @@ Do not start the next milestone without my approval. Do not add features outside
 ---
 
 ## 24. Changelog
+
+- **2026-11-06 (Tive cannot be throttled)** — Tive's developer documentation and the operator's confirmation: Tive does not support throttling (it does not honour 429 or `Retry-After`; on a 5xx it retries once, then gives up). So the Tive webhook is **exempt from the rate limit by default**: `rate_limit_webhook` (0 or 1, global or per tenant, env `RATE_LIMIT_WEBHOOK`) turns the limit on for a tenant that wants it. The rate limit (`rate_limit_per_sec` / `rate_limit_burst`) now protects the read and replay endpoints, and webhook traffic no longer uses up their tokens. The webhook is protected instead by raw-first storage, the async queue (202), the queue limit (503 as a last resort), the per-tenant worker pools and the hard worker cap, and the alerts for a queue nearing its limit. Corrected the earlier assumption that Tive retries buffer the excess. Not built: verification of Tive's `x-tive-signature` (HMAC-SHA256 over `timestamp.body`) and a source-IP allow-list (Tive sends from 34.195.102.163).
 
 - **2026-11-06 (friendly rules)** — The console's rules page is form-based. `rules.Rule.Sentence()` (describe.go) renders each rule in plain English; `rules` gained `Disabled` (a rule switched off keeps its action) and pure edit operations (`Edit`, `Add`, `Delete`, `Move`, `SetOverride`, `Clone`, `Validate`, `Marshal`, `NextVersion`). Every console change is made on a clone of the ruleset in force, validated exactly as publishing validates (guardrails on protected fields included), given the next version `YYYY-MM-DD.N` automatically, published and reloaded. Per-tenant behaviour uses the existing `overrides` (action and severity per rule, per tenant). YAML editing, validate/publish, history and reset stay under Advanced. Note: a ruleset republished from the console is written by `yaml.Marshal`, so comments in a hand-written file are not kept in the new version (the earlier versions stay in history).
 

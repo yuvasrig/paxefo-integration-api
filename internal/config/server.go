@@ -8,17 +8,18 @@ import (
 
 // Server is the process configuration, read from the environment only (DESIGN.md section 15.2).
 type Server struct {
-	Port            string
-	DatabaseURL     string
-	LogLevel        string
-	IngestMode      string
-	Role            string
-	BodyLimitBytes  int64
-	RateLimitPerSec float64
-	RateLimitBurst  int
-	DBMaxConns      int32
-	QueryTimeout    time.Duration
-	RulesPath       string
+	Port             string
+	DatabaseURL      string
+	LogLevel         string
+	IngestMode       string
+	Role             string
+	BodyLimitBytes   int64
+	RateLimitPerSec  float64
+	RateLimitBurst   int
+	RateLimitWebhook int // 1 = the rate limit also applies to the Tive webhook (default 0)
+	DBMaxConns       int32
+	QueryTimeout     time.Duration
+	RulesPath        string
 	// RulesRefresh is how often a running instance checks for a ruleset published with `api rules set`.
 	// 0 turns the check off (rules then change only at restart).
 	RulesRefresh time.Duration
@@ -73,6 +74,7 @@ func FromEnv(getenv func(string) string) (Server, error) {
 		BodyLimitBytes:     int64(num("BODY_LIMIT_BYTES", 256<<10)),
 		RateLimitPerSec:    num("RATE_LIMIT_PER_SEC", 100),
 		RateLimitBurst:     int(num("RATE_LIMIT_BURST", 200)),
+		RateLimitWebhook:   int(num("RATE_LIMIT_WEBHOOK", 0)),
 		DBMaxConns:         int32(num("DB_MAX_CONNS", 10)),
 		RulesPath:          getenv("RULES_PATH"),
 		QueueMaxDepth:      int(num("QUEUE_MAX_DEPTH", 5000)),
