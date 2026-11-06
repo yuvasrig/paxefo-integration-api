@@ -54,6 +54,9 @@ func (a *API) Handler() http.Handler {
 	if a.Metrics != nil {
 		mux.Handle("GET /metrics", a.Metrics)
 	}
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { // the bare address shows the API reference, not a 404
+		http.Redirect(w, r, "/docs", http.StatusFound)
+	})
 	mux.HandleFunc("GET /openapi.yaml", a.openapi)
 	mux.HandleFunc("GET /docs", a.docs)
 

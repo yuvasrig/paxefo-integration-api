@@ -48,6 +48,21 @@ func TestReadyz_F13R4(t *testing.T) {
 	}
 }
 
+// Opening the bare address in a browser must land on the API reference, not a 404.
+func TestRootRedirectsToDocs(t *testing.T) {
+	api := &httpapi.API{Log: slog.New(slog.NewJSONHandler(os.Stderr, nil))}
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/docs" {
+		t.Fatalf("%d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/nope", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("other unknown paths stay 404: %d", rec.Code)
+	}
+}
+
 func TestDocsAndContract(t *testing.T) {
 	e := newEnv(t)
 	code, hdr, b := e.do("GET", "/docs", "", nil)
