@@ -5,3 +5,8 @@ linters:
     - errorlint
     - bodyclose
     - misspell
+  exclusions:
+    rules:
+      # Best-effort writes to an output stream and closing readers/connections we are done with: nothing useful to do on error.
+      - linters: [errcheck]
+        text: 'Error return value of .*(Fprint|Fprintf|Fprintln|Close).* is not checked'

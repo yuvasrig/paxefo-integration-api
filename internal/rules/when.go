@@ -101,7 +101,7 @@ func (r *Rule) matches(t target) bool {
 	}
 	if w.Present != nil {
 		s, isStr := t.val.(string)
-		has := t.present && t.val != nil && !(isStr && s == "")
+		has := t.present && t.val != nil && (!isStr || s != "")
 		if has != *w.Present {
 			return false
 		}

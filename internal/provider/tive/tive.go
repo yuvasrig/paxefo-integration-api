@@ -54,7 +54,7 @@ func (*Provider) Name() string { return Name }
 func (*Provider) Parse(raw []byte) (doc.Doc, error) {
 	d, err := doc.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", provider.ErrInvalidJSON, err)
+		return nil, fmt.Errorf("%w: %w", provider.ErrInvalidJSON, err)
 	}
 	return d, nil
 }

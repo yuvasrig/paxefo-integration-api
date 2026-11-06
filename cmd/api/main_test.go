@@ -423,7 +423,8 @@ func TestServeLifecycle(t *testing.T) {
 	case <-time.After(shutdownTimeout + 2*time.Second):
 		t.Fatal("server did not stop")
 	}
-	if _, err := http.Get(base + "/healthz"); err == nil {
+	if resp, err := http.Get(base + "/healthz"); err == nil {
+		_ = resp.Body.Close()
 		t.Fatal("server should be stopped")
 	}
 }

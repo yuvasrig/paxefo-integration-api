@@ -29,8 +29,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1
-      - run: go test ./...
+      - run: go test -race -count=1 ./...
+      - run: go build ./...
+      - name: docker image builds
+        run: docker build -t paxafe-ci .
