@@ -14,7 +14,7 @@ services:
     region: oregon
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
-    autoDeploy: true
+    autoDeployTrigger: checksPass   # deploy main only after CI is green
     envVars:
       - key: DATABASE_URL
         fromDatabase:
