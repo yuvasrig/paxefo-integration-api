@@ -1285,3 +1285,35 @@ func mustList(t *testing.T, st *store.PGStore) []store.TenantInfo {
 	}
 	return info
 }
+
+func TestListConflicts(t *testing.T) {
+	st := newStore(t)
+	if rows, err := st.ListConflicts(ctx, "reviewer", 10); err != nil || len(rows) != 0 {
+		t.Fatalf("%v %v", rows, err)
+	}
+	_, first := process(t, st, "reviewer", sample(t, 0))
+	_, second := process(t, st, "reviewer", sample(t, 1)) // same device and time, different content
+	process(t, st, "acme-pharma", sample(t, 0))
+	rows, err := st.ListConflicts(ctx, "reviewer", 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("%v %v", rows, err)
+	}
+	c := rows[0]
+	if c.EventID != second || c.FirstEventID != first || c.Resolution != "kept_first" || c.DeviceIMEI == "" || c.TS == 0 {
+		t.Fatalf("%+v", c)
+	}
+	if len(c.Changes) == 0 || len(c.Changes) > 8 || c.MoreChanges < 0 {
+		t.Fatalf("a conflict lists the fields that differ: %+v", c)
+	}
+	for _, ch := range c.Changes {
+		if ch.First == ch.Second {
+			t.Fatalf("only fields that really changed are listed: %+v", ch)
+		}
+	}
+	if c.MoreChanges == 0 {
+		t.Fatalf("fields only one version has are counted, not listed: %+v", c)
+	}
+	if other, _ := st.ListConflicts(ctx, "acme-pharma", 10); len(other) != 0 {
+		t.Fatalf("conflicts are per tenant: %+v", other)
+	}
+}

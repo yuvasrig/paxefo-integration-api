@@ -59,6 +59,7 @@ By default a webhook is processed before it is answered (sync). A tenant can ins
 
 - **Dashboard:** per tenant, events arriving per minute, devices active in the last minute, completed per minute, queue and oldest wait, latency, plus the workers running and whether they are keeping up.
 - **Tenants:** add a tenant (this also issues its API key and shows the webhook URL and a ready-to-paste Tive setup, once), issue or revoke keys, set a tenant's ingest mode and conflict policy.
+- **Conflicts:** per tenant, each conflicting pair with the fields that really differ and what the tenant's policy did; change the policy or rules, then **preview** (dry run) and **apply** a replay of the conflicting events from the last N hours (same safe replay as `api replay`).
 - **Rules:** view the rules in force, edit, validate, publish (live on every instance within seconds) and reset; history lets you load an older version back into the editor.
 - **Config:** every setting, split into live ones you can edit here (rate limit, queue limit, worker bounds, lag target, attempts) and restart-required ones shown read-only. Secrets are never shown.
 - **Monitoring:** live rates and latency, recent rejects and events, workers, and a prediction of whether the workers are up to date or how long the current backlog needs to clear (from the last minute's arrival and completion rates), with links to `/metrics`, your logs (`LOGS_URL`) and dashboard (`DASHBOARD_URL`).

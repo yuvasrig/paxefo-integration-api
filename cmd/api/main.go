@@ -201,7 +201,7 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	if cfg.AdminToken != "" && cfg.Role != "worker" {
 		api.Admin = (&admin.Console{
 			Store: st, Token: cfg.AdminToken, Settings: live, Defaults: defaults, Rules: holder,
-			ReloadRules: reloader.Refresh, ReloadSettings: syncer.Refresh, DefaultMode: cfg.IngestMode,
+			ReloadRules: reloader.Refresh, ReloadSettings: syncer.Refresh, Replayer: svc, DefaultMode: cfg.IngestMode,
 			Restart: restartConfig(cfg), PublicBaseURL: cfg.PublicBaseURL, LogsURL: cfg.LogsURL, DashboardURL: cfg.DashboardURL,
 			RefreshSeconds: int(cfg.SettingsRefresh.Seconds()), Log: log,
 		}).Handler()

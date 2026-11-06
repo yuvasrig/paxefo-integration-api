@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 	"github.com/yuvasrig/paxefo-integration-api/internal/settings"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
@@ -43,6 +44,7 @@ type Store interface {
 	TenantStats(ctx context.Context, tenantID string) (store.TenantStats, error)
 	RecentEvents(ctx context.Context, tenantID string, limit int, statuses []string) ([]store.RecentEvent, error)
 	ActiveHeartbeats(ctx context.Context, within time.Duration) ([]store.Heartbeat, error)
+	ListConflicts(ctx context.Context, tenantID string, limit int) ([]store.ConflictRow, error)
 	ListSettings(ctx context.Context) ([]store.SettingRow, error)
 	SetSetting(ctx context.Context, key, value, by string) error
 	ResetSetting(ctx context.Context, key string) error
@@ -50,6 +52,11 @@ type Store interface {
 	ActiveRuleset(ctx context.Context) (store.RulesetRow, bool, error)
 	ClearActiveRuleset(ctx context.Context) (bool, error)
 	RulesetHistory(ctx context.Context, limit int) ([]store.RulesetRow, error)
+}
+
+// Replayer reprocesses stored events (implemented by *ingest.Service): the console uses it for the conflict viewer.
+type Replayer interface {
+	ReplayWindow(ctx context.Context, opts ingest.ReplayOptions) (ingest.ReplayReport, error)
 }
 
 // ConfigItem is a setting that needs a restart to change; the console only shows it.
@@ -64,6 +71,7 @@ type Console struct {
 	Rules          *rules.Holder
 	ReloadRules    func(ctx context.Context) error // apply a published ruleset now instead of at the next poll
 	ReloadSettings func(ctx context.Context) error
+	Replayer       Replayer     // nil hides the replay buttons
 	DefaultMode    string       // INGEST_MODE
 	Restart        []ConfigItem // restart-required configuration, shown read-only
 	PublicBaseURL  string       // used in webhook URLs; the request's own address when empty
@@ -118,6 +126,8 @@ func (c *Console) Handler() http.Handler {
 	page("POST /admin/tenants/{id}/keys/{key}/revoke", c.keyRevoke)
 	page("POST /admin/tenants/{id}/settings", c.tenantSettings)
 	page("POST /admin/tenants/{id}/workers", c.tenantWorkers)
+	page("GET /admin/conflicts", c.conflictsPage)
+	page("POST /admin/conflicts/replay", c.conflictsReplay)
 	page("GET /admin/rules", c.rulesPage)
 	page("POST /admin/rules/validate", c.rulesValidate)
 	page("POST /admin/rules/publish", c.rulesPublish)

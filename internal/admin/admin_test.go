@@ -2,12 +2,14 @@ package admin_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -15,6 +17,9 @@ import (
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/admin"
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
+	"github.com/yuvasrig/paxefo-integration-api/internal/config"
+	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
+	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rulesync"
 	"github.com/yuvasrig/paxefo-integration-api/internal/settings"
@@ -27,6 +32,7 @@ var ctx = context.Background()
 const token = "s3cret-admin-token"
 
 type env struct {
+	ing    *ingest.Service
 	t      *testing.T
 	st     *store.PGStore
 	srv    *httptest.Server
@@ -56,8 +62,12 @@ func newEnv(t *testing.T) *env {
 	live := settings.NewHolder(defaults)
 	syncer := &settings.Syncer{Source: st, Holder: live, Base: defaults}
 
+	ing := &ingest.Service{
+		Store: st, Provider: tive.NewDynamic(holder, config.Default()),
+		Now: func() time.Time { return time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC) }, Log: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+	}
 	c := &admin.Console{
-		Store: st, Token: token, Settings: live, Defaults: defaults, Rules: holder,
+		Replayer: ing, Store: st, Token: token, Settings: live, Defaults: defaults, Rules: holder,
 		ReloadRules: reloader.Refresh, ReloadSettings: syncer.Refresh, DefaultMode: "sync",
 		Restart:       []admin.ConfigItem{{Name: "PORT", Value: "8080", Note: "listen"}},
 		PublicBaseURL: "https://api.example.com", LogsURL: "https://logs.example.com/x", DashboardURL: "https://grafana.example.com",
@@ -70,7 +80,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &env{t: t, st: st, srv: srv, client: client, live: live, rules: holder}
+	return &env{ing: ing, t: t, st: st, srv: srv, client: client, live: live, rules: holder}
 }
 
 func (e *env) do(method, path string, form url.Values, hdr ...string) (int, string, http.Header) {
@@ -499,5 +509,50 @@ func TestTenantWorkerLimitsForm(t *testing.T) {
 	}
 	if code, _, _ := e.post("/admin/tenants/ghost/workers", url.Values{"min": {"1"}, "max": {"2"}}); code != 404 {
 		t.Fatalf("%d", code)
+	}
+}
+
+func (e *env) send(tenant string, n int) {
+	e.t.Helper()
+	b, err := os.ReadFile(fmt.Sprintf("../../testdata/samples/%02d.json", n))
+	must(e.t, err)
+	if _, err := e.ing.Ingest(ctx, ingest.Request{TenantID: tenant, RequestID: "r", Body: b}); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestConflictViewerAndReplay(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "clash-co", "Clash Co", nil))
+	has(t, e.get("/admin/conflicts?tenant=clash-co"), "No conflicts for this tenant")
+
+	e.send("clash-co", 0)
+	e.send("clash-co", 1) // same device and time, different content: a conflict, first version kept
+	page := e.get("/admin/conflicts?tenant=clash-co")
+	has(t, page, "kept_first", "Temperature.Celsius", "&rarr;", "Fix and replay")
+	must(t, e.st.CreateTenant(ctx, "other-co", "Other Co", nil))
+	if strings.Contains(e.get("/admin/conflicts?tenant=other-co"), "kept_first") {
+		t.Fatal("another tenant must not show this tenant's conflicts")
+	}
+	if code, _, _ := e.do("GET", "/admin/conflicts?tenant=ghost", nil); code != 404 {
+		t.Fatalf("unknown tenant: %d", code)
+	}
+
+	// Change the policy, preview (nothing written), then apply.
+	cs, _ := store.NewConflictSettings("keep_last", 0)
+	must(t, e.st.SetConflictSettings(ctx, "clash-co", cs))
+	_, body, _ := e.post("/admin/conflicts/replay", url.Values{"tenant": {"clash-co"}, "hours": {"1000"}, "mode": {"preview"}})
+	has(t, body, "Preview: nothing was written", "conflicting events selected")
+	if rows, _ := e.st.ListConflicts(ctx, "clash-co", 10); len(rows) != 1 || rows[0].Resolution != "kept_first" {
+		t.Fatalf("a preview changes nothing: %+v", rows)
+	}
+	_, body, _ = e.post("/admin/conflicts/replay", url.Values{"tenant": {"clash-co"}, "hours": {"1000"}, "mode": {"apply"}})
+	has(t, body, "Applied")
+	if rows, _ := e.st.ListConflicts(ctx, "clash-co", 10); len(rows) != 1 || rows[0].Resolution != "replaced" {
+		t.Fatalf("keep_last replaced the reading: %+v", rows)
+	}
+	if code, _, _ := e.post("/admin/conflicts/replay", url.Values{"tenant": {"ghost"}, "mode": {"apply"}}); code != 404 {
+		t.Fatalf("unknown tenant: %d", code)
 	}
 }

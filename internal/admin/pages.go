@@ -52,6 +52,14 @@ type view struct {
 
 	// monitoring page
 	Links []link
+
+	// conflicts page
+	TenantID  string
+	Conflicts []store.ConflictRow
+	CanReplay bool
+	Hours     int
+	Replay    *ingest.ReplayReport
+	Applied   bool
 }
 
 type link struct{ Title, URL, Note string }
@@ -726,4 +734,88 @@ func (c *Console) reloadSettings(ctx context.Context) {
 			c.Log.Error("admin: could not apply settings at once; the next refresh will", "error", err)
 		}
 	}
+}
+
+// ---- conflicts ----
+
+const defaultReplayHours = 24
+
+// conflictsView lists a tenant's conflicts, and the tenant picker.
+func (c *Console) conflictsView(ctx context.Context, r *http.Request, tenant string, v view) (view, error) {
+	infos, err := c.Store.ListTenantInfo(ctx)
+	if err != nil {
+		return v, err
+	}
+	for _, i := range infos {
+		v.Tenants = append(v.Tenants, TenantView{Info: i})
+	}
+	if tenant == "" && len(infos) > 0 {
+		tenant = infos[0].ID
+	}
+	v.Title, v.Nav, v.TenantID, v.CanReplay = "Conflicts", "conflicts", tenant, c.Replayer != nil
+	if v.Hours == 0 {
+		v.Hours = defaultReplayHours
+	}
+	if tenant != "" {
+		if ok, err := c.Store.TenantExists(ctx, tenant); err != nil {
+			return v, err
+		} else if !ok {
+			return v, errUnknownTenant
+		}
+		if v.Conflicts, err = c.Store.ListConflicts(ctx, tenant, 25); err != nil {
+			return v, err
+		}
+	}
+	return v, nil
+}
+
+var errUnknownTenant = errors.New("unknown tenant")
+
+func (c *Console) conflictsPage(w http.ResponseWriter, r *http.Request) {
+	v, err := c.conflictsView(r.Context(), r, r.URL.Query().Get("tenant"), view{Flash: r.URL.Query().Get("done")})
+	if errors.Is(err, errUnknownTenant) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		c.fail(w, r, "could not read conflicts", err)
+		return
+	}
+	c.render(w, r, "conflicts", v)
+}
+
+// conflictsReplay reprocesses a tenant's conflicting events from the last N hours with the rules and conflict policy
+// in force now: a preview (dry run, nothing written) unless "apply" is chosen. Typical use: change the tenant's
+// conflict policy on the Tenants page, preview here, then apply.
+func (c *Console) conflictsReplay(w http.ResponseWriter, r *http.Request) {
+	tenant := r.FormValue("tenant")
+	hours, _ := strconv.Atoi(r.FormValue("hours"))
+	if hours < 1 || hours > 24*90 {
+		hours = defaultReplayHours
+	}
+	apply := r.FormValue("mode") == "apply"
+	if c.Replayer == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if ok, err := c.Store.TenantExists(r.Context(), tenant); err != nil || !ok {
+		http.NotFound(w, r)
+		return
+	}
+	now := c.Now()
+	report, err := c.Replayer.ReplayWindow(r.Context(), ingest.ReplayOptions{
+		Filter: store.ReplayFilter{TenantID: tenant, From: now.Add(-time.Duration(hours) * time.Hour), To: now.Add(time.Minute), Statuses: []string{"conflict"}},
+		Apply:  apply, RunID: store.NewID("run_"), By: "admin-console",
+	})
+	if err != nil {
+		c.fail(w, r, "replay failed", err)
+		return
+	}
+	c.Log.Info("admin: conflict replay", "tenant_id", tenant, "apply", apply, "selected", report.Selected, "changed", report.Changed)
+	v, err := c.conflictsView(r.Context(), r, tenant, view{Hours: hours, Replay: &report, Applied: apply})
+	if err != nil {
+		c.fail(w, r, "could not read conflicts", err)
+		return
+	}
+	c.render(w, r, "conflicts", v)
 }

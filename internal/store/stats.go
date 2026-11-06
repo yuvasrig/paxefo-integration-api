@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -182,4 +183,81 @@ func (s *PGStore) ListTenantInfo(ctx context.Context) ([]TenantInfo, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// FieldChange is one payload field whose value differs between the first and the later version of a reading.
+type FieldChange struct {
+	Field         string
+	First, Second string // "–" when that version had no value
+}
+
+// ConflictRow is two payloads that claimed the same reading (same device and time) with different content.
+type ConflictRow struct {
+	DeviceIMEI   string
+	TS           int64
+	Resolution   string // kept_first, replaced or rejected: what the tenant's policy did
+	CreatedAt    time.Time
+	EventID      string // the later payload
+	FirstEventID string // the payload that owned the reading
+	Changes      []FieldChange
+	MoreChanges  int // other fields that differ: present in only one version, or beyond the ones listed
+}
+
+const maxConflictFields = 8
+
+// ListConflicts returns a tenant's latest conflicts, newest first, each with the fields that differ.
+func (s *PGStore) ListConflicts(ctx context.Context, tenantID string, limit int) ([]ConflictRow, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	var out []ConflictRow
+	err := s.WithTenantTx(ctx, tenantID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT device_imei, ts, resolution, created_at, raw_event_id, first_raw_event_id, diff
+			FROM reading_conflicts WHERE tenant_id = $1 ORDER BY created_at DESC, raw_event_id DESC LIMIT $2`, tenantID, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c ConflictRow
+			var diff []byte
+			if err := rows.Scan(&c.DeviceIMEI, &c.TS, &c.Resolution, &c.CreatedAt, &c.EventID, &c.FirstEventID, &diff); err != nil {
+				return err
+			}
+			c.Changes, c.MoreChanges = changesOf(diff)
+			out = append(out, c)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: list conflicts: %w", err)
+	}
+	return out, nil
+}
+
+// changesOf lists the fields where both versions carry a value and the values differ (capped at maxConflictFields).
+// Fields present in only one version are only counted: a later payload that simply omits most fields would otherwise
+// bury the values that really changed.
+func changesOf(diff []byte) (changes []FieldChange, other int) {
+	var m map[string]struct {
+		First  any `json:"first"`
+		Second any `json:"second"`
+	}
+	if json.Unmarshal(diff, &m) != nil {
+		return nil, 0
+	}
+	for field, d := range m {
+		if d.First == nil || d.Second == nil {
+			other++
+			continue
+		}
+		changes = append(changes, FieldChange{Field: field, First: fmt.Sprint(d.First), Second: fmt.Sprint(d.Second)})
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].Field < changes[j].Field })
+	if len(changes) > maxConflictFields {
+		other += len(changes) - maxConflictFields
+		changes = changes[:maxConflictFields]
+	}
+	return changes, other
 }

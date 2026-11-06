@@ -1,0 +1,38 @@
+{{define "conflicts"}}{{template "head" .}}
+<p>A <strong>conflict</strong> is a second payload for a reading we already have (same device, same time) with different content. What happens to it is the tenant's conflict policy (<a href="/admin/tenants">Tenants</a>): keep the first, keep the last, or reject. Both versions are always stored; this page shows what differed.</p>
+<form method="get" action="/admin/conflicts" class="inline">
+  <label>Tenant <select name="tenant" onchange="this.form.submit()">{{range .Tenants}}<option value="{{.Info.ID}}" {{if eq .Info.ID $.TenantID}}selected{{end}}>{{.Info.ID}}</option>{{end}}</select></label>
+  <noscript><button>Show</button></noscript>
+</form>
+
+{{if .CanReplay}}{{if .TenantID}}
+<h2>Fix and replay</h2>
+<p>Changed the tenant's conflict policy or the rules? Reprocess this tenant's conflicting events from the last few hours with what is in force now. <strong>Preview</strong> writes nothing; <strong>Apply</strong> archives each previous outcome and records the run.</p>
+<form method="post" action="/admin/conflicts/replay" class="inline">
+  <input type="hidden" name="tenant" value="{{.TenantID}}">
+  <label>Window (hours back) <input name="hours" size="5" value="{{.Hours}}"></label>
+  <button name="mode" value="preview">Preview (dry run)</button>
+  <button name="mode" value="apply" class="primary" onclick="return confirm('Apply the replay for {{.TenantID}}? Previous outcomes are archived, raw payloads are never changed.')">Apply</button>
+</form>
+{{with .Replay}}
+<section class="card">
+  <h3>{{if $.Applied}}Applied{{else}}Preview: nothing was written{{end}}</h3>
+  <p>{{.Selected}} conflicting events selected · {{.Reprocessed}} reprocessed · {{.Changed}} would change{{if $.Applied}} (changed){{end}} · {{.Unchanged}} unchanged · {{.Errors}} errors{{if .Queued}} · {{.Queued}} still queued{{end}}</p>
+  {{if .Transitions}}<p>Status changes: {{range $k, $v := .Transitions}}<span class="chip">{{$k}}: {{$v}}</span> {{end}}</p>{{end}}
+  {{range .Failures}}<p class="error">{{.}}</p>{{end}}
+</section>
+{{end}}
+{{end}}{{end}}
+
+<h2>Conflicts{{if .TenantID}} for {{.TenantID}}{{end}}</h2>
+<table>
+  <thead><tr><th>When</th><th>Device</th><th>Reading time</th><th>Policy did</th><th>What differs (first version &rarr; later version)</th><th>Events</th></tr></thead>
+  <tbody>
+  {{range .Conflicts}}<tr>
+    <td>{{ago .CreatedAt}}</td><td>{{.DeviceIMEI}}</td><td>{{.TS}}</td><td><span class="tag {{.Resolution}}">{{.Resolution}}</span></td>
+    <td>{{range .Changes}}<div><code>{{.Field}}</code> {{.First}} &rarr; {{.Second}}</div>{{end}}{{if .MoreChanges}}<div class="muted">+ {{.MoreChanges}} other fields differ (present in only one version)</div>{{end}}</td>
+    <td><code>{{.FirstEventID}}</code><br><code>{{.EventID}}</code></td>
+  </tr>{{else}}<tr><td colspan="6">No conflicts for this tenant.</td></tr>{{end}}
+  </tbody>
+</table>
+{{template "foot" .}}{{end}}

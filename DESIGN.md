@@ -1020,6 +1020,8 @@ Do not start the next milestone without my approval. Do not add features outside
 
 ## 24. Changelog
 
+- **2026-11-06 (conflict viewer)** — Console page `/admin/conflicts`: per tenant, the latest `reading_conflicts` with the fields whose values differ between the first and the later payload (`Store.ListConflicts`), the resolution the tenant's policy applied, and a preview/apply replay of the tenant's `conflict` events from the last N hours through the existing `ReplayWindow` (dry run is the default). No new write path.
+
 - **2026-11-06 (hard cap on workers)** — `WORKERS_TOTAL_MAX` / setting `workers_total_max` (0 = no cap) caps the workers one process runs across all tenants' pools. The pure `worker.CapTotal` takes workers from the largest pool first; the manager applies it to targets and also to the workers actually running, so the cap holds even while pools shrink slowly. Editable live in the console.
 
 - **2026-11-06 (dedicated worker pools per tenant)** — Workers are per tenant. A `worker.Manager` runs one `Pool` per tenant in each process; a tenant's workers claim only that tenant's jobs (`ClaimJobs(worker, tenant, batch)`, still `SKIP LOCKED`), and each pool is sized from that tenant's own backlog between the tenant's own min and max (`tenants.config.workers = {min,max}`, else `WORKERS_MIN/MAX`; pure `worker.Target`). Sync tenants run no workers. Heartbeats are per (process, tenant) (migration 00006), `workers_active{tenant}` is per tenant, and the console shows workers, backlog and "up to date?" per tenant and has a limits form on the Tenants page. Supersedes the shared pool and per-round tenant fairness cap of the async entry below.
