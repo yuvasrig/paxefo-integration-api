@@ -68,3 +68,7 @@ Key `(tenant_id, device_imei, ts)`. Hash = SHA-256 of canonical JSON of the raw 
 
 - `EntryTimeUtc` is ignored; `EntryTimeEpoch` is the event time. A disagreement between them (sample 11 is 5 h apart) is not flagged.
 - `AccountId` is stored as metadata. The tenant comes from the API key only, so there is no account-based check, no `TENANT_MISMATCH`, no `UNKNOWN_ACCOUNT`, no `ACCOUNT_ID_MISSING`.
+
+## Custom rules
+
+The rules in the catalog above are the **default** ruleset. The rules framework lets an operator add rules at runtime (`api rules set`), and a rule's `code` is free text, so a custom rule can raise a code that is not in this catalog. Any flag, default or custom, makes the event `flagged`.

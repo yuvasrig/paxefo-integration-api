@@ -11,15 +11,24 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 )
 
-// Transform applies the ruleset, then maps the cleaned payload to PAXAFE sensor and location
-// records per contracts/mapping.md. Invalid optional fields are nulled and flagged; the record
-// is rejected only when it is unusable (constitution #3 and #4).
+// Transform turns one parsed Tive payload into PAXAFE records in two stages.
+//
+//  1. Rules (package rules): the configurable stage. The ruleset in force, the default rules or whatever an
+//     operator published, cleans a copy of the payload: it coerces numeric strings, nulls sentinel temperatures,
+//     checks ranges, resolves the device by name and so on. This stage is data, changeable at runtime, and the
+//     ruleset is read once per payload so a payload never sees two rulesets.
+//  2. Mapping (this file): fixed code that reads the cleaned payload into the PAXAFE shape (contracts/mapping.md).
+//     A few checks live here because a rule cannot express them: the probe fallback, INVALID_TYPE, the accuracy
+//     category, the "no usable data" and "no timestamp" rejections, and a backstop for coordinates and battery.
+//
+// Invalid optional fields are nulled and flagged; a record is rejected only when it is unusable (constitution #3, #4).
 func (p *Provider) Transform(d doc.Doc, sc rules.Scope) (provider.Result, error) {
 	sc.NumericFields = NumericFields
-	ruled := rules.Apply(d, p.rules, sc)
+	rs := p.rules.Current() // one ruleset for this whole payload, even if the rules change meanwhile
+	ruled := rules.Apply(d, rs, sc)
 	rd := newReader(ruled.Doc)
 
-	res := provider.Result{TransformVersion: TransformVersion, RulesVersion: p.rules.Version}
+	res := provider.Result{TransformVersion: TransformVersion, RulesVersion: rs.Version}
 	errs := ruled.Rejections
 	var extra []rules.Flag
 

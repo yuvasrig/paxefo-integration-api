@@ -64,11 +64,19 @@ func (a *API) docs(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(docsPage))
 }
 
-// getRules implements GET /api/v1/rules: the active ruleset and its version.
+// getRules implements GET /api/v1/rules: the ruleset currently in force, where it came from and when it was loaded.
+// Rules are configurable at runtime (`api rules set`), so this can change between two calls.
 func (a *API) getRules(w http.ResponseWriter, r *http.Request) {
 	if a.Rules == nil {
 		middleware.WriteProblem(w, r, http.StatusNotFound, "NOT_FOUND", "no ruleset loaded")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"version": a.Rules.Version, "rules": a.Rules.Rules, "overrides": a.Rules.Overrides})
+	l := a.Rules.Loaded()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":   l.Ruleset.Version,
+		"source":    l.Source, // default, file or database
+		"loaded_at": l.LoadedAt,
+		"rules":     l.Ruleset.Rules,
+		"overrides": l.Ruleset.Overrides,
+	})
 }

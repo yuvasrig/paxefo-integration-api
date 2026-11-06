@@ -29,6 +29,7 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/observability"
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
+	"github.com/yuvasrig/paxefo-integration-api/internal/rulesync"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
 	"github.com/yuvasrig/paxefo-integration-api/internal/testutil/pgtest"
 )
@@ -56,6 +57,8 @@ type env struct {
 	limiter *middleware.RateLimiter
 	now     time.Time
 	logs    *syncBuffer
+	holder  *rules.Holder
+	metrics *observability.Metrics
 }
 
 type syncBuffer struct {
@@ -95,12 +98,19 @@ func newEnv(t *testing.T) *env {
 
 	rs, err := rules.Default()
 	must(t, err)
+	e.holder = rules.NewHolder(rs, rules.SourceDefault, time.Now())
+	// The reloader polls fast so tests can change rules "on the fly" without waiting.
+	rctx, rcancel := context.WithCancel(ctx)
+	t.Cleanup(rcancel)
+	go (&rulesync.Reloader{Source: pg, Holder: e.holder, Base: rs, BaseSource: rules.SourceDefault, Interval: 20 * time.Millisecond,
+		Log: slog.New(slog.NewJSONHandler(io.Discard, nil))}).Run(rctx)
 	e.limiter = &middleware.RateLimiter{Rate: 1000, Burst: 1000, Now: func() time.Time { return time.Now() }}
 	log := slog.New(slog.NewJSONHandler(e.logs, nil))
 	metrics := observability.NewMetrics(pg.Pool().Stat)
+	e.metrics = metrics
 	api := &httpapi.API{
-		Ingest:   &ingest.Service{Store: e.st, Provider: tive.New(rs, config.Default()), Now: func() time.Time { return e.now }, Log: log, Observer: metrics},
-		Rules:    rs,
+		Ingest:   &ingest.Service{Store: e.st, Provider: tive.NewDynamic(e.holder, config.Default()), Now: func() time.Time { return e.now }, Log: log, Observer: metrics},
+		Rules:    e.holder,
 		Metrics:  metrics.Handler(),
 		Observer: metrics,
 		Ready: func(c context.Context) (httpapi.ReadyInfo, error) {
@@ -595,5 +605,148 @@ func TestReplayOfConflictIsRefused(t *testing.T) {
 	}
 	if e.humidity("reviewer") != 99.9 {
 		t.Fatal("the latest reading must not change")
+	}
+}
+
+// ---- rules are configurable on the fly ----
+
+// publish validates a ruleset like the CLI does and publishes it; running instances adopt it without a restart.
+func (e *env) publishRules(version, yaml string) {
+	e.t.Helper()
+	if _, err := rules.Parse([]byte(yaml)); err != nil {
+		e.t.Fatalf("test ruleset is invalid: %v", err)
+	}
+	if _, err := e.st.PublishRuleset(ctx, version, yaml, "test"); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) waitForRules(version, source string) {
+	e.t.Helper()
+	for i := 0; i < 300; i++ {
+		l := e.holder.Loaded()
+		if l.Ruleset.Version == version && l.Source == source {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	l := e.holder.Loaded()
+	e.t.Fatalf("rules did not become %s/%s in time; in force: %s/%s", version, source, l.Ruleset.Version, l.Source)
+}
+
+// defaultPlus is the default ruleset with extra rules appended, as an operator would write it.
+func defaultPlus(version, extra string) string {
+	d := string(rules.DefaultYAML())
+	d = strings.Replace(d, "version: "+mustDefault().Version, "version: "+version, 1)
+	d = strings.Replace(d, "overrides: []", "", 1)
+	return d + extra
+}
+
+func mustDefault() *rules.Ruleset {
+	rs, err := rules.Default()
+	if err != nil {
+		panic(err)
+	}
+	return rs
+}
+
+const humidityHigh = `  - { id: HUMIDITY-HIGH, code: HUMIDITY_HIGH, field: Humidity.Percentage, when: { outside: [0, 50] }, action: flag, severity: warn }
+`
+
+func flagCodesOf(got map[string]any) string {
+	var codes []string
+	for _, f := range got["flags"].([]any) {
+		codes = append(codes, f.(map[string]any)["code"].(string))
+	}
+	return strings.Join(codes, ",")
+}
+
+// A rule added at runtime changes the very next payload, with no restart; a reset puts the defaults back.
+func TestRulesChangeOnTheFly(t *testing.T) {
+	e := newEnv(t)
+	baseVersion := mustDefault().Version
+
+	// Before: sample 3 (humidity 55) carries only SENSOR_FAULT.
+	code, got := e.post("reviewer", sample(t, 3))
+	if code != 200 || flagCodesOf(got) != "SENSOR_FAULT" {
+		t.Fatalf("%d %v", code, got["flags"])
+	}
+	oldEvent := got["event_id"].(string)
+
+	// An operator publishes the defaults plus one new rule. Nothing is restarted.
+	e.publishRules("2026-11-06.live-1", defaultPlus("2026-11-06.live-1", humidityHigh))
+	e.waitForRules("2026-11-06.live-1", rules.SourceDatabase)
+
+	code, got = e.post("reviewer", sample(t, 11)) // humidity 54.8
+	if code != 200 || got["status"] != "flagged" || flagCodesOf(got) != "HUMIDITY_HIGH" {
+		t.Fatalf("the new rule must apply to the next payload: %d %v %v", code, got["status"], got["flags"])
+	}
+	if ev := e.getEvent("reviewer", got["event_id"].(string)); ev["rules_version"] != "2026-11-06.live-1" {
+		t.Fatalf("the event records the rules version that processed it: %v", ev["rules_version"])
+	}
+	if ev := e.getEvent("reviewer", oldEvent); ev["rules_version"] != baseVersion {
+		t.Fatalf("an earlier event keeps its own rules version: %v", ev["rules_version"])
+	}
+
+	// GET /rules shows what is in force and where it came from.
+	_, _, b := e.do("GET", "/api/v1/rules", e.keys["reviewer"], nil)
+	var shown struct {
+		Version, Source string
+		Rules           []map[string]any
+	}
+	must(t, json.Unmarshal(b, &shown))
+	if shown.Version != "2026-11-06.live-1" || shown.Source != "database" || len(shown.Rules) != 16 {
+		t.Fatalf("GET /rules: %s", b)
+	}
+
+	// A reset goes back to the defaults, again without a restart.
+	if cleared, err := e.st.ClearActiveRuleset(ctx); err != nil || !cleared {
+		t.Fatalf("%v %v", cleared, err)
+	}
+	e.waitForRules(baseVersion, rules.SourceDefault)
+	if code, got = e.post("reviewer", sample(t, 5)); code != 200 || flagCodesOf(got) != "TIMESTAMP_SECONDS" {
+		t.Fatalf("back to the defaults: %d %v", code, got["flags"])
+	}
+}
+
+// One ruleset can treat tenants differently through overrides.
+func TestRulesPerTenantOverridesOnTheFly(t *testing.T) {
+	e := newEnv(t)
+	off := `  - { id: HUMIDITY-HIGH, code: HUMIDITY_HIGH, field: Humidity.Percentage, when: { outside: [0, 50] }, action: ignore, severity: warn }
+overrides:
+  - scope: { tenant: reviewer }
+    rules:
+      - { id: HUMIDITY-HIGH, action: flag }
+`
+	e.publishRules("2026-11-06.tenants-1", defaultPlus("2026-11-06.tenants-1", off))
+	e.waitForRules("2026-11-06.tenants-1", rules.SourceDatabase)
+
+	// The rule is on for reviewer and off for everyone else.
+	if _, got := e.post("reviewer", sample(t, 11)); flagCodesOf(got) != "HUMIDITY_HIGH" {
+		t.Fatalf("reviewer: %v", got["flags"])
+	}
+	if _, got := e.post("acme-pharma", sample(t, 11)); flagCodesOf(got) != "" || got["status"] != "accepted" {
+		t.Fatalf("acme-pharma: %v %v", got["status"], got["flags"])
+	}
+}
+
+// A ruleset that cannot be loaded never takes the service down or replaces the working one.
+func TestInvalidPublishedRulesetIsIgnored(t *testing.T) {
+	e := newEnv(t)
+	e.publishRules("2026-11-06.good", defaultPlus("2026-11-06.good", humidityHigh))
+	e.waitForRules("2026-11-06.good", rules.SourceDatabase)
+
+	// Bypass the CLI's validation to simulate a corrupt row.
+	_, err := e.st.Pool().Exec(ctx, `UPDATE rulesets SET active = false WHERE active`)
+	must(t, err)
+	_, err = e.st.Pool().Exec(ctx, `INSERT INTO rulesets (version, yaml, active) VALUES ('2026-11-06.broken', 'version: [', true)`)
+	must(t, err)
+	time.Sleep(150 * time.Millisecond) // several refresh intervals
+
+	if l := e.holder.Loaded(); l.Ruleset.Version != "2026-11-06.good" {
+		t.Fatalf("the working ruleset must stay in force, got %s", l.Ruleset.Version)
+	}
+	if code, got := e.post("reviewer", sample(t, 11)); code != 200 || flagCodesOf(got) != "HUMIDITY_HIGH" {
+		t.Fatalf("ingest keeps working: %d %v", code, got["flags"])
 	}
 }

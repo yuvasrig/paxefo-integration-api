@@ -19,6 +19,9 @@ type Server struct {
 	DBMaxConns      int32
 	QueryTimeout    time.Duration
 	RulesPath       string
+	// RulesRefresh is how often a running instance checks for a ruleset published with `api rules set`.
+	// 0 turns the check off (rules then change only at restart).
+	RulesRefresh time.Duration
 }
 
 // FromEnv reads and validates the configuration; getenv is os.Getenv in production.
@@ -64,6 +67,19 @@ func FromEnv(getenv func(string) string) (Server, error) {
 			return Server{}, fmt.Errorf("config: DB_QUERY_TIMEOUT must be a positive duration (got %q)", v)
 		}
 		s.QueryTimeout = d
+	}
+
+	s.RulesRefresh = 10 * time.Second
+	if v := getenv("RULES_REFRESH_INTERVAL"); v != "" {
+		if v == "0" {
+			s.RulesRefresh = 0
+		} else {
+			d, perr := time.ParseDuration(v)
+			if perr != nil || d <= 0 {
+				return Server{}, fmt.Errorf("config: RULES_REFRESH_INTERVAL must be a positive duration or 0 to disable (got %q)", v)
+			}
+			s.RulesRefresh = d
+		}
 	}
 
 	if s.DatabaseURL == "" {

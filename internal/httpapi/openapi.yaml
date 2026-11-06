@@ -139,7 +139,10 @@ paths:
   /api/v1/rules:
     get:
       operationId: getRules
-      summary: Active ruleset and version
+      summary: The ruleset currently in force
+      description: |
+        Rules are configurable at runtime (`api rules set`), so this can change between two calls. `source` says where the
+        ruleset in force came from: `default` (embedded), `file` (RULES_PATH) or `database` (published at runtime).
       responses:
         '200':
           description: Active rules
@@ -148,7 +151,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  version: { type: string, example: 2026-11-05.1 }
+                  version: { type: string, example: 2026-11-06.1 }
+                  source: { type: string, enum: [default, file, database] }
+                  loaded_at: { type: string, format: date-time }
                   rules: { type: array, items: { type: object } }
         '401': { $ref: '#/components/responses/Unauthorized' }
 

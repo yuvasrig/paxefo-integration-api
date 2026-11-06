@@ -740,3 +740,79 @@ func TestSetConflictSettingsKeepsOtherConfig(t *testing.T) {
 		t.Fatalf("unknown tenant: %v", err)
 	}
 }
+
+// ---- rulesets published at runtime ----
+
+func TestRulesetsPublishAndActivate(t *testing.T) {
+	st := newStore(t)
+	if _, ok, err := st.ActiveRuleset(ctx); err != nil || ok {
+		t.Fatalf("a new database has no active ruleset: %v %v", ok, err)
+	}
+	a, err := st.PublishRuleset(ctx, "v1", "version: v1\nrules: []\n", "alice")
+	if err != nil || !a.Active || a.ID == 0 || a.CreatedBy != "alice" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	got, ok, err := st.ActiveRuleset(ctx)
+	if err != nil || !ok || got.Version != "v1" || got.YAML != "version: v1\nrules: []\n" {
+		t.Fatalf("%+v %v %v", got, ok, err)
+	}
+
+	// Publishing another makes it the only active one.
+	if _, err := st.PublishRuleset(ctx, "v2", "version: v2\nrules: []\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ = st.ActiveRuleset(ctx); got.Version != "v2" {
+		t.Fatalf("active = %s", got.Version)
+	}
+	// A version is published once: a changed ruleset must bump it.
+	if _, err := st.PublishRuleset(ctx, "v1", "version: v1\nrules: []\n", ""); !errors.Is(err, store.ErrVersionExists) {
+		t.Fatalf("republishing a version: %v", err)
+	}
+
+	hist, err := st.RulesetHistory(ctx, 10)
+	if err != nil || len(hist) != 2 || hist[0].Version != "v2" || !hist[0].Active || hist[1].Version != "v1" || hist[1].Active {
+		t.Fatalf("history %+v %v", hist, err)
+	}
+
+	// Reset keeps the history but leaves nothing active.
+	if cleared, err := st.ClearActiveRuleset(ctx); err != nil || !cleared {
+		t.Fatalf("%v %v", cleared, err)
+	}
+	if _, ok, _ := st.ActiveRuleset(ctx); ok {
+		t.Fatal("nothing should be active after a reset")
+	}
+	if cleared, _ := st.ClearActiveRuleset(ctx); cleared {
+		t.Fatal("resetting twice is a no-op")
+	}
+	if hist, _ = st.RulesetHistory(ctx, 10); len(hist) != 2 {
+		t.Fatal("history is kept")
+	}
+}
+
+// The running service may read rulesets but never write them: only operators publish.
+func TestAppRoleCannotWriteRulesets(t *testing.T) {
+	st := newStore(t)
+	if _, err := st.PublishRuleset(ctx, "v1", "version: v1\nrules: []\n", ""); err != nil {
+		t.Fatal(err)
+	}
+	err := st.WithTenantTx(ctx, "reviewer", func(tx pgx.Tx) error {
+		var n int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM rulesets`).Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			t.Errorf("the app role can read rulesets: %d", n)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	err = st.WithTenantTx(ctx, "reviewer", func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE rulesets SET active = false`)
+		return err
+	})
+	if err == nil {
+		t.Fatal("the app role must not be able to change rulesets")
+	}
+}

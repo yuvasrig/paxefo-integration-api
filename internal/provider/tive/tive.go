@@ -18,16 +18,34 @@ const Name = "Tive"
 // Bump it whenever the mapping changes.
 const TransformVersion = "tive-transform/1"
 
-// Provider implements provider.Provider for Tive.
+// RulesSource supplies the ruleset to apply. Transform asks for it on every payload, so a ruleset swapped in at
+// runtime (rules.Holder) takes effect on the next payload without restarting anything.
+type RulesSource interface {
+	Current() *rules.Ruleset
+}
+
+type staticRules struct{ rs *rules.Ruleset }
+
+func (s staticRules) Current() *rules.Ruleset { return s.rs }
+
+// Provider implements provider.Provider for Tive. The Tive-specific checks are configurable rules (see package
+// rules); this package only reads the cleaned payload and maps it to PAXAFE records.
 type Provider struct {
-	rules *rules.Ruleset
+	rules RulesSource
 	cfg   config.Transform
 }
 
 var _ provider.Provider = (*Provider)(nil)
 
-// New returns a Tive provider using the given ruleset and thresholds.
-func New(rs *rules.Ruleset, cfg config.Transform) *Provider { return &Provider{rules: rs, cfg: cfg} }
+// New returns a Tive provider with a fixed ruleset (used by tests and tools).
+func New(rs *rules.Ruleset, cfg config.Transform) *Provider {
+	return &Provider{rules: staticRules{rs}, cfg: cfg}
+}
+
+// NewDynamic returns a Tive provider whose ruleset can change while it runs.
+func NewDynamic(src RulesSource, cfg config.Transform) *Provider {
+	return &Provider{rules: src, cfg: cfg}
+}
 
 // Name implements provider.Provider.
 func (*Provider) Name() string { return Name }

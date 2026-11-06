@@ -11,6 +11,9 @@ Seeded by `api seed`: `reviewer`, `acme-pharma`, `bioco`. The tenant of a reques
 ### api_keys
 `id` · `key_hash` (SHA-256, unique) · `prefix` · `tenant_id` FK · `name` · `created_at` · `expires_at` · `revoked_at`. Plaintext never stored.
 
+### rulesets
+`id` · `version` (unique; recorded on every event, so a changed ruleset needs a new version) · `yaml` · `created_by` · `created_at` · `active`. At most one row is active (partial unique index). Written by `api rules set`; the running service only reads it. No active row means the service uses `RULES_PATH` or the embedded default. Global configuration: not row-level secured.
+
 ### raw_events (append-only)
 `id` text PK (`evt_…`) · `tenant_id` (the API key's tenant) · `provider` · `payload_raw` bytea (the exact bytes received; always stored, even if not JSON) · `payload` jsonb (convenience copy when the bytes are valid JSON and jsonb can hold them) · `payload_hash` (SHA-256 of canonical JSON) · `received_at` · `request_id`.
 Index `(tenant_id, received_at DESC)`. No UPDATE/DELETE grants.

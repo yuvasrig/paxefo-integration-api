@@ -1,6 +1,13 @@
-# Default ruleset — source of truth: DESIGN.md section 5.1.
-# Embedded in the binary; override with RULES_PATH. Rules run in file order
-# (coercion first, so later rules see numbers). Each rule's `code` is the flag it emits.
+# DEFAULT RULESET — the rules that ship with the service (DESIGN.md section 5.1).
+#
+# The rules framework lets you add, change or remove rules; this file is just the set that is on by default.
+# Each rule says: for `field`, `when` a condition holds, take `action` (fix / nullify / drop_section / reject /
+# flag / ignore), and report it as flag `code`. Rules run in file order (coercion first, so later rules see numbers).
+#
+# Rules are configurable on the fly: write your own ruleset starting from this file (`api rules default`),
+# validate it (`api rules validate --file my.yaml`) and publish it (`api rules set --file my.yaml`). Running
+# instances adopt it within the refresh interval, no restart. Bump `version` on every change: it is recorded
+# on every event. `api rules reset` goes back to this default. Per-tenant differences go under `overrides`.
 version: 2026-11-06.1
 rules:
   - { id: NUMERIC-STRING,   code: COERCED_TYPE,        field: "*",                      when: { numeric_string: true },                         action: fix, strategy: coerce_number, severity: info }

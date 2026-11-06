@@ -23,6 +23,7 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/observability"
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
+	"github.com/yuvasrig/paxefo-integration-api/internal/rulesync"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
 )
 
@@ -40,6 +41,17 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
 		fmt.Fprint(stdout, adminUsage)
 		return 0
+	}
+
+	if cmd == "rules" {
+		// `rules default` and `rules validate` need no database, so they work without any configuration.
+		if handled, err := runRulesOffline(rest, stdout); handled {
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			return 0
+		}
 	}
 
 	cfg, err := config.FromEnv(os.Getenv)
@@ -63,7 +75,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
-	case "seed", "keys", "tenants":
+	case "seed", "keys", "tenants", "rules":
 		st, err := openStore(ctx, cfg)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -106,9 +118,13 @@ func loadRules(path string) (*rules.Ruleset, error) {
 // serve runs the HTTP server on ln until ctx is cancelled, then drains in-flight requests and closes the
 // database pool (F13-R1, F13-R5).
 func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Logger) error {
-	rs, err := loadRules(cfg.RulesPath) // F13-R2: an invalid ruleset stops the process before serving
+	base, err := loadRules(cfg.RulesPath) // F13-R2: an invalid base ruleset stops the process before serving
 	if err != nil {
 		return fmt.Errorf("load ruleset: %w", err)
+	}
+	baseSource := rules.SourceDefault
+	if cfg.RulesPath != "" {
+		baseSource = rules.SourceFile
 	}
 	st, err := openStore(ctx, cfg)
 	if err != nil {
@@ -117,9 +133,24 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	defer st.Close()
 
 	metrics := observability.NewMetrics(st.Pool().Stat)
+
+	// The ruleset in force: one published with `api rules set` if there is one, else the base (RULES_PATH or the
+	// embedded default). It is swapped while running, so rules can be changed on the fly (see package rulesync).
+	holder := rules.NewHolder(base, baseSource, time.Now())
+	reloader := &rulesync.Reloader{
+		Source: st, Holder: holder, Base: base, BaseSource: baseSource,
+		Interval: cfg.RulesRefresh, Log: log, Observer: metrics,
+	}
+	metrics.RulesActive(base.Version, baseSource)
+	if err := reloader.Refresh(ctx); err != nil { // F13-R2: an invalid published ruleset stops startup
+		return fmt.Errorf("load ruleset: %w", err)
+	}
+	go reloader.Run(ctx)
+	rs := holder.Current()
+
 	svc := &ingest.Service{
 		Store:    st,
-		Provider: tive.New(rs, config.Default()),
+		Provider: tive.NewDynamic(holder, config.Default()),
 		Now:      time.Now,
 		Observer: metrics,
 		Log:      log,
@@ -130,7 +161,7 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 		Limiter:       &middleware.RateLimiter{Rate: cfg.RateLimitPerSec, Burst: cfg.RateLimitBurst, Now: time.Now},
 		BodyLimit:     cfg.BodyLimitBytes,
 		Log:           log,
-		Rules:         rs,
+		Rules:         holder,
 		Metrics:       metrics.Handler(),
 		Observer:      metrics,
 		Ready: func(c context.Context) (httpapi.ReadyInfo, error) {
@@ -154,7 +185,7 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", ln.Addr().String(), "ingest_mode", cfg.IngestMode, "rules_version", rs.Version)
+		log.Info("listening", "addr", ln.Addr().String(), "ingest_mode", cfg.IngestMode, "rules_version", rs.Version, "rules_source", holder.Loaded().Source, "rules_refresh", cfg.RulesRefresh.String())
 		errCh <- srv.Serve(ln)
 	}()
 

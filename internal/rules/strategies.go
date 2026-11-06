@@ -17,6 +17,8 @@ type strategyInput struct {
 // strategy returns the replacement value, or changed=false to leave the field alone.
 type strategy func(in strategyInput) (newVal any, changed bool)
 
+// strategies is the registry of fixes a rule can name with `strategy:`. It is the extension point for new kinds of
+// fix: write a strategy function, register it here, and any ruleset can use it. The default rules use these.
 var strategies = map[string]strategy{
 	"scale":                  stratScale,
 	"coerce_number":          stratCoerceNumber,

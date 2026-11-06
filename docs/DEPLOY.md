@@ -54,3 +54,14 @@ The Mock Tive Sender lives in its own repo (`paxafe-mock-sender`) with its own `
 2. Set `API_BASE_URL` to the API's public URL and `SENDER_API_KEY` to the `sender` key from step 3 above.
 3. Open the sender URL: it wakes the API, then **Provided samples** should show 13 passed and 0 missing (M6 exit criterion).
 4. From your laptop, for load numbers: `sender run --scenario load --rate 100 --duration 30s --url https://<api>.onrender.com --key <key>`.
+
+## Changing rules without a deploy
+Rules are configurable on the fly. From your laptop, with the database's external URL (as in step 3):
+```bash
+export DATABASE_URL='<external url>?sslmode=require'
+go run ./cmd/api rules default > my.yaml     # edit it and change `version:`
+go run ./cmd/api rules validate --file my.yaml
+go run ./cmd/api rules set --file my.yaml    # the live service adopts it within ~10 s, no restart
+go run ./cmd/api rules reset                 # back to the defaults
+```
+`GET /api/v1/rules` (with a key) shows the version, source and load time actually in force.

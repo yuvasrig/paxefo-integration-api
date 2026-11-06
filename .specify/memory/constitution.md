@@ -32,7 +32,7 @@ Parsing, rules, transform, quality and output rounding do no I/O (no DB, HTTP or
 Timestamps are epoch milliseconds UTC. `received_at` is stored separately from the device's event time. Seconds-precision epochs are detected, scaled and flagged.
 
 ### 8. Config over magic numbers
-Every threshold (accuracy bands, future-timestamp limit, body limit, rate limit) is configuration with a default.
+Every threshold (accuracy bands, future-timestamp limit, body limit, rate limit) is configuration with a default. The payload checks themselves are configurable rules in a ruleset (a framework plus a shipped default set), and an operator can change them at runtime without a restart.
 *In code:* no numeric literals with domain meaning outside config defaults.
 
 ### 9. Every requirement has a test

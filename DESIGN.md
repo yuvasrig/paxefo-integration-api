@@ -103,7 +103,8 @@ internal/worker             elastic pool + controller (pure desired())
 internal/provider           Provider interface + registry
 internal/provider/tive      Tive input structs, validation, transform (pure)
 internal/paxafe             output models + JSON Schema validation
-internal/rules              config-driven rules engine: flag catalog, fix strategies, rulesets (replaces a separate quality pkg)
+internal/rulesync           keeps the ruleset in force up to date: polls for a ruleset published with `api rules set` and swaps it in without a restart
+internal/rules              the rules FRAMEWORK: loads, validates and applies configurable rules; ships a default ruleset; Holder lets the ruleset change at runtime
 internal/domain             excursion, impossible travel (order-independent)
 internal/store              Store interface; PGStore; TSStore (embeds PGStore); factory
 internal/reconcile          completeness checks, auto-heal, reports
@@ -183,7 +184,9 @@ Unknown extra fields are accepted (kept in raw).
 
 ### 5.1 Rules engine (config-driven fix / drop / reject)
 
-All validation and quality behavior above is expressed as **rules in config**; the flag table is the default ruleset. This lets behavior change with a one-line YAML edit (a likely live-change request).
+The rules engine is a **framework for configurable rules**, with a set of rules shipped as the default. The framework (`internal/rules`) knows how to load, validate and apply a ruleset; the rules are data: *for this field, when this condition holds, take this action*. The flag table above is the **default ruleset** that ships in the binary (`default_rules.yaml`). Anyone can add, change or switch off a rule by editing YAML, with no Go change (a likely live-change request).
+
+**Rules are configurable on the fly.** An operator publishes a ruleset with `api rules set --file my.yaml` (validated first; stored in the `rulesets` table). Every running instance polls for it (`RULES_REFRESH_INTERVAL`, default 10 s), validates it again and swaps it in atomically (`rules.Holder`) with no restart. A payload is processed with one ruleset, read once. An invalid ruleset is refused at publish; one that fails to load at runtime never replaces the working one (the instance logs it and keeps serving); `api rules reset` goes back to the default. Each event records the `rules_version` that processed it, so a version must change whenever the rules change (publishing an existing version is refused). A ruleset can carry per-tenant `overrides`, so tenants can differ. What is *not* a rule: auth, size and rate limits, conflict handling, and a few checks that need context a rule cannot express (probe fallback, `INVALID_TYPE`, the accuracy category, the `NO_USABLE_DATA` / `NO_TIMESTAMP` rejections).
 
 **Guardrails**
 1. Every fix is flagged with original value, new value, and rule ID — nothing changes silently.
@@ -226,9 +229,9 @@ overrides: []
 - `field: "*"` means every field in the Tive numeric-field list (temperatures C/F, humidity, accelerometer, lux, battery %, dBm, location coordinates/accuracy/counts, `EntryTimeEpoch`, `AccountId`). Identifier strings (`DeviceId`, `DeviceName`, ids) are never coerced.
 - Pipeline position: parse → `rules.Apply` → required-field check → transform → domain checks → output schema validation.
 - `rules.Apply(payload, ruleset, scope) → (payload', flags, rejection)` is pure; one table-driven test per rule ID; golden tests pin the default ruleset on all 13 samples.
-- Loaded at startup: embedded default, overridden by `RULES_PATH`; schema-validated; fail fast on unknown strategy, unsafe action on protected field, or duplicate ID. No hot reload.
-- `GET /api/v1/rules` shows the active version; `POST /api/v1/events/{id}/replay?rules_version=` compares outcomes before switching.
-- Deferred: per-tenant rules in the DB with an admin UI.
+- Source of the ruleset in force, in order: a ruleset published with `api rules set` (database), else `RULES_PATH`, else the embedded default. Validated when published and when loaded; the process refuses to start on an invalid base or published ruleset (fail fast on unknown strategy, unsafe action on a protected field, duplicate ID). Runtime changes are described above; there is no restart.
+- `GET /api/v1/rules` shows the ruleset in force with its `version`, `source` (`default`, `file` or `database`) and `loaded_at`; `POST /api/v1/events/{id}/replay?rules_version=` (to compare outcomes before switching) is not built.
+- Deferred: an admin UI and an HTTP endpoint to publish rules (publishing is a CLI/operator action on purpose: tenant API keys must not be able to change global rules); per-tenant rulesets as separate rows (per-tenant *overrides* inside one ruleset are built).
 
 ---
 
@@ -288,6 +291,7 @@ Kept outside PAXAFE output: probe temperature, shipment data, `AccountId`, signa
 | `alerts` | Integration-health alerts | `tenant_id` (null = global), `rule`, `scope`, `severity`, `value`, `threshold`, `opened_at`, `resolved_at` | Index `(rule, scope, resolved_at)` |
 | `reconciliation_runs` | Completeness evidence | `tenant_id`, `window_start`, `window_end`, counts per status, `discrepancies` JSONB, `healed` | Index `(window_start)` |
 
+| `rulesets` | Rulesets published at runtime (`api rules set`) | `id`, `version` (unique; recorded on every event), `yaml`, `created_by`, `created_at`, `active` | At most one active row; no row = use `RULES_PATH` or the embedded default. Global config, not RLS; the app role can only read |
 | `tenants` | Tenant registry | `id`, `name`, `status`, `plan`, `retention_days`, `config` JSONB (ingest_mode, workers, capacity, temp bands, alert thresholds, rule overrides, rate limit) | PK `id` |
 
 ### 7.1 Storage toggle — `STORAGE_BACKEND=postgres|timescale`
@@ -786,7 +790,7 @@ Live-change workflow: change the spec → change the test → change the code.
 | 13 | OpenTelemetry + Prometheus + slog | Vendor SDK | Portable; one LGTM container locally |
 | 14 | Elastic pool + KEDA demo | Fixed workers | Shows scaling at both levels |
 | 15 | Render + Render Postgres | Neon, Cloud Run | One platform; DB swappable via env |
-| 16 | Config-driven rules engine with guardrails (quality = default ruleset) | Hard-coded checks; separate quality pkg | Behavior changes via config; fixes always flagged and reversible |
+| 16 | A rules framework with default rules, configurable at runtime (published to the database, swapped in without a restart; per-tenant overrides) | Hard-coded checks; rules only at startup; separate quality pkg | Behavior changes via config without a deploy or restart; fixes always flagged and reversible; every event records its rules version |
 | 17 | Insert-only ingest ledger | Per-minute counter upsert | Avoids a hot row lock that would serialize ingest |
 | 18 | Pooled multi-tenancy with row-level security | Schema/DB per tenant | Cheap to operate; DB-enforced isolation; physical separation documented as an option |
 | 19 | Per-tenant worker allocation (`Allocate()`, shared + dedicated) | One global pool | Fairness, premium tiers, capacity derived from customer forecasts |
@@ -924,7 +928,7 @@ Do not start the next milestone without my approval. Do not add features outside
 - Graceful shutdown on SIGTERM (drain 10 s, close pool).
 - CLI subcommands: `api keys create|list|revoke`, `api tenants create`.
 - `/docs` (Redoc) serving embedded `openapi.yaml`; `/openapi.yaml`.
-- `GET /api/v1/rules` (active ruleset version).
+- `GET /api/v1/rules` (the ruleset in force: version, source, loaded_at).
 
 **Exit criteria**
 - [ ] Each log line has request_id, tenant_id, event_id, status, latency_ms; no keys or payloads logged.
@@ -1012,6 +1016,8 @@ Do not start the next milestone without my approval. Do not add features outside
 ---
 
 ## 24. Changelog
+
+- **2026-11-06 (rules on the fly)** — The rules engine is documented and built as a framework with default rules, **configurable at runtime**: `api rules set|show|history|reset|validate|default`, a `rulesets` table (migration 00003), `rules.Holder` (atomic swap) and `rulesync.Reloader` (polls every `RULES_REFRESH_INTERVAL`, default 10 s; invalid rulesets never replace the working one). `GET /api/v1/rules` reports version, source and load time. Supersedes "no hot reload".
 
 - **2026-11-06 (TEMP_EXCURSION removed)** — The `TEMP_EXCURSION` flag (added earlier the same day for payloads with a shipment) is removed. PAXAFE's schemas have no field for an excursion, so the service stores every temperature as sent and does not judge it; samples 0, 7 and 6 no longer carry an excursion flag. Downstream PAXAFE systems decide what a temperature means.
 

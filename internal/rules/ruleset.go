@@ -1,6 +1,24 @@
-// Package rules loads the config-driven ruleset and applies it to a parsed payload.
-// Behavior such as "null a sentinel temperature" or "drop the location when latitude is
-// out of range" is configuration, not code (DESIGN.md section 5.1). Pure: no I/O.
+// Package rules is a small rules framework: a mechanism for validating and cleaning a payload with
+// configurable rules, plus a set of default rules that ship with the service.
+//
+// The framework (this package) knows how to load a ruleset, validate it, and apply it. The rules
+// themselves are data, not code: each rule says "for this field, when this condition holds, take this action"
+// (fix with a named strategy, nullify, drop a section, reject, or just flag). The default ruleset
+// (default_rules.yaml, embedded in the binary) implements the standard checks: coercing numeric strings, nulling
+// sentinel temperatures, range checks, resolving a device by name, and so on. Anyone can add, change or switch
+// off a rule by editing the YAML, without touching Go.
+//
+// Rules are meant to be configurable on the fly. An operator publishes a new ruleset with `api rules set`; every
+// running instance validates and swaps it in within the refresh interval, with no restart (see Holder and the
+// rulesync package). An invalid ruleset is rejected when it is published, and one that somehow fails to load
+// at runtime never replaces the working one. Each event records the rules version that processed it.
+// A ruleset can also carry per-tenant overrides, so tenants can differ.
+//
+// What is NOT a rule: authentication, size and rate limits, duplicate/conflict handling, and the few
+// checks that need context a rule cannot express (the probe fallback, the "no usable data" rejection). Those are
+// Go code, with their own settings.
+//
+// This package is pure: no I/O, no clock (DESIGN.md section 5.1).
 package rules
 
 import (
@@ -31,29 +49,42 @@ var validActions = map[string]bool{
 	actionReject: true, actionFlag: true, actionIgnore: true,
 }
 
-// Ruleset is a versioned, ordered list of rules plus per-tenant overrides.
+// Ruleset is a versioned, ordered list of rules plus per-tenant overrides. It is the unit an operator
+// publishes at runtime: the version string identifies it in every event's audit trail, so bump it on every change.
 type Ruleset struct {
 	Version   string     `yaml:"version"`
 	Rules     []Rule     `yaml:"rules"`
 	Overrides []Override `yaml:"overrides"`
 }
 
-// Rule is one validation or fix. Rules run in file order.
+// Rule is one configurable validation or fix: for Field, when When holds, take Action. Rules run in file order,
+// so a later rule sees the result of an earlier one (the numeric-string rule runs first for that reason).
+// Adding a check to the service usually means adding a Rule to the ruleset, not writing Go.
 type Rule struct {
-	ID       string         `yaml:"id" json:"id"`
-	Code     string         `yaml:"code" json:"code"`
-	Field    string         `yaml:"field" json:"field"`
-	When     When           `yaml:"when" json:"when"`
-	Action   string         `yaml:"action" json:"action"`
-	Strategy string         `yaml:"strategy" json:"strategy,omitempty"`
-	Params   map[string]any `yaml:"params" json:"params,omitempty"`
-	Section  string         `yaml:"section" json:"section,omitempty"`
-	Severity string         `yaml:"severity" json:"severity,omitempty"`
+	ID       string         `yaml:"id" json:"id"`                       // unique; recorded on every flag the rule raises
+	Code     string         `yaml:"code" json:"code"`                   // the flag (or reject) code reported; any text, so new rules can introduce their own codes
+	Field    string         `yaml:"field" json:"field"`                 // dotted path in the payload, e.g. Temperature.Celsius; "*" = every numeric field
+	When     When           `yaml:"when" json:"when"`                   // the condition
+	Action   string         `yaml:"action" json:"action"`               // fix, nullify, drop_section, reject, flag or ignore (ignore switches a rule off)
+	Strategy string         `yaml:"strategy" json:"strategy,omitempty"` // for fix: a named strategy from the registry (strategies.go)
+	Params   map[string]any `yaml:"params" json:"params,omitempty"`     // arguments for the strategy
+	Section  string         `yaml:"section" json:"section,omitempty"`   // for drop_section: sensor or location
+	Severity string         `yaml:"severity" json:"severity,omitempty"` // info, warn or error (descriptive; any flag makes an event flagged)
 
 	afterNow time.Duration
 }
 
-// When holds the conditions of a rule; every condition that is set must hold.
+// When holds the conditions of a rule; every condition that is set must hold. These are the building blocks a
+// ruleset can combine (to add a new kind of condition, add a field here and handle it in Rule.matches in when.go):
+//
+//	lt / in / outside     numeric comparisons on the field's value
+//	is_null / present     whether the field has a value
+//	numeric_string        the value is a string that holds a number
+//	sibling_present       another field has a value
+//	differs_from          the field's text differs from another field's
+//	after_now             the (epoch ms) value is more than this far in the future
+//	invalid_imei          the value is not a 15-digit device id
+//	resolved_by / unresolved_by   the DeviceName is / is not known for the tenant
 type When struct {
 	Lt             *float64  `yaml:"lt" json:"lt,omitempty"`
 	In             []float64 `yaml:"in" json:"in,omitempty"`
@@ -92,10 +123,16 @@ type RuleOverride struct {
 	Severity string `yaml:"severity" json:"severity,omitempty"`
 }
 
-// Default returns the embedded default ruleset.
+// Default returns the embedded default ruleset: the rules that ship with the service. It is what runs until an
+// operator publishes a different one.
 func Default() (*Ruleset, error) { return Parse(defaultRulesYAML) }
 
-// Parse decodes and validates a ruleset. Any problem is an error so the service fails at startup (F13-R2).
+// DefaultYAML returns the source of the embedded default ruleset, a starting point for writing your own
+// (`api rules default > my.yaml`).
+func DefaultYAML() []byte { return append([]byte(nil), defaultRulesYAML...) }
+
+// Parse decodes and validates a ruleset. Any problem is an error: at startup that stops the service (F13-R2),
+// when publishing it refuses the new ruleset, and at runtime it leaves the current ruleset in place.
 func Parse(data []byte) (*Ruleset, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)

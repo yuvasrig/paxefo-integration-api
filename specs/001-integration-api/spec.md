@@ -132,7 +132,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 ## F13 — Lifecycle
 
 - **F13-R1** WHEN the process starts, THE SYSTEM SHALL load configuration, connect to the database, run migrations, then serve.
-- **F13-R2** IF configuration is invalid (including the ruleset), THEN THE SYSTEM SHALL exit non-zero before serving.
+- **F13-R2** IF configuration is invalid (including the ruleset in force at startup: `RULES_PATH`, the embedded default, or the one published to the database), THEN THE SYSTEM SHALL exit non-zero before serving.
 - **F13-R3** THE SYSTEM SHALL expose `/healthz` (process up) without authentication.
 - **F13-R4** THE SYSTEM SHALL expose `/readyz` reporting database reachability, migration version, storage backend and ingest mode.
 - **F13-R5** WHEN SIGTERM is received, THE SYSTEM SHALL stop accepting connections, finish in-flight requests within 10 s, and close the database pool.
@@ -140,6 +140,25 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F13-R7** THE SYSTEM SHALL expose Prometheus metrics at `/metrics`.
 
 *M0 delivers F13-R3 only (hello-world `/healthz`); the rest arrive in M2–M4.*
+
+## F14 — Rules framework, configurable on the fly
+
+The rules engine is a framework for configurable rules; a default set ships with the service.
+
+- **F14-R1** THE SYSTEM SHALL express its payload checks and fixes as rules (for a field, when a condition holds, take an action) loaded from a ruleset, and SHALL ship a default ruleset that implements the standard checks. Adding, changing or disabling a rule SHALL need only a ruleset change, not a code change.
+- **F14-R2** WHEN an operator publishes a ruleset (`api rules set`), THE SYSTEM SHALL validate it, store it as the active ruleset, and every running instance SHALL adopt it within the refresh interval (`RULES_REFRESH_INTERVAL`, default 10 s) without a restart.
+- **F14-R3** THE SYSTEM SHALL process each payload with exactly one ruleset (read once), so a change in the middle of a request never mixes two.
+- **F14-R4** IF a ruleset is invalid, THEN THE SYSTEM SHALL refuse to publish it; IF a published ruleset fails to load at runtime or the database cannot be read, THEN THE SYSTEM SHALL keep the working ruleset and continue serving, and SHALL log the problem.
+- **F14-R5** WHEN `api rules reset` is run, THE SYSTEM SHALL return running instances to the base ruleset (`RULES_PATH` or the embedded default) within the refresh interval, keeping the history.
+- **F14-R6** THE SYSTEM SHALL record the ruleset version on every event outcome (`rules_version`) and SHALL refuse to publish a version that was published before.
+- **F14-R7** WHEN a ruleset carries per-tenant `overrides`, THE SYSTEM SHALL apply the override only to that tenant's payloads.
+- **F14-R8** THE SYSTEM SHALL report the ruleset in force (`GET /api/v1/rules`: version, source `default`/`file`/`database`, load time) and SHALL NOT let a tenant API key publish rules.
+
+**Acceptance**
+- GIVEN the default rules and a payload with humidity 54.8, THEN it carries no humidity flag; WHEN an operator publishes the defaults plus a `HUMIDITY-HIGH` rule, THEN within the refresh interval the next payload is `flagged` with `HUMIDITY_HIGH` and its outcome records the new `rules_version`, while the earlier event keeps its own.
+- GIVEN a corrupt published ruleset, THEN the service keeps serving with the working ruleset; and a service started with a corrupt published ruleset exits non-zero.
+- GIVEN a ruleset whose override enables a rule for tenant A only, THEN tenant A's payload carries the flag and tenant B's does not.
+- GIVEN `api rules reset`, THEN `GET /api/v1/rules` reports the default ruleset again.
 
 ---
 
@@ -154,4 +173,5 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 | F5 | F5-R1…R4 | #4, #12 | M2 |
 | F6 | F6-R1…R6 | — | M3, M4 |
 | F7 | F7-R1…R6 | — | M3 |
+| F14 | F14-R1…R8 | — | M4 (added later) |
 | F13 | F13-R1…R7 | — | M0 (R3), M2–M4 |

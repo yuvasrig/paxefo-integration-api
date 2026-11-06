@@ -30,8 +30,10 @@ type Result struct {
 	Dropped    map[string]bool // sections ("location", "sensor") the record must not emit
 }
 
-// Apply runs the tenant's effective rules in file order on a copy of d. It never stops at a
-// rejection: flags raised alongside a rejection are still returned (F3-R7).
+// Apply is where the configured rules are enforced. It runs the tenant's effective rules (the ruleset plus any
+// overrides for that tenant) in file order on a copy of d, and reports what each rule did. The ruleset is whatever
+// the caller passes in, so a ruleset swapped in at runtime takes effect on the next call.
+// It never stops at a rejection: flags raised alongside a rejection are still returned (F3-R7).
 func Apply(d doc.Doc, rs *Ruleset, sc Scope) Result {
 	res := Result{Doc: d.Clone(), Dropped: map[string]bool{}}
 	rules := rs.effective(sc.Tenant)

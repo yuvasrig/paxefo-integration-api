@@ -26,7 +26,7 @@ type API struct {
 	BodyLimit     int64
 	Log           *slog.Logger
 
-	Rules    *rules.Ruleset                           // served by GET /api/v1/rules
+	Rules    *rules.Holder                            // the ruleset in force; served by GET /api/v1/rules
 	Ready    func(context.Context) (ReadyInfo, error) // /readyz
 	Metrics  http.Handler                             // /metrics (nil disables it)
 	Observer middleware.RequestObserver               // request metrics (may be nil)
