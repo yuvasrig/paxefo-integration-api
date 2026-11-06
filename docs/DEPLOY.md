@@ -65,3 +65,18 @@ go run ./cmd/api rules set --file my.yaml    # the live service adopts it within
 go run ./cmd/api rules reset                 # back to the defaults
 ```
 `GET /api/v1/rules` (with a key) shows the version, source and load time actually in force.
+
+## Fixing rules or conflicts, then reprocessing what was already received
+After changing rules (`api rules set`) or a tenant's conflict policy (`api tenants set-conflict`), reprocess the stored payloads. From your laptop with the database's external URL:
+```bash
+export DATABASE_URL='<external url>?sslmode=require'
+# 1. See what would change. This is a dry run: nothing is written.
+go run ./cmd/api replay --tenant reviewer --from 2026-11-01 --to 2026-11-08
+# 2. Narrow it if you want: one device (IMEI or name), one account, some statuses, or the reading's own time.
+go run ./cmd/api replay --tenant reviewer --from 2026-11-01 --to 2026-11-08 --device A571992 --status conflict,rejected
+# 3. Apply it.
+go run ./cmd/api replay --tenant reviewer --from 2026-11-01 --to 2026-11-08 --apply
+go run ./cmd/api replay --all-tenants --from 2026-11-01 --to 2026-11-08 --apply   # every tenant, each isolated
+go run ./cmd/api replay runs                                                        # audit of applied replays
+```
+A dry run holds locks on the readings it touches until it finishes, so run it off-peak on a large window. Replay uses the ruleset in force (published with `rules set`, else the file, else the default).

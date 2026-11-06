@@ -64,3 +64,6 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 ## Change on 2026-11-06 (later): rules framework, configurable on the fly
 - [x] Rules documented and commented as a framework with default rules (package doc, `default_rules.yaml`, `Rule`/`When`/strategies, `Transform`, README, DESIGN §5.1).
 - [x] Runtime configuration: migration 00003 (`rulesets`), `rules.Holder`, `rulesync.Reloader`, `tive.NewDynamic`, `RULES_REFRESH_INTERVAL`, `api rules default|validate|set|show|history|reset`, `GET /api/v1/rules` shows source and load time (F14-R1..R8).
+
+## Change on 2026-11-06 (later): reprocess stored payloads after a fix
+- [x] `api replay` (tenant or all tenants, received/event time window, device, account, status, limit; dry run by default, `--apply`), `api replay runs`; migration 00004 (`event_outcome_history`, `replay_runs`); `store.CommitTx` / `InRollbackTx`; `ingest.ReplayWindow` / `ReplayAllTenants`; the keep_last received-time guard (F15-R1..R10).

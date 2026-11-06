@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
 	"github.com/yuvasrig/paxefo-integration-api/internal/config"
+	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
+	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
 	"github.com/yuvasrig/paxefo-integration-api/internal/testutil/pgtest"
@@ -115,6 +118,104 @@ func TestCLIKeysAndTenants(t *testing.T) {
 	}
 	if _, err := run(t, st, "bogus"); err == nil {
 		t.Fatal("unknown command must fail")
+	}
+}
+
+// Fix the rules, then replay what was already received (the CLI path an operator uses).
+func TestCLIReplay(t *testing.T) {
+	st, _ := openTestStore(t)
+	bg := context.Background()
+	for _, id := range []string{"acme-pharma", "reviewer"} {
+		if err := st.CreateTenant(bg, id, id, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rs, _ := rules.Default()
+	var clock = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	svc := &ingest.Service{Store: st, Provider: tive.New(rs, config.Default()), Now: func() time.Time { return clock }}
+	send := func(tenant string, n int, at time.Time) {
+		clock = at
+		raw, err := os.ReadFile(fmt.Sprintf("../../testdata/samples/%02d.json", n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Ingest(bg, ingest.Request{TenantID: tenant, RequestID: "r", Body: raw}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("reviewer", 2, clock)                      // humidity 55.3
+	send("reviewer", 10, clock.Add(time.Hour))      // no humidity
+	send("acme-pharma", 11, clock.Add(2*time.Hour)) // humidity 54.8
+
+	// Validation.
+	base := []string{"replay", "--from", "2026-11-05", "--to", "2026-11-06"}
+	for name, args := range map[string][]string{
+		"no tenant or all":    base,
+		"both tenant and all": append([]string{"--tenant", "reviewer", "--all-tenants"}, base[1:]...),
+		"no from":             {"--tenant", "reviewer", "--to", "2026-11-06"},
+		"no to":               {"--tenant", "reviewer", "--from", "2026-11-05"},
+		"to not after from":   {"--tenant", "reviewer", "--from", "2026-11-06", "--to", "2026-11-05"},
+		"bad time":            {"--tenant", "reviewer", "--from", "yesterday", "--to", "2026-11-06"},
+		"bad time field":      {"--tenant", "reviewer", "--from", "2026-11-05", "--to", "2026-11-06", "--time", "never"},
+		"bad status":          {"--tenant", "reviewer", "--from", "2026-11-05", "--to", "2026-11-06", "--status", "weird"},
+		"unknown tenant":      {"--tenant", "ghost", "--from", "2026-11-05", "--to", "2026-11-06"},
+	} {
+		if _, err := run(t, st, "replay", args...); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+
+	// Publish a fix (a new rule), as an operator would.
+	var out bytes.Buffer
+	out.Write(rules.DefaultYAML())
+	fixed := strings.Replace(strings.Replace(out.String(), "version: 2026-11-06.1", "version: fix-1", 1), "overrides: []", "", 1) +
+		"  - { id: HUMIDITY-HIGH, code: HUMIDITY_HIGH, field: Humidity.Percentage, when: { outside: [0, 50] }, action: flag, severity: warn }\n"
+	f := t.TempDir() + "/fix.yaml"
+	if err := os.WriteFile(f, []byte(fixed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, st, "rules", "set", "--file", f); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry run is the default: it uses the published rules, reports the change, and writes nothing.
+	got, err := run(t, st, "replay", "--tenant", "reviewer", "--from", "2026-11-05", "--to", "2026-11-06")
+	if err != nil || !strings.Contains(got, "DRY RUN") || !strings.Contains(got, "with ruleset fix-1 (database)") ||
+		!strings.Contains(got, "selected 2 · reprocessed 2 · changed 1 · unchanged 1 · errors 0") || !strings.Contains(got, "accepted -> flagged") {
+		t.Fatalf("dry run: %v\n%s", err, got)
+	}
+	if runs, _ := st.ListReplayRuns(bg, 10); len(runs) != 0 {
+		t.Fatal("a dry run is not an applied run")
+	}
+
+	// Filters narrow it: this device has no events in the window.
+	got, _ = run(t, st, "replay", "--tenant", "reviewer", "--from", "2026-11-05", "--to", "2026-11-06", "--device", "NOPE")
+	if !strings.Contains(got, "selected 0") {
+		t.Fatalf("%s", got)
+	}
+
+	// --apply writes it and records the run.
+	got, err = run(t, st, "replay", "--tenant", "reviewer", "--from", "2026-11-05", "--to", "2026-11-06", "--apply", "--by", "alice")
+	if err != nil || !strings.Contains(got, "APPLIED (run run_") || !strings.Contains(got, "changed 1") {
+		t.Fatalf("apply: %v\n%s", err, got)
+	}
+	if got, _ = run(t, st, "replay", "runs"); !strings.Contains(got, "alice") || !strings.Contains(got, "reviewer") {
+		t.Fatalf("runs: %s", got)
+	}
+	// Now nothing is left to change.
+	if got, _ = run(t, st, "replay", "--tenant", "reviewer", "--from", "2026-11-05", "--to", "2026-11-06"); !strings.Contains(got, "changed 0 · unchanged 2") {
+		t.Fatalf("after apply: %s", got)
+	}
+
+	// Every tenant, each isolated.
+	got, err = run(t, st, "replay", "--all-tenants", "--from", "2026-11-05", "--to", "2026-11-06")
+	if err != nil || !strings.Contains(got, "tenant acme-pharma") || !strings.Contains(got, "tenant reviewer") || !strings.Contains(got, "selected 1 · reprocessed 1 · changed 1") {
+		t.Fatalf("all tenants: %v\n%s", err, got)
+	}
+	// Event time, and a status filter.
+	got, _ = run(t, st, "replay", "--tenant", "reviewer", "--from", "2025-02-01", "--to", "2025-03-01", "--time", "event", "--status", "flagged")
+	if !strings.Contains(got, "selected 1 ") {
+		t.Fatalf("event-time window: %s", got)
 	}
 }
 

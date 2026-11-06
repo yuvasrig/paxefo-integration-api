@@ -29,6 +29,21 @@ Running instances poll every `RULES_REFRESH_INTERVAL` (default 10 s; `0` turns p
 - **Safe by design:** a ruleset is validated before it is published and again when an instance loads it. A bad one is refused, and one that somehow fails to load never replaces the working one: the instance logs it and keeps serving. Each event records the `rules_version` that processed it. Tenant API keys cannot publish rules: it is an operator action.
 - **Not rules:** auth, size and rate limits, duplicate/conflict handling, and a few checks that need context a rule cannot express (the probe fallback, the "no usable data" and "no timestamp" rejections, the accuracy category). Those are code, with their own settings.
 
+## Fixing rules or conflicts and reprocessing what was already received
+
+Because the raw payload is stored untouched, a fix can be applied to data that is already in. After changing the rules (`api rules set`) or a tenant's conflict policy (`api tenants set-conflict`), an operator reprocesses a window:
+
+```bash
+api replay --tenant reviewer --from 2026-11-01 --to 2026-11-08                    # dry run (the default): shows what would change
+api replay --tenant reviewer --from 2026-11-01 --to 2026-11-08 --device A571992    # only one device (IMEI or name)
+api replay --all-tenants --from 2026-11-01 --to 2026-11-08 --status conflict --apply
+api replay runs                                                                    # audit of applied replays
+```
+- **Scope:** one tenant or `--all-tenants` (each isolated); a window on received time (default) or the reading's own time (`--time event`); optional `--device`, `--account` (the payload's `AccountId`), `--status` and `--limit`.
+- **Safe:** it is a dry run unless you add `--apply`, and the dry run is exact (it runs inside a rolled-back transaction). Applying archives each event's previous outcome in `event_outcome_history` and records the run in `replay_runs`. Raw payloads are never changed. An event that fails keeps its old result and the run carries on.
+- **Order and conflicts:** events are processed oldest received first, so under `keep_last` the last received wins, and an older event never overwrites a later one. Replaying the same window twice changes nothing the second time.
+- **Operator only:** tenant API keys cannot start a replay. The API's `POST /api/v1/events/{id}/replay` still replays one failed or rejected event.
+
 ## Assumptions
 
 - **Addresses are split structurally, not validated against USPS rules.** From Tive's `FormattedAddress` we take everything before the city as `street`, and parse only the `<City>, <ST> <ZIP>, <Country>` tail (two capital letters and a 5-digit or ZIP+4 code); we do not check state codes, street suffixes (USPS Pub 28), secondary units or whether a ZIP exists, and non-US addresses only parse as `<city>, <country>`. `full_address` is always kept verbatim.

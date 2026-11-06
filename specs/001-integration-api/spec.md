@@ -77,7 +77,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F4-R3** WHEN a payload has the same key but a different hash, THE SYSTEM SHALL apply the tenant's conflict policy (F4-R7), record the version in `reading_conflicts` with its resolution, add flag `DUPLICATE_CONFLICT`, and respond with `status: conflict`. The default policy is `keep_first`: the first readings are kept.
 - **F4-R4** WHEN the same key arrives concurrently, THE SYSTEM SHALL end with exactly one reading row.
 - **F4-R5** THE SYSTEM SHALL compute the payload hash over canonical JSON (sorted keys, no insignificant whitespace), so key order and whitespace never create a conflict.
-- **F4-R7** THE SYSTEM SHALL read the conflict policy from the tenant's config (`conflict.policy`), one of: `keep_first` (default: keep the stored readings), `keep_last` (replace the stored readings with the new version in one transaction; the replaced event stays archived and is named in `reading_conflicts.first_raw_event_id`), `reject` (write nothing to the readings). `DUPLICATE_CONFLICT` carries the action `kept`, `replaced` or `rejected` accordingly.
+- **F4-R7** ("last" means last received) THE SYSTEM SHALL read the conflict policy from the tenant's config (`conflict.policy`), one of: `keep_first` (default: keep the stored readings), `keep_last` (replace the stored readings with the new version in one transaction; the replaced event stays archived and is named in `reading_conflicts.first_raw_event_id`), `reject` (write nothing to the readings). `DUPLICATE_CONFLICT` carries the action `kept`, `replaced` or `rejected` accordingly.
 - **F4-R8** THE SYSTEM SHALL read the HTTP status of a conflict response from the tenant's config (`conflict.http_status`, 200 or 409), defaulting to 409 for `reject` and 200 otherwise. The status code is independent of the policy. A duplicate (same hash) is always 200 `duplicate`, whatever the policy.
 - **F4-R9** IF a tenant's stored conflict config is missing or invalid, THEN THE SYSTEM SHALL use `keep_first` / 200 and SHALL NOT stop ingesting.
 - **F4-R6** WHEN the status of one event satisfies several of rejected / conflict / duplicate / flagged / accepted, THE SYSTEM SHALL report the first in that precedence.
@@ -121,6 +121,7 @@ Out of scope for this spec: async ingest, queue, workers, alerts, reconciler, Ti
 - **F7-R1** IF an error occurs after the raw payload is committed, THEN THE SYSTEM SHALL record outcome `failed` AND respond 500 with `status: failed` AND keep the raw payload.
 - **F7-R2** WHEN `POST /api/v1/events/{id}/replay` is called for a `failed` or `rejected` event, THE SYSTEM SHALL re-run the stored raw payload through the pipeline and return the new outcome.
 - **F7-R3** THE SYSTEM SHALL make replay idempotent: no duplicate readings, raw payload unchanged.
+- **F7-R0** (Note) F7 covers replaying one event over the API. Reprocessing many events after a fix is the operator command in F15.
 - **F7-R4** WHEN replay is called for an event that is not `failed`, `rejected` or unfinished (that is `accepted`, `flagged`, `duplicate` or `conflict`), THE SYSTEM SHALL respond 409, because replaying it could put an old version over a newer reading under `keep_last`.
 - **F7-R5** THE SYSTEM SHALL store `transform_version` and `rules_version` with every outcome.
 - **F7-R6** WHEN `GET /api/v1/events/{id}` is called by the owning tenant, THE SYSTEM SHALL return the raw payload, outcome, flags and PAXAFE output.
@@ -160,6 +161,28 @@ The rules engine is a framework for configurable rules; a default set ships with
 - GIVEN a ruleset whose override enables a rule for tenant A only, THEN tenant A's payload carries the flag and tenant B's does not.
 - GIVEN `api rules reset`, THEN `GET /api/v1/rules` reports the default ruleset again.
 
+## F15 — Reprocess stored payloads after a fix (`api replay`)
+
+An operator can fix the rules or a tenant's conflict policy and then apply the fix to payloads that were already received. This is separate from F7 (replay of one failed or rejected event over the API).
+
+- **F15-R1** WHEN an operator runs `api replay` for one tenant (or every tenant) and a time window, THE SYSTEM SHALL reprocess each matching stored event: re-run its stored raw payload through the ruleset and conflict policy in force now, and write the result.
+- **F15-R2** THE SYSTEM SHALL measure the window on the time the payload was received (default) or on the reading's own time (`EntryTimeEpoch`, with seconds understood); `--from` is inclusive and `--to` is exclusive. An event with no readable epoch is not selected by event time.
+- **F15-R3** THE SYSTEM SHALL optionally narrow the selection by device (the payload's IMEI or DeviceName), by account (the payload's `AccountId`), and by the event's current status (including `pending`), and SHALL allow a limit on the number of events.
+- **F15-R4** THE SYSTEM SHALL run as a dry run unless `--apply` is given: it SHALL report what would change (counts, status transitions such as `conflict -> accepted`, examples) and SHALL write nothing, and the report SHALL be exact, with each event seeing the effect of the events before it.
+- **F15-R5** WHEN applying, THE SYSTEM SHALL archive each reprocessed event's previous outcome (`event_outcome_history`), record the run per tenant (`replay_runs`: who, parameters, counts), and SHALL NEVER modify or delete a raw payload.
+- **F15-R6** THE SYSTEM SHALL process events oldest received first, and under a `keep_last` conflict policy SHALL NOT let an event overwrite a reading produced by an event that was received later.
+- **F15-R7** IF one event cannot be reprocessed, THEN THE SYSTEM SHALL report the error, leave that event's previous outcome and readings unchanged, and continue with the others.
+- **F15-R8** THE SYSTEM SHALL keep tenants isolated: a replay of one tenant SHALL read and write only that tenant's rows.
+- **F15-R9** THE SYSTEM SHALL be idempotent: applying the same replay again with nothing changed in between SHALL change nothing.
+- **F15-R10** THE SYSTEM SHALL offer replay only as an operator command, not to tenant API keys.
+
+**Acceptance**
+- GIVEN four stored events and a published rule that flags humidity above 50, THEN a dry run reports 3 changed (2 `accepted -> flagged`) and leaves every outcome, history and audit table as it was; applying it updates those outcomes to the new `rules_version`, archives the old ones, records the run, and a second apply changes nothing.
+- GIVEN two conflicting versions stored under `keep_first` and the tenant switched to `keep_last`, THEN replaying the window stores the later version; replaying only the earlier event afterwards does not bring the old version back.
+- GIVEN a payload rejected because its device was unknown, and the device registered since, THEN replaying with `--status rejected` turns it into `flagged` with `DEVICE_RESOLVED_BY_NAME`.
+- GIVEN events for two devices and two accounts, THEN `--device`, `--account`, `--status` and the two kinds of time window each select exactly the expected events (the window's end is exclusive).
+- GIVEN an event whose reprocessing fails, THEN it keeps its previous outcome, the failure is listed, and the other events are reprocessed.
+
 ---
 
 ## Traceability
@@ -173,5 +196,6 @@ The rules engine is a framework for configurable rules; a default set ships with
 | F5 | F5-R1…R4 | #4, #12 | M2 |
 | F6 | F6-R1…R6 | — | M3, M4 |
 | F7 | F7-R1…R6 | — | M3 |
+| F15 | F15-R1…R10 | — | operator CLI (added later) |
 | F14 | F14-R1…R8 | — | M4 (added later) |
 | F13 | F13-R1…R7 | — | M0 (R3), M2–M4 |

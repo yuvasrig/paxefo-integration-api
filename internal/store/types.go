@@ -32,6 +32,9 @@ type CommitInput struct {
 	RawEventID string
 	TenantID   string
 	Result     provider.Result
+	// ReplayRunID is set when the event is being reprocessed (`api replay --apply`): its previous outcome is archived,
+	// and its own readings and conflict row are removed, before the new result is written.
+	ReplayRunID string
 }
 
 // CommitResult is what was decided inside the transaction.

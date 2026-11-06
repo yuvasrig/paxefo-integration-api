@@ -123,7 +123,11 @@ func (s *PGStore) UsesAppRole() bool { return s.useAppRole }
 // application role and sets app.tenant_id for the transaction only. Everything fn does is committed or rolled
 // back together.
 func (s *PGStore) WithTenantTx(ctx context.Context, tenantID string, fn func(pgx.Tx) error) error {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	return s.withTenantTxTimeout(ctx, tenantID, s.timeout, fn)
+}
+
+func (s *PGStore) withTenantTxTimeout(ctx context.Context, tenantID string, timeout time.Duration, fn func(pgx.Tx) error) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -153,4 +157,23 @@ func setTenant(ctx context.Context, tx pgx.Tx, tenantID string) error {
 		return fmt.Errorf("store: set tenant: %w", err)
 	}
 	return nil
+}
+
+var errRollback = errors.New("rollback requested")
+
+// InRollbackTx runs fn in a tenant transaction that is always rolled back, handing it a commit function that
+// writes inside that transaction. It is how a replay dry run predicts the effect of many events in order, with
+// each one seeing the writes of the ones before it, without changing anything. timeout bounds the whole run.
+func (s *PGStore) InRollbackTx(ctx context.Context, tenantID string, timeout time.Duration,
+	fn func(commit func(context.Context, CommitInput) (CommitResult, error)) error) error {
+	err := s.withTenantTxTimeout(ctx, tenantID, timeout, func(tx pgx.Tx) error {
+		if err := fn(func(c context.Context, in CommitInput) (CommitResult, error) { return CommitTx(c, tx, in) }); err != nil {
+			return err
+		}
+		return errRollback
+	})
+	if errors.Is(err, errRollback) {
+		return nil
+	}
+	return err
 }

@@ -11,6 +11,12 @@ Seeded by `api seed`: `reviewer`, `acme-pharma`, `bioco`. The tenant of a reques
 ### api_keys
 `id` · `key_hash` (SHA-256, unique) · `prefix` · `tenant_id` FK · `name` · `created_at` · `expires_at` · `revoked_at`. Plaintext never stored.
 
+### event_outcome_history
+Outcomes replaced by a reprocess (`api replay --apply`): `raw_event_id` · `tenant_id` · `replay_run_id` · `status` · `reasons` · `flags` · `expected_outputs` · `transform_version` · `rules_version` · `processed_at` · `attempts` · `archived_at`. Row-level secured; the application role can only read and insert.
+
+### replay_runs
+One row per tenant per applied replay: `run_id` · `tenant_id` · `requested_by` · `params` (window, filters) · `started_at` · `finished_at` · `selected` · `reprocessed` · `changed` · `errors` · `transitions` (e.g. `conflict -> accepted`: 3). Operator data written through the owner connection.
+
 ### rulesets
 `id` · `version` (unique; recorded on every event, so a changed ruleset needs a new version) · `yaml` · `created_by` · `created_at` · `active`. At most one row is active (partial unique index). Written by `api rules set`; the running service only reads it. No active row means the service uses `RULES_PATH` or the embedded default. Global configuration: not row-level secured.
 

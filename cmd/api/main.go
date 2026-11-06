@@ -75,7 +75,7 @@ func realMain(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
-	case "seed", "keys", "tenants", "rules":
+	case "seed", "keys", "tenants", "rules", "replay":
 		st, err := openStore(ctx, cfg)
 		if err != nil {
 			fmt.Fprintln(stderr, err)

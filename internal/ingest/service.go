@@ -27,6 +27,12 @@ type Store interface {
 	RecordFailure(ctx context.Context, tenantID, rawEventID, message string) error
 	GetEvent(ctx context.Context, tenantID, id string) (*store.EventRecord, error)
 	ListReadings(ctx context.Context, tenantID string, q store.ReadingsQuery) (store.ReadingsPage, error)
+
+	// Replay (operator action, see replay.go).
+	ListTenants(ctx context.Context) ([]string, error)
+	ListReplayEvents(ctx context.Context, f store.ReplayFilter, after store.ReplayCursor, limit int) ([]store.ReplayEvent, store.ReplayCursor, bool, error)
+	InRollbackTx(ctx context.Context, tenantID string, timeout time.Duration, fn func(commit func(context.Context, store.CommitInput) (store.CommitResult, error)) error) error
+	RecordReplayRun(ctx context.Context, r store.ReplayRun) error
 }
 
 // Observer receives timings and outcomes for metrics. It may be nil.
@@ -61,6 +67,7 @@ type Response struct {
 	Flags      []rules.Flag           `json:"flags"`
 	Errors     []rules.Problem        `json:"errors"`
 	HTTPStatus int                    `json:"-"`
+	cause      error                  // why processing failed (status failed); used by replay reports, never serialized
 }
 
 // Ingest handles one webhook payload. An error means the raw payload could not be saved: nothing was
@@ -108,6 +115,12 @@ func (s *Service) Readings(ctx context.Context, tenantID string, q store.Reading
 type run struct {
 	eventID, requestID, tenant string
 	body                       []byte
+
+	// Set only when an operator replays stored events (replay.go).
+	replayRunID string                                                               // non-empty: the event is reprocessed (old outcome archived, own readings removed first)
+	commit      func(context.Context, store.CommitInput) (store.CommitResult, error) // nil: s.Store.Commit
+	dryRun      bool                                                                 // nothing may be written, not even a failure record
+	quiet       bool                                                                 // do not feed live metrics
 }
 
 func (s *Service) process(ctx context.Context, r run) Response {
@@ -121,7 +134,11 @@ func (s *Service) process(ctx context.Context, r run) Response {
 	}
 
 	t0 = time.Now()
-	out, err := s.Store.Commit(ctx, store.CommitInput{RawEventID: r.eventID, TenantID: r.tenant, Result: res})
+	commit := r.commit
+	if commit == nil {
+		commit = s.Store.Commit
+	}
+	out, err := commit(ctx, store.CommitInput{RawEventID: r.eventID, TenantID: r.tenant, Result: res, ReplayRunID: r.replayRunID})
 	s.stage("normalize_save", t0)
 	if err != nil {
 		return s.fail(ctx, r, resp, err)
@@ -140,7 +157,7 @@ func (s *Service) process(ctx context.Context, r run) Response {
 	default:
 		resp.HTTPStatus = 200
 	}
-	if s.Observer != nil {
+	if s.Observer != nil && !r.quiet {
 		s.Observer.Outcome(resp.Status, resp.Flags, resp.Errors)
 	}
 	return resp
@@ -181,13 +198,17 @@ func rejected(code, field, msg string) provider.Result {
 // fail records the failure after the raw payload is saved (F7-R1). The raw event is already safe.
 func (s *Service) fail(ctx context.Context, r run, resp Response, cause error) Response {
 	s.log().Error("event processing failed", "event_id", r.eventID, "tenant_id", r.tenant, "error", cause)
-	// Use a context that survives a cancelled request so the failure is still recorded.
-	if err := s.Store.RecordFailure(context.WithoutCancel(ctx), r.tenant, r.eventID, cause.Error()); err != nil {
-		s.log().Error("could not record failure", "event_id", r.eventID, "error", err)
+	// A failed replay must leave the event's existing outcome alone (its transaction rolled back), so it records
+	// nothing; the operator sees the error in the replay report. A live failure is recorded so it can be replayed.
+	if r.replayRunID == "" {
+		// Use a context that survives a cancelled request so the failure is still recorded.
+		if err := s.Store.RecordFailure(context.WithoutCancel(ctx), r.tenant, r.eventID, cause.Error()); err != nil {
+			s.log().Error("could not record failure", "event_id", r.eventID, "error", err)
+		}
 	}
-	resp.Status, resp.HTTPStatus = store.StatusFailed, 500
+	resp.Status, resp.HTTPStatus, resp.cause = store.StatusFailed, 500, cause
 	resp.Errors = []rules.Problem{{Code: "INTERNAL", Message: "processing failed after the payload was saved; it can be replayed"}}
-	if s.Observer != nil {
+	if s.Observer != nil && !r.quiet {
 		s.Observer.Outcome(resp.Status, nil, resp.Errors)
 	}
 	return resp

@@ -39,24 +39,90 @@ func (s *PGStore) SaveRaw(ctx context.Context, ev RawEvent) error {
 }
 
 // Commit is transaction 2. Inside one transaction it decides duplicate / conflict for the reading key,
-// writes the normalized rows (first write wins, F4), upserts device and shipment, and records the outcome.
+// writes the normalized rows (conflicts follow the tenant's policy, F4), upserts device and shipment, and
+// records the outcome.
 func (s *PGStore) Commit(ctx context.Context, in CommitInput) (CommitResult, error) {
 	var out CommitResult
 	err := s.WithTenantTx(ctx, in.TenantID, func(tx pgx.Tx) error {
-		res := in.Result
-		out = CommitResult{Status: res.Status, Flags: append([]rules.Flag(nil), res.Flags...)}
-
-		if res.Status != provider.StatusRejected {
-			if err := s.writeReadings(ctx, tx, in, &out); err != nil {
-				return err
-			}
-		}
-		return upsertOutcome(ctx, tx, in, out)
+		var err error
+		out, err = CommitTx(ctx, tx, in)
+		return err
 	})
 	if err != nil {
 		return CommitResult{}, err
 	}
 	return out, nil
+}
+
+// CommitTx is Commit inside a transaction the caller owns, so a replay can run many events in one transaction and
+// roll it back (a dry run). The transaction must already be scoped to in.TenantID (WithTenantTx).
+func CommitTx(ctx context.Context, tx pgx.Tx, in CommitInput) (CommitResult, error) {
+	res := in.Result
+	out := CommitResult{Status: res.Status, Flags: append([]rules.Flag(nil), res.Flags...)}
+
+	if in.ReplayRunID != "" {
+		if err := prepareReprocess(ctx, tx, in); err != nil {
+			return CommitResult{}, err
+		}
+	}
+	if res.Status != provider.StatusRejected {
+		if err := writeReadings(ctx, tx, in, &out); err != nil {
+			return CommitResult{}, err
+		}
+	}
+	if err := upsertOutcome(ctx, tx, in, out); err != nil {
+		return CommitResult{}, err
+	}
+	return out, nil
+}
+
+// prepareReprocess makes room for an event to be computed again: it archives the event's previous outcome, then
+// removes the readings and conflict row that this event produced. The raw payload is never touched.
+func prepareReprocess(ctx context.Context, tx pgx.Tx, in CommitInput) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO event_outcome_history (raw_event_id, tenant_id, replay_run_id, status, reasons, flags, expected_outputs,
+			transform_version, rules_version, processed_at, attempts)
+		SELECT raw_event_id, tenant_id, $2, status, reasons, flags, expected_outputs, transform_version, rules_version, processed_at, attempts
+		FROM event_outcomes WHERE raw_event_id = $1`, in.RawEventID, in.ReplayRunID); err != nil {
+		return fmt.Errorf("store: archive outcome: %w", err)
+	}
+
+	// Lock the keys this event owns before changing them, like a live write does.
+	rows, err := tx.Query(ctx, `
+		SELECT device_imei, ts FROM sensor_readings   WHERE raw_event_id = $1
+		UNION
+		SELECT device_imei, ts FROM location_readings WHERE raw_event_id = $1`, in.RawEventID)
+	if err != nil {
+		return fmt.Errorf("store: find own readings: %w", err)
+	}
+	type key struct {
+		imei string
+		ts   int64
+	}
+	var keys []key
+	for rows.Next() {
+		var k key
+		if err := rows.Scan(&k.imei, &k.ts); err != nil {
+			rows.Close()
+			return fmt.Errorf("store: scan own reading: %w", err)
+		}
+		keys = append(keys, k)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: own readings: %w", err)
+	}
+	for _, k := range keys {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, fmt.Sprintf("%s|%s|%d", in.TenantID, k.imei, k.ts)); err != nil {
+			return fmt.Errorf("store: lock key: %w", err)
+		}
+	}
+	for _, table := range []string{"sensor_readings", "location_readings", "reading_conflicts"} {
+		if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE raw_event_id = $1", in.RawEventID); err != nil {
+			return fmt.Errorf("store: remove own rows from %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // readingKey returns the (imei, ts) of the result's records.
@@ -67,7 +133,7 @@ func readingKey(res provider.Result) (imei string, ts int64) {
 	return res.Location.DeviceIMEI, res.Location.Timestamp
 }
 
-func (s *PGStore) writeReadings(ctx context.Context, tx pgx.Tx, in CommitInput, out *CommitResult) error {
+func writeReadings(ctx context.Context, tx pgx.Tx, in CommitInput, out *CommitResult) error {
 	res := in.Result
 	imei, ts := readingKey(res)
 
@@ -94,12 +160,14 @@ func (s *PGStore) writeReadings(ctx context.Context, tx pgx.Tx, in CommitInput, 
 	out.FirstRawEventID = first
 	var firstHash string
 	var firstRaw []byte
-	if err := tx.QueryRow(ctx, `SELECT payload_hash, payload_raw FROM raw_events WHERE id = $1`, first).Scan(&firstHash, &firstRaw); err != nil {
+	var firstAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT payload_hash, payload_raw, received_at FROM raw_events WHERE id = $1`, first).Scan(&firstHash, &firstRaw, &firstAt); err != nil {
 		return fmt.Errorf("store: load first event: %w", err)
 	}
 	var thisHash string
 	var thisRaw []byte
-	if err := tx.QueryRow(ctx, `SELECT payload_hash, payload_raw FROM raw_events WHERE id = $1`, in.RawEventID).Scan(&thisHash, &thisRaw); err != nil {
+	var thisAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT payload_hash, payload_raw, received_at FROM raw_events WHERE id = $1`, in.RawEventID).Scan(&thisHash, &thisRaw, &thisAt); err != nil {
 		return fmt.Errorf("store: load this event: %w", err)
 	}
 	if firstHash == thisHash {
@@ -112,9 +180,14 @@ func (s *PGStore) writeReadings(ctx context.Context, tx pgx.Tx, in CommitInput, 
 	out.Status = StatusConflict
 	out.ConflictHTTPStatus = settings.HTTPStatus
 	flagAction, resolution := rules.ActionKept, ResolutionKeptFirst
+	replace := false
 	switch settings.Policy {
 	case PolicyKeepLast:
-		flagAction, resolution = rules.ActionReplaced, ResolutionReplaced
+		// "Last" means last received. A live payload always is, but a replay can bring back an older event, which
+		// must not overwrite a reading that a later event produced.
+		if replace = !thisAt.Before(firstAt); replace {
+			flagAction, resolution = rules.ActionReplaced, ResolutionReplaced
+		}
 	case PolicyReject:
 		flagAction, resolution = rules.ActionRejected, ResolutionRejected
 	}
@@ -134,7 +207,7 @@ func (s *PGStore) writeReadings(ctx context.Context, tx pgx.Tx, in CommitInput, 
 		return fmt.Errorf("store: insert conflict: %w", err)
 	}
 
-	if settings.Policy != PolicyKeepLast {
+	if !replace {
 		return nil
 	}
 	// keep_last: the new version replaces the stored one in this transaction. The replaced event stays archived

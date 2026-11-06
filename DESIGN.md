@@ -134,6 +134,7 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 | F10 | Pool scaling | Controller tick (5 s) | Pool resized from depth + lag | — |
 | F11 | Alert evaluation | Ticker (60 s) | Rate over window > threshold → alert + notify; cooldown | — |
 | F12 | Reconciliation | Ticker (5 min) | Invariants checked; capped auto-heal; report row | — |
+| F14 | Reprocess after a fix | Operator runs `api replay` (tenant or all, time window, optional device/account/status) | Dry run by default; `--apply` recomputes events with the current rules and conflict policy, archives old outcomes, audits the run | — |
 | F13 | Lifecycle | Startup / SIGTERM / probes | Config → DB → migrations (+Timescale) → serve; drain on shutdown | — |
 
 ### 4.1 Ingest pipeline (both modes)
@@ -292,6 +293,8 @@ Kept outside PAXAFE output: probe temperature, shipment data, `AccountId`, signa
 | `reconciliation_runs` | Completeness evidence | `tenant_id`, `window_start`, `window_end`, counts per status, `discrepancies` JSONB, `healed` | Index `(window_start)` |
 
 | `rulesets` | Rulesets published at runtime (`api rules set`) | `id`, `version` (unique; recorded on every event), `yaml`, `created_by`, `created_at`, `active` | At most one active row; no row = use `RULES_PATH` or the embedded default. Global config, not RLS; the app role can only read |
+| `event_outcome_history` | Outcomes replaced by a reprocess (`api replay --apply`) | `raw_event_id`, `tenant_id`, `replay_run_id`, `status`, `reasons`, `flags`, `expected_outputs`, `transform_version`, `rules_version`, `processed_at`, `attempts`, `archived_at` | RLS; app role may only read and insert |
+| `replay_runs` | Audit of applied replays, one row per tenant per run | `run_id`, `tenant_id`, `requested_by`, `params`, `started_at`, `finished_at`, counts, `transitions` | Operator data (owner connection); no app access |
 | `tenants` | Tenant registry | `id`, `name`, `status`, `plan`, `retention_days`, `config` JSONB (ingest_mode, workers, capacity, temp bands, alert thresholds, rule overrides, rate limit) | PK `id` |
 
 ### 7.1 Storage toggle — `STORAGE_BACKEND=postgres|timescale`
@@ -566,7 +569,7 @@ Errors: same envelope, `errors[]` of `{code, field, message}`.
 | Security | No unauthenticated writes | Hashed scoped keys, body limit, rate limit, env secrets | HMAC signatures, key UI |
 | Tenant isolation | No cross-tenant reads | Key → tenant; RLS on every table; fair queueing; per-tenant limits | Schema/DB per tenant |
 | Observability | Diagnose any event < 5 min | Correlated logs, metrics, traces, dashboards | — |
-| Recoverability | Fix bugs without loss | Replay, reconciler heal | Bulk backfill |
+| Recoverability | Fix bugs without loss | Single-event replay; `api replay` reprocesses a window after a fix (dry run first, history and audit kept); reconciler heal designed | Pulling missing data from Tive's API |
 | Time correctness | Sane event time | Seconds/ms, future limit, `received_at` separate | Clock-drift tracking |
 | Retention | Multi-year raw | Timescale retention / partitions | Cold storage |
 | Extensibility | New provider w/o core changes | `Provider` interface | Second provider |
@@ -804,7 +807,7 @@ Live-change workflow: change the spec → change the test → change the code.
 ## 22. Scale path
 Tive → API (validate, persist raw, ack) → Kafka (partitioned by IMEI) → stateless transform workers (consumer group) → Postgres/TimescaleDB (operational) → CDC (Debezium) → ClickHouse/Snowflake (analytics). Per-device stateful checks (excursion duration, travel) move to a Flink job keyed by device.
 
-**With more time:** HMAC signatures, key management UI, distributed rate limiting, second provider, bulk backfill from raw, signed audit log.
+**With more time:** HMAC signatures, key management UI, distributed rate limiting, second provider, signed audit log.
 
 ---
 
@@ -1016,6 +1019,8 @@ Do not start the next milestone without my approval. Do not add features outside
 ---
 
 ## 24. Changelog
+
+- **2026-11-06 (replay window)** — `api replay` reprocesses stored payloads after a fix to the rules or a tenant's conflict policy. Per tenant or `--all-tenants`; a time window measured on received time (default) or event time (`--time event`); optional `--device` (IMEI or name), `--account` (AccountId), `--status`, `--limit`. **Dry run by default** (one rolled-back transaction, so the report is exact); `--apply` recomputes each event with the current rules, archives its previous outcome (`event_outcome_history`, migration 00004), and records the run (`replay_runs`). Oldest received first; a replay never lets an older event overwrite a later one under `keep_last` (this guard also applies to live ingest, where it never triggers). A failing event keeps its previous outcome. Operator-only; the single-event replay endpoint is unchanged. Also closes the earlier gap that an outcome was overwritten with no history.
 
 - **2026-11-06 (rules on the fly)** — The rules engine is documented and built as a framework with default rules, **configurable at runtime**: `api rules set|show|history|reset|validate|default`, a `rulesets` table (migration 00003), `rules.Holder` (atomic swap) and `rulesync.Reloader` (polls every `RULES_REFRESH_INTERVAL`, default 10 s; invalid rulesets never replace the working one). `GET /api/v1/rules` reports version, source and load time. Supersedes "no hot reload".
 

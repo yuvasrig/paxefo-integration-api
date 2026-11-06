@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -814,5 +815,73 @@ func TestAppRoleCannotWriteRulesets(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("the app role must not be able to change rulesets")
+	}
+}
+
+// ---- replay support ----
+
+func TestInRollbackTxWritesNothing(t *testing.T) {
+	st := newStore(t)
+	raw := sample(t, 2)
+	id := store.NewID("evt_")
+	if err := st.SaveRaw(ctx, store.RawEvent{ID: id, TenantID: "reviewer", Provider: "Tive", Raw: raw, Hash: doc.CanonicalHash(raw), ReceivedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	rs, _ := rules.Default()
+	p := tive.New(rs, config.Default())
+	d, _ := p.Parse(raw)
+	res, err := p.Transform(d, rules.Scope{Tenant: "reviewer", Now: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), Devices: dbResolver{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var inside store.CommitResult
+	err = st.InRollbackTx(ctx, "reviewer", time.Minute, func(commit func(context.Context, store.CommitInput) (store.CommitResult, error)) error {
+		var err error
+		inside, err = commit(ctx, store.CommitInput{RawEventID: id, TenantID: "reviewer", Result: res})
+		if err != nil {
+			return err
+		}
+		// Inside the transaction the write is visible to the next commit...
+		again, err := commit(ctx, store.CommitInput{RawEventID: id, TenantID: "reviewer", Result: res, ReplayRunID: "dry-run"})
+		if err != nil || again.Status != inside.Status {
+			t.Errorf("a reprocess inside the transaction sees the earlier write: %+v %v", again, err)
+		}
+		return nil
+	})
+	if err != nil || inside.Status != "accepted" {
+		t.Fatalf("%+v %v", inside, err)
+	}
+	// ...and afterwards nothing was written.
+	for _, table := range []string{"sensor_readings", "location_readings", "event_outcomes", "event_outcome_history"} {
+		if n := count(t, st, "reviewer", "SELECT count(*) FROM "+table); n != 0 {
+			t.Errorf("%s has %d rows after a rolled-back run", table, n)
+		}
+	}
+	// An error from fn is returned, not swallowed.
+	boom := errors.New("boom")
+	if err := st.InRollbackTx(ctx, "reviewer", time.Minute, func(func(context.Context, store.CommitInput) (store.CommitResult, error)) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestListTenantsAndReplayRuns(t *testing.T) {
+	st := newStore(t)
+	ids, err := st.ListTenants(ctx)
+	if err != nil || strings.Join(ids, ",") != "acme-pharma,bioco,reviewer" {
+		t.Fatalf("%v %v", ids, err)
+	}
+	now := time.Now()
+	run := store.ReplayRun{RunID: "run_1", TenantID: "reviewer", RequestedBy: "bob", Params: map[string]any{"device": "X"}, StartedAt: now, FinishedAt: now,
+		Selected: 5, Reprocessed: 4, Changed: 3, Errors: 1, Transitions: map[string]int{"rejected -> accepted": 3}}
+	if err := st.RecordReplayRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := st.ListReplayRuns(ctx, 5)
+	if err != nil || len(runs) != 1 || runs[0].RequestedBy != "bob" || runs[0].Transitions["rejected -> accepted"] != 3 || runs[0].Params["device"] != "X" || runs[0].Errors != 1 {
+		t.Fatalf("%+v %v", runs, err)
+	}
+	if err := st.RecordReplayRun(ctx, run); err == nil {
+		t.Fatal("a run is recorded once per tenant")
 	}
 }

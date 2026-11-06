@@ -6,13 +6,20 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
+	"github.com/yuvasrig/paxefo-integration-api/internal/config"
+	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
+	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
+	"github.com/yuvasrig/paxefo-integration-api/internal/rulesync"
 	"github.com/yuvasrig/paxefo-integration-api/internal/seed"
 	"github.com/yuvasrig/paxefo-integration-api/internal/store"
 )
@@ -31,6 +38,12 @@ const adminUsage = `usage:
   api rules show                                       the published ruleset (or the default in use)
   api rules history [--limit N]                        rulesets published so far
   api rules reset                                      stop using the published ruleset; back to the default
+  api replay (--tenant T | --all-tenants) --from TIME --to TIME [--time received|event]
+             [--device IMEI_OR_NAME] [--account N] [--status s1,s2] [--limit N] [--apply] [--by NAME]
+                                                       reprocess stored payloads with the rules and conflict policy in force now,
+                                                       for a time window (TIME: 2026-11-05 or RFC 3339; --to is exclusive).
+                                                       Without --apply it is a dry run: it reports what would change and writes nothing.
+  api replay runs [--limit N]                          applied replays so far (audit)
   api tenants show --tenant T                          print the tenant's config
   api tenants set-conflict --tenant T --policy keep_first|keep_last|reject [--http-status 200|409]
                                                        what to do when the same device and time arrive with different content
@@ -47,6 +60,8 @@ func runAdmin(ctx context.Context, st *store.PGStore, cmd string, args []string,
 		return runTenants(ctx, st, args, out)
 	case "rules":
 		return runRules(ctx, st, args, out)
+	case "replay":
+		return runReplay(ctx, st, args, out)
 	}
 	return fmt.Errorf("unknown command %q\n%s", cmd, adminUsage)
 }
@@ -349,4 +364,170 @@ func runRules(ctx context.Context, st *store.PGStore, args []string, out io.Writ
 		return nil
 	}
 	return fmt.Errorf("rules: unknown subcommand %q\n%s", sub, adminUsage)
+}
+
+var replayStatuses = map[string]bool{"accepted": true, "flagged": true, "duplicate": true, "conflict": true, "rejected": true, "failed": true, "pending": true}
+
+// parseTime accepts 2026-11-05 (midnight UTC) or an RFC 3339 time.
+func parseTime(name, v string) (time.Time, error) {
+	if v == "" {
+		return time.Time{}, fmt.Errorf("--%s is required", name)
+	}
+	if t, err := time.Parse("2006-01-02", v); err == nil {
+		return t.UTC(), nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("--%s must be YYYY-MM-DD or RFC 3339 (got %q)", name, v)
+	}
+	return t.UTC(), nil
+}
+
+// runReplay reprocesses stored payloads with the rules and conflict policy in force now. It is how an operator
+// "fixes the rules or the conflict policy, then applies the fix to what was already received".
+func runReplay(ctx context.Context, st *store.PGStore, args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "runs" {
+		fs := newFlags("replay runs", out)
+		limit := fs.Int("limit", 20, "how many to list")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		runs, err := st.ListReplayRuns(ctx, *limit)
+		if err != nil {
+			return err
+		}
+		tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "RUN\tTENANT\tBY\tFINISHED\tSELECTED\tCHANGED\tERRORS")
+		for _, r := range runs {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\n", r.RunID, r.TenantID, r.RequestedBy, r.FinishedAt.UTC().Format(time.RFC3339), r.Selected, r.Changed, r.Errors)
+		}
+		return tw.Flush()
+	}
+
+	fs := newFlags("replay", out)
+	tenant := fs.String("tenant", "", "replay this tenant's events")
+	all := fs.Bool("all-tenants", false, "replay every tenant (each isolated from the others)")
+	from := fs.String("from", "", "start of the window, inclusive (required)")
+	to := fs.String("to", "", "end of the window, exclusive (required)")
+	timeField := fs.String("time", store.TimeReceived, "what the window measures: received (when we received it) or event (EntryTimeEpoch)")
+	device := fs.String("device", "", "only this device: its IMEI (DeviceId) or DeviceName")
+	account := fs.String("account", "", "only this AccountId")
+	statuses := fs.String("status", "", "only events whose current status is one of these (comma separated): accepted, flagged, duplicate, conflict, rejected, failed, pending")
+	limit := fs.Int("limit", 0, "stop after this many events per tenant (0 = no limit)")
+	apply := fs.Bool("apply", false, "write the results; without it this is a dry run that changes nothing")
+	by := fs.String("by", os.Getenv("USER"), "who is running it (recorded in the audit)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	switch {
+	case (*tenant == "") == !*all:
+		return errors.New("replay: give exactly one of --tenant or --all-tenants")
+	case *timeField != store.TimeReceived && *timeField != store.TimeEvent:
+		return fmt.Errorf("replay: --time must be %s or %s", store.TimeReceived, store.TimeEvent)
+	}
+	fromT, err := parseTime("from", *from)
+	if err != nil {
+		return fmt.Errorf("replay: %w", err)
+	}
+	toT, err := parseTime("to", *to)
+	if err != nil {
+		return fmt.Errorf("replay: %w", err)
+	}
+	if !toT.After(fromT) {
+		return errors.New("replay: --to must be after --from")
+	}
+	var statusList []string
+	for _, s := range strings.Split(*statuses, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			if !replayStatuses[s] {
+				return fmt.Errorf("replay: unknown --status %q", s)
+			}
+			statusList = append(statusList, s)
+		}
+	}
+	if *tenant != "" {
+		if ok, err := st.TenantExists(ctx, *tenant); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("replay: tenant %q does not exist", *tenant)
+		}
+	}
+
+	// The ruleset in force: the one published with `api rules set`, else RULES_PATH, else the embedded default.
+	base, err := loadRules(os.Getenv("RULES_PATH"))
+	if err != nil {
+		return fmt.Errorf("replay: %w", err)
+	}
+	baseSource := rules.SourceDefault
+	if os.Getenv("RULES_PATH") != "" {
+		baseSource = rules.SourceFile
+	}
+	holder := rules.NewHolder(base, baseSource, time.Now())
+	if err := (&rulesync.Reloader{Source: st, Holder: holder, Base: base, BaseSource: baseSource, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}).Refresh(ctx); err != nil {
+		return fmt.Errorf("replay: %w", err)
+	}
+	loaded := holder.Loaded()
+
+	svc := &ingest.Service{Store: st, Provider: tive.NewDynamic(holder, config.Default()), Now: time.Now, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	opts := ingest.ReplayOptions{
+		Filter: store.ReplayFilter{TimeField: *timeField, From: fromT, To: toT, Device: *device, Account: *account, Statuses: statusList},
+		Apply:  *apply, By: *by, Limit: *limit, RunID: store.NewID("run_"),
+	}
+
+	mode := "DRY RUN: nothing was changed. Add --apply to write."
+	if *apply {
+		mode = "APPLIED (run " + opts.RunID + ")"
+	}
+	fmt.Fprintf(out, "replay on the %s time window [%s, %s) with ruleset %s (%s)\n%s\n", *timeField, fromT.Format(time.RFC3339), toT.Format(time.RFC3339), loaded.Ruleset.Version, loaded.Source, mode)
+
+	var reports []ingest.ReplayReport
+	if *all {
+		reports, err = svc.ReplayAllTenants(ctx, opts)
+	} else {
+		opts.Filter.TenantID = *tenant
+		var rep ingest.ReplayReport
+		rep, err = svc.ReplayWindow(ctx, opts)
+		reports = []ingest.ReplayReport{rep}
+	}
+	errorsTotal := 0
+	for _, rep := range reports {
+		printReplay(out, rep)
+		errorsTotal += rep.Errors
+	}
+	if err != nil {
+		return err
+	}
+	if errorsTotal > 0 {
+		return fmt.Errorf("replay: %d events could not be reprocessed (their previous results are unchanged)", errorsTotal)
+	}
+	return nil
+}
+
+func printReplay(out io.Writer, r ingest.ReplayReport) {
+	fmt.Fprintf(out, "\ntenant %s\n  selected %d · reprocessed %d · changed %d · unchanged %d · errors %d\n", r.Tenant, r.Selected, r.Reprocessed, r.Changed, r.Unchanged, r.Errors)
+	keys := make([]string, 0, len(r.Transitions))
+	for k := range r.Transitions {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(out, "  %-28s %d\n", k, r.Transitions[k])
+	}
+	for i, c := range r.Changes {
+		if i == 0 {
+			fmt.Fprintf(out, "  changes (first %d):\n", len(r.Changes))
+		}
+		extra := ""
+		if c.OutputChanged {
+			extra = "  (PAXAFE output changed)"
+		}
+		fmt.Fprintf(out, "    %s  %s -> %s  flags [%s] -> [%s]%s\n", c.EventID, c.From, c.To, strings.Join(c.FlagsFrom, ","), strings.Join(c.FlagsTo, ","), extra)
+	}
+	for i, f := range r.Failures {
+		if i == 0 {
+			fmt.Fprintln(out, "  errors (previous results unchanged):")
+		}
+		fmt.Fprintf(out, "    %s\n", f)
+	}
 }
