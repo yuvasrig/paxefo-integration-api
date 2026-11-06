@@ -353,3 +353,32 @@ func TestTarget(t *testing.T) {
 		}
 	}
 }
+
+// The hard cap holds across tenants, even while every tenant's own limit would allow more.
+func TestHardCapOnTotalWorkers(t *testing.T) {
+	e := newEnv(t, "reviewer", "acme-pharma")
+	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 0, WorkersMax: 4, WorkersTotalMax: 3, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
+	for _, tenant := range []string{"reviewer", "acme-pharma"} {
+		for i := 0; i < 20; i++ {
+			e.send(t, tenant, 2)
+		}
+	}
+	if _, err := e.st.Pool().Exec(ctx, `UPDATE ingest_jobs SET next_attempt_at = now() + interval '1 hour'`); err != nil {
+		t.Fatal(err)
+	}
+	stop := e.run(t)
+	defer stop()
+	eventually(t, "workers reach the cap", func() bool { return e.mgr.TotalWorkers() == 3 })
+	for i := 0; i < 30; i++ { // and never go over it
+		if n := e.mgr.TotalWorkers(); n > 3 {
+			t.Fatalf("%d workers, cap is 3", n)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Raising the cap at runtime lets the pools grow.
+	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 0, WorkersMax: 4, WorkersTotalMax: 6, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
+	eventually(t, "workers grow to the new cap", func() bool { return e.mgr.TotalWorkers() == 6 })
+	// Lowering it takes workers away at once, not after the slow scale-down delay.
+	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 0, WorkersMax: 4, WorkersTotalMax: 2, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
+	eventually(t, "workers drop to the lowered cap", func() bool { return e.mgr.TotalWorkers() == 2 })
+}

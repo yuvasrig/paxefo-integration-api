@@ -43,6 +43,29 @@ const (
 	inFlightSeconds = 2.0 // a queue this short at the current rate is work in flight, not a backlog
 )
 
+// CapTotal applies a hard cap on the workers one process runs across all tenants: while the total is over the cap it
+// takes a worker from the tenant with the most (the later name on a tie), so busy tenants share the shortfall instead
+// of one being cut to nothing. A cap of 0 or less means no cap. It returns a new map.
+func CapTotal(targets map[string]int, limit int) map[string]int {
+	out := make(map[string]int, len(targets))
+	total := 0
+	for t, n := range targets {
+		out[t] = n
+		total += n
+	}
+	for limit > 0 && total > limit {
+		pick := ""
+		for t, n := range out {
+			if n > 0 && (pick == "" || n > out[pick] || (n == out[pick] && t > pick)) {
+				pick = t
+			}
+		}
+		out[pick]--
+		total--
+	}
+	return out
+}
+
 const (
 	backoffBase = time.Second
 	backoffCap  = 5 * time.Minute

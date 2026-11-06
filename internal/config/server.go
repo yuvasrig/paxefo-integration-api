@@ -27,6 +27,7 @@ type Server struct {
 	QueueMaxDepth int
 	WorkersMin    int
 	WorkersMax    int
+	WorkersTotal  int // hard cap on workers per process across all tenants (0 = no cap)
 	JobsPerWorker int
 	LagSLOSeconds int
 	MaxAttempts   int
@@ -75,6 +76,7 @@ func FromEnv(getenv func(string) string) (Server, error) {
 		QueueMaxDepth:   int(num("QUEUE_MAX_DEPTH", 5000)),
 		WorkersMin:      -1,
 		WorkersMax:      int(num("WORKERS_MAX", 8)),
+		WorkersTotal:    int(num("WORKERS_TOTAL_MAX", 0)),
 		JobsPerWorker:   int(num("JOBS_PER_WORKER", 50)),
 		LagSLOSeconds:   int(num("LAG_SLO_SECONDS", 10)),
 		MaxAttempts:     int(num("MAX_ATTEMPTS", 5)),

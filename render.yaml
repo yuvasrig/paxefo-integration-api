@@ -28,6 +28,8 @@ services:
         value: "0"
       - key: WORKERS_MAX   # most workers per tenant pool (tenants x this must stay under DB_MAX_CONNS)
         value: "3"
+      - key: WORKERS_TOTAL_MAX   # hard cap on workers in this process across all tenants (0 = none); editable in /admin
+        value: "6"
       - key: DB_MAX_CONNS
         value: "15"
       - key: LOG_LEVEL

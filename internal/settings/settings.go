@@ -22,6 +22,7 @@ type Values struct {
 	QueueMaxDepth   int     // jobs a tenant may have waiting before ingest answers 503
 	WorkersMin      int     // fewest workers an instance keeps running
 	WorkersMax      int     // most workers an instance runs
+	WorkersTotalMax int     // most workers one process runs across all tenants' pools (0 = no cap)
 	JobsPerWorker   int     // backlog one worker is expected to keep up with (sizes the pool)
 	LagSLOSeconds   int     // a job waiting longer than this is "behind"
 	MaxAttempts     int     // tries before a job is given up as dead
@@ -43,6 +44,7 @@ var defs = []Def{
 	{"queue_max_depth", "Queue limit per tenant", "Waiting jobs a tenant may have before ingest answers 503 with Retry-After (backpressure).", false, 1, 100000000},
 	{"workers_min", "Workers per tenant: minimum", "Fewest workers each async tenant's pool keeps running per instance. A tenant can set its own on the Tenants page.", false, 0, 1000},
 	{"workers_max", "Workers per tenant: maximum", "Most workers each tenant's pool runs per instance. Keep tenants x workers x instances within the database connection budget.", false, 1, 1000},
+	{"workers_total_max", "Workers: hard cap per process", "Most workers one process runs across ALL tenants' pools, whatever the tenants' own limits add up to. 0 means no cap. Protects the database connection budget.", false, 0, 10000},
 	{"jobs_per_worker", "Jobs per worker", "Backlog one worker is expected to handle; a tenant's pool grows when its backlog exceeds workers x this.", false, 1, 1000000},
 	{"lag_slo_seconds", "Lag target (seconds)", "A job waiting longer than this counts as behind, and the pool grows by one.", false, 1, 86400},
 	{"max_attempts", "Attempts before a job is dead", "How many times a failing job is tried before its outcome becomes 'dead' (replayable).", false, 1, 100},
@@ -74,6 +76,8 @@ func (v Values) Get(key string) string {
 		return strconv.Itoa(v.WorkersMin)
 	case "workers_max":
 		return strconv.Itoa(v.WorkersMax)
+	case "workers_total_max":
+		return strconv.Itoa(v.WorkersTotalMax)
 	case "jobs_per_worker":
 		return strconv.Itoa(v.JobsPerWorker)
 	case "lag_slo_seconds":
@@ -136,6 +140,8 @@ func (v Values) With(key, raw string) (Values, error) {
 		v.WorkersMin = int(f)
 	case "workers_max":
 		v.WorkersMax = int(f)
+	case "workers_total_max":
+		v.WorkersTotalMax = int(f)
 	case "jobs_per_worker":
 		v.JobsPerWorker = int(f)
 	case "lag_slo_seconds":

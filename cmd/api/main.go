@@ -154,7 +154,7 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	// Runtime settings: environment variables are the defaults; values changed in the admin console override them.
 	defaults := settings.Values{
 		RateLimitPerSec: cfg.RateLimitPerSec, RateLimitBurst: cfg.RateLimitBurst, QueueMaxDepth: cfg.QueueMaxDepth,
-		WorkersMin: cfg.WorkersMin, WorkersMax: cfg.WorkersMax, JobsPerWorker: cfg.JobsPerWorker,
+		WorkersMin: cfg.WorkersMin, WorkersMax: cfg.WorkersMax, WorkersTotalMax: cfg.WorkersTotal, JobsPerWorker: cfg.JobsPerWorker,
 		LagSLOSeconds: cfg.LagSLOSeconds, MaxAttempts: cfg.MaxAttempts,
 	}
 	live := settings.NewHolder(defaults)

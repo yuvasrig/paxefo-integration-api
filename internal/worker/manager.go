@@ -177,11 +177,16 @@ func (m *Manager) control(ctx context.Context) {
 	s := m.Settings.Current()
 
 	seen := map[string]bool{}
+	targets := map[string]int{}
 	for _, info := range infos {
 		seen[info.ID] = true
 		q := queue[info.ID]
-		m.scale(ctx, info.ID, Target(info, m.DefaultMode, q.Pending, q.OldestPendingAge, s))
+		targets[info.ID] = Target(info, m.DefaultMode, q.Pending, q.OldestPendingAge, s)
 	}
+	for id, n := range CapTotal(targets, s.WorkersTotalMax) { // the process-wide hard cap, on the targets
+		m.scale(ctx, id, n)
+	}
+	m.enforceCap(ctx, s.WorkersTotalMax)
 	m.mu.Lock()
 	for id, p := range m.pools { // a tenant that no longer exists keeps no workers
 		if !seen[id] {
@@ -193,6 +198,26 @@ func (m *Manager) control(ctx context.Context) {
 	m.mu.Unlock()
 	if m.Observer != nil {
 		m.Observer.QueueState(rows, m.Workers())
+	}
+}
+
+// enforceCap makes the cap hold for the workers actually running: pools shrink slowly toward their targets, and a
+// pool that has just grown or not yet shrunk must not carry the process over the limit. Excess workers go at once.
+func (m *Manager) enforceCap(ctx context.Context, limit int) {
+	if limit <= 0 {
+		return
+	}
+	cur := m.Workers()
+	for id, n := range CapTotal(cur, limit) {
+		if n >= cur[id] {
+			continue
+		}
+		m.mu.Lock()
+		p := m.pools[id]
+		m.mu.Unlock()
+		if p != nil {
+			p.Resize(ctx, n)
+		}
 	}
 }
 

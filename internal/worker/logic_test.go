@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,46 @@ func TestFormatETA(t *testing.T) {
 	for d, want := range map[time.Duration]string{45 * time.Second: "45s", 200 * time.Second: "3m 20s", 125 * time.Minute: "2h 5m", 0: "0s", 59*time.Second + 600*time.Millisecond: "1m 0s"} {
 		if got := FormatETA(d); got != want {
 			t.Errorf("FormatETA(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestCapTotal(t *testing.T) {
+	sum := func(m map[string]int) int {
+		n := 0
+		for _, v := range m {
+			n += v
+		}
+		return n
+	}
+	cases := []struct {
+		name  string
+		in    map[string]int
+		limit int
+		want  map[string]int
+	}{
+		{"no cap", map[string]int{"a": 5, "b": 3}, 0, map[string]int{"a": 5, "b": 3}},
+		{"under the cap", map[string]int{"a": 2, "b": 3}, 8, map[string]int{"a": 2, "b": 3}},
+		{"the biggest pool gives up workers first", map[string]int{"a": 6, "b": 2}, 5, map[string]int{"a": 3, "b": 2}},
+		{"busy tenants share the shortfall", map[string]int{"a": 4, "b": 4, "c": 4}, 6, map[string]int{"a": 2, "b": 2, "c": 2}},
+		{"a tie takes from the later name", map[string]int{"a": 3, "b": 3}, 5, map[string]int{"a": 3, "b": 2}},
+		{"a cap below the number of tenants can leave some with none", map[string]int{"a": 1, "b": 1, "c": 1}, 2, map[string]int{"a": 1, "b": 1, "c": 0}},
+		{"empty", map[string]int{}, 3, map[string]int{}},
+	}
+	for _, c := range cases {
+		in := map[string]int{}
+		for k, v := range c.in {
+			in[k] = v
+		}
+		got := CapTotal(c.in, c.limit)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		}
+		if !reflect.DeepEqual(c.in, in) {
+			t.Errorf("%s: the input must not be changed", c.name)
+		}
+		if c.limit > 0 && sum(got) > c.limit {
+			t.Errorf("%s: total %d is over the cap %d", c.name, sum(got), c.limit)
 		}
 	}
 }

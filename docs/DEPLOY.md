@@ -11,7 +11,7 @@ Render dashboard → **New → Blueprint** → pick the repo. `render.yaml` crea
 - Postgres `paxafe-db` (free, region `oregon`)
 - Web service `paxafe-api` (Docker, free, same region, health check `/healthz`, deploys `main` after CI passes)
 
-`DATABASE_URL` is wired to the database's **internal** connection string. `ROLE=all`, `INGEST_MODE=async`, `WORKERS_MIN=0`, `WORKERS_MAX=3`, `DB_MAX_CONNS=15`, `LOG_LEVEL=info` are set by the blueprint. Migrations run when the service starts.
+`DATABASE_URL` is wired to the database's **internal** connection string. `ROLE=all`, `INGEST_MODE=async`, `WORKERS_MIN=0`, `WORKERS_MAX=3`, `WORKERS_TOTAL_MAX=6`, `DB_MAX_CONNS=15`, `LOG_LEVEL=info` are set by the blueprint. Migrations run when the service starts.
 
 **Async mode:** the web service also runs the workers (`ROLE=all`), one pool per async tenant, so no extra Render service is needed. The seeded `reviewer` tenant stays sync (instant results from curl); `acme-pharma` and `bioco` are async: a webhook returns `202 queued` and a worker processes it a moment later (read it with `GET /api/v1/events/{id}`; the mock sender follows it automatically). Free web services sleep when idle and the workers sleep with them; queued jobs wait safely in Postgres and drain when the service wakes. To scale workers separately later, add a second service from the same image with `ROLE=worker` and set the web service to `ROLE=api` (Render background workers are a paid service type).
 
