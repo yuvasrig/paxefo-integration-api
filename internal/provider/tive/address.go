@@ -14,7 +14,8 @@ var (
 
 // parseAddress splits a Tive FormattedAddress conservatively (contracts/mapping.md).
 // Only the tail "<locality>, <ST> <postal>, <country>" (or "<locality>, <country>") is
-// interpreted; anything unmatched stays nil. street is always nil and full_address is verbatim.
+// interpreted; anything unmatched stays nil. Whatever precedes the locality is the street (nil when nothing does),
+// and full_address is verbatim.
 func parseAddress(full string) *paxafe.Address {
 	a := &paxafe.Address{FullAddress: &full}
 	parts := strings.Split(full, ", ")
@@ -26,6 +27,10 @@ func parseAddress(full string) *paxafe.Address {
 			return a
 		}
 		a.Locality, a.State, a.PostalCode, a.Country = &locality, &m[1], &m[2], &country
+		if len(parts) > 3 {
+			street := strings.Join(parts[:len(parts)-3], ", ")
+			a.Street = &street
+		}
 	case len(parts) == 2:
 		locality, second := parts[0], parts[1]
 		if m := stateZipRe.FindStringSubmatch(second); m != nil {

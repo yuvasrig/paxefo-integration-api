@@ -206,7 +206,7 @@ func TestTransformLocationFields(t *testing.T) {
 	if m["latitude"] != 40.810562 || m["longitude"] != -73.879285 || m["battery_level"] != float64(65) || m["cellular_dbm"] != -100.0 || m["wifi_access_points"] != float64(5) {
 		t.Fatalf("unexpected location: %v", m)
 	}
-	if addr["locality"] != "Bronx" || addr["state"] != "NY" || addr["postal_code"] != "10474" || addr["country"] != "USA" || addr["street"] != nil {
+	if addr["locality"] != "Bronx" || addr["state"] != "NY" || addr["postal_code"] != "10474" || addr["country"] != "USA" || addr["street"] != "114 Hunts Point Market" {
 		t.Fatalf("unexpected address: %v", addr)
 	}
 	for _, k := range []string{"altitude", "cellular_network_type", "cellular_operator", "location_accuracy"} {

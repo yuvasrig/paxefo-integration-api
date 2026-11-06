@@ -3,7 +3,7 @@
 ## Pinned decisions
 
 1. **Rounding is half away from zero**, applied only when PAXAFE JSON is emitted (-0.5625 → -0.563, 0.6875 → 0.688, 4.625 → 4.63).
-2. **Addresses are parsed conservatively** (see "Address parsing"): `street` is always null, `full_address` is verbatim.
+2. **Addresses are parsed conservatively** (see "Address parsing"): whatever precedes the locality is the `street` (null when nothing does), `full_address` is verbatim.
 3. **`TEMP_EXCURSION` only when a shipment exists.** If the payload carries a shipment (`Shipment.Id`, or `ShipmentId`) and the temperature used is outside 2-8 C (inclusive bounds, configurable), the flag is added and the reading is still stored. No shipment means no excursion, so a frozen sample without a shipment (sample 6, -18.5 C) is not flagged.
 4. **`status` is `flagged` if and only if the event carries any flag**, whatever its severity; no flags means `accepted`.
 5. **`EntryTimeEpoch` is the event time. `EntryTimeUtc` is ignored**: a disagreement (sample 11 is 5 h apart) is not flagged.
@@ -48,7 +48,7 @@ A sensor record is produced when `temperature` is non-null or any of humidity / 
 | `location_accuracy_category` | derived from accuracy meters | `High` < 50, `Medium` < 500, else `Low`. Bounds exclusive (500 m → `Low`). Thresholds are config. `null` when accuracy is null |
 | `location_source` | `Location.LocationMethod` | `gps`→`GPS`, `wifi`→`WiFi`, `cell`→`Cellular`; `null`/other → `null` |
 | `address.full_address` | `Location.FormattedAddress` | Always kept verbatim. `address` is `null` when `FormattedAddress` is null/absent |
-| `address.street` | — | Always `null` (matches the PAXAFE schema example) |
+| `address.street` | parsed | Everything before the locality, when the address has more than `<locality>, <ST> <postal>, <country>` (e.g. `114 Hunts Point Market`); otherwise `null`. Note: the PAXAFE schema's example shows `street: null` for this same address; we deliberately fill it |
 | `address.locality/state/postal_code/country` | parsed from `FormattedAddress` | See "Address parsing" |
 | `battery_level` | `Battery.Percentage` | Integer 0–100 |
 | `cellular_dbm` | `Cellular.Dbm` | 2 dp |
@@ -60,9 +60,10 @@ A sensor record is produced when `temperature` is non-null or any of humidity / 
 
 Split `FormattedAddress` on `", "`. Only the tail is interpreted; anything unmatched stays `null`.
 
-1. **US form** — last part is a country (`USA`), the part before it matches `^[A-Z]{2} \d{5}(-\d{4})?$`: `state` and `postal_code` from that part, `locality` from the part before it, `country` = last part.
-   `"114 Hunts Point Market, Bronx, NY 10474, USA"` → locality `Bronx`, state `NY`, postal `10474`, country `USA`.
-2. **City + state/postal, no street** — `"Boston, MA 02101, USA"` → locality `Boston`, state `MA`, postal `02101`, country `USA`.
+1. **US form** — last part is a country (`USA`), the part before it matches `^[A-Z]{2} \d{5}(-\d{4})?$`: `state` and `postal_code` from that part, `locality` from the part before it, `country` = last part. **Any parts before the locality, joined with `", "`, are the `street`.**
+   `"114 Hunts Point Market, Bronx, NY 10474, USA"` → street `114 Hunts Point Market`, locality `Bronx`, state `NY`, postal `10474`, country `USA`.
+   `"Suite 5, 12 Main St, Austin, TX 78701, USA"` → street `Suite 5, 12 Main St`.
+2. **City + state/postal, no street** — `"Boston, MA 02101, USA"` → street `null`, locality `Boston`, state `MA`, postal `02101`, country `USA`.
 3. **Two parts** — `"London, UK"` → locality `London`, country `UK`, state/postal `null`.
 4. Anything else → only `full_address` is set.
 

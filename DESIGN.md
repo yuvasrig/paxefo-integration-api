@@ -260,7 +260,7 @@ Full precision stored; rounding only when emitting PAXAFE JSON.
 | `location_accuracy_category` | derived | High < 50 m, Medium < 500 m, else Low (config); boundaries exclusive (500 m → Low, sample #6); null when accuracy is null |
 | `location_source` | `LocationMethod` | gps→GPS, wifi→WiFi, cell→Cellular |
 | `address.full_address` | `FormattedAddress` | Always kept |
-| `address.street/locality/state/postal_code/country` | parsed | Conservative: split on commas, parse only the tail `<locality>, <ST> <postal>, <country>` (US form) or `<locality>, <country>` (2 parts); `street` always null (matches the PAXAFE schema example); any field not matched → null |
+| `address.street/locality/state/postal_code/country` | parsed | Conservative: split on commas, parse only the tail `<locality>, <ST> <postal>, <country>` (US form) or `<locality>, <country>` (2 parts); `street` = everything before the locality when there is more than the tail (null otherwise; note the PAXAFE schema's example shows `street: null` for sample 0's address, which we deliberately fill); any field not matched → null |
 | `battery_level` | `Battery.Percentage` | Integer 0–100 |
 | `cellular_dbm` | `Cellular.Dbm` | 2 dp |
 | `cellular_network_type`, `cellular_operator` | — | null |
@@ -1013,6 +1013,8 @@ Do not start the next milestone without my approval. Do not add features outside
 ---
 
 ## 24. Changelog
+
+- **2026-11-06 (later)** — `address.street` is parsed (everything before the locality) instead of always null. Affects samples 0 and 7 (`114 Hunts Point Market`).
 
 - **2026-11-06** — Simplifications and pinned decisions (these supersede earlier text in this document):
   1. **Tenant from the API key only.** No `tenant_sources` table, no account routing, no `common-pool`, no `submitted_by_tenant_id`, no `TENANT_MISMATCH` / `UNKNOWN_ACCOUNT` / `ACCOUNT_ID_MISSING`, no `map-source` CLI. `AccountId` is stored as metadata and never checked.

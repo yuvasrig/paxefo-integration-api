@@ -53,7 +53,7 @@
     "location_accuracy_category": "High",
     "location_source": "WiFi",
     "address": {
-      "street": null,
+      "street": "114 Hunts Point Market",
       "locality": "Bronx",
       "state": "NY",
       "country": "USA",
