@@ -1,5 +1,5 @@
 // Package middleware holds the HTTP middleware: request ID, panic recovery, authentication, body limit and
-// per-tenant rate limit (DESIGN.md sections 4.1, 12, 13).
+// (DESIGN.md sections 4.1, 12, 13).
 package middleware
 
 import (
@@ -9,12 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"math"
 	"net/http"
 	"regexp"
 	"strconv"
-	"sync"
-	"time"
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
 )
@@ -100,75 +97,6 @@ func BodyLimit(max int64) func(http.Handler) http.Handler {
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, max)
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// RateLimiter is an in-memory token bucket per tenant (F6-R4). With several instances each has its own bucket;
-// a shared limiter is a documented upgrade.
-type RateLimiter struct {
-	Rate  float64 // tokens per second
-	Burst int
-	// Limits, when set, supplies the rate and burst for a tenant on every call, so a limit changed at runtime (admin
-	// console) takes effect at once, and a tenant can have limits of its own. Rate and Burst are used when it is nil.
-	Limits func(tenant string) (rate float64, burst int)
-	Now    func() time.Time
-
-	mu      sync.Mutex
-	buckets map[string]*bucket
-}
-
-type bucket struct {
-	tokens float64
-	last   time.Time
-}
-
-// Allow takes a token for the tenant; when none is left it returns how long to wait.
-func (l *RateLimiter) Allow(tenant string) (ok bool, retryAfter time.Duration) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.buckets == nil {
-		l.buckets = map[string]*bucket{}
-	}
-	rate, burst := l.Rate, l.Burst
-	if l.Limits != nil {
-		rate, burst = l.Limits(tenant)
-	}
-	now := l.Now()
-	b, found := l.buckets[tenant]
-	if !found {
-		b = &bucket{tokens: float64(burst), last: now}
-		l.buckets[tenant] = b
-	}
-	b.tokens = math.Min(float64(burst), b.tokens+now.Sub(b.last).Seconds()*rate)
-	b.last = now
-	if b.tokens >= 1 {
-		b.tokens--
-		return true, 0
-	}
-	return false, time.Duration((1 - b.tokens) / rate * float64(time.Second))
-}
-
-// RateLimit applies the limiter to every request of the authenticated tenant; it must run after Auth.
-func RateLimit(l *RateLimiter) func(http.Handler) http.Handler {
-	return RateLimitWhen(l, func(string) bool { return true })
-}
-
-// RateLimitWhen applies the limiter only to tenants for which applies returns true (nil applies to none). The Tive
-// webhook uses it: Tive does not retry a 429, so refusing its traffic would lose data, and the webhook is only
-// limited when an operator turns that on for a tenant.
-func RateLimitWhen(l *RateLimiter, applies func(tenant string) bool) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p, _ := auth.FromContext(r.Context())
-			if applies != nil && applies(p.TenantID) {
-				if ok, wait := l.Allow(p.TenantID); !ok {
-					w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
-					WriteProblem(w, r, http.StatusTooManyRequests, "RATE_LIMITED", "rate limit exceeded for this tenant")
-					return
-				}
-			}
 			next.ServeHTTP(w, r)
 		})
 	}

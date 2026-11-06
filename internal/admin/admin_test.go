@@ -58,7 +58,7 @@ func newEnv(t *testing.T) *env {
 	base, _ := rules.Default()
 	holder := rules.NewHolder(base, rules.SourceDefault, time.Now())
 	reloader := &rulesync.Reloader{Source: st, Holder: holder, Base: base, BaseSource: rules.SourceDefault, Log: slog.New(slog.NewJSONHandler(io.Discard, nil))}
-	defaults := settings.Values{RateLimitPerSec: 50, RateLimitBurst: 100, QueueMaxDepth: 5000, WorkersMin: 2, WorkersMax: 8, JobsPerWorker: 50, LagSLOSeconds: 10, MaxAttempts: 5}
+	defaults := settings.Values{QueueMaxDepth: 5000, WorkersMin: 2, WorkersMax: 8, JobsPerWorker: 50, LagSLOSeconds: 10, MaxAttempts: 5}
 	live := settings.NewHolder(defaults)
 	syncer := &settings.Syncer{Source: st, Holder: live, Base: defaults}
 

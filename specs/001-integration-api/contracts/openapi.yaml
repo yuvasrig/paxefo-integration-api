@@ -61,12 +61,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IngestResponse' }
-        '429':
-          description: |
-            Rate limited. This is **not** returned by the Tive webhook by default: Tive does not honour 429 or
-            `Retry-After`, so the webhook is exempt from the rate limit unless it is switched on for a tenant
-            (setting `rate_limit_webhook`). It applies to the read and replay endpoints.
-          headers: { Retry-After: { schema: { type: integer } } }
         '503':
           description: |
             The tenant's queue is full (async ingest mode, `code: QUEUE_FULL`). Nothing was stored; retry after the
@@ -92,7 +86,6 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '413': { $ref: '#/components/responses/TooLarge' }
         '422': { description: Unusable record, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
-        '429': { description: 'Same as the primary path: only if the webhook rate limit is switched on for the tenant (default off).', headers: { Retry-After: { schema: { type: integer } } } }
         '500': { description: Failure after raw save, content: { application/json: { schema: { $ref: '#/components/schemas/IngestResponse' } } } }
 
   /api/v1/events/{id}:
@@ -261,12 +254,6 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }
-    RateLimited:
-      description: Per-tenant rate limit exceeded; nothing saved
-      headers: { Retry-After: { $ref: '#/components/headers/RetryAfter' } }
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
     NotFound:
       description: Unknown id, or not visible to this tenant
       content:
@@ -350,7 +337,7 @@ components:
       properties:
         code:
           type: string
-          enum: [INVALID_JSON, NO_DEVICE_IDENTITY, NO_TIMESTAMP, TIMESTAMP_FUTURE, NO_USABLE_DATA, UNAUTHORIZED, PAYLOAD_TOO_LARGE, RATE_LIMITED, NOT_FOUND, NOT_REPLAYABLE, INVALID_REQUEST, UNAVAILABLE, INTERNAL]
+          enum: [INVALID_JSON, NO_DEVICE_IDENTITY, NO_TIMESTAMP, TIMESTAMP_FUTURE, NO_USABLE_DATA, UNAUTHORIZED, PAYLOAD_TOO_LARGE, NOT_FOUND, NOT_REPLAYABLE, INVALID_REQUEST, UNAVAILABLE, INTERNAL]
         field: { type: string }
         message: { type: string }
 

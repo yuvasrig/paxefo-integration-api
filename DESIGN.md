@@ -95,7 +95,7 @@ Sender ┘    │ (reqID, auth,      raw_events + ledger        [async] ingest_j
 cmd/api/main.go             wiring, roles, graceful shutdown, `keys` CLI subcommand
 internal/config             env parsing, thresholds, toggles
 internal/httpapi            routes, handlers, error envelope
-internal/httpapi/middleware request ID, logging, auth, body limit, rate limit, recover, tracing
+internal/httpapi/middleware request ID, logging, auth, body limit, recover, tracing
 internal/auth               API key hashing, lookup, tenant context
 internal/ingest             pipeline orchestration, idempotency decision, replay
 internal/queue              Queue interface; Postgres implementation
@@ -127,7 +127,7 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 | F3 | Ingest, rejected | Unusable record; tenant mismatch; bad JSON | Raw saved `rejected` + reasons; 422 (400 for bad JSON) | #9, #12 |
 | F4 | Duplicate / conflict | Same `(device_imei, ts)` | Same hash: 200 `duplicate`, no write. Different hash: the tenant's conflict policy — `keep_first` (default: first kept, conflict stored + flagged), `keep_last` (replaced; old event stays archived) or `reject` (nothing written); HTTP 200 or 409 per tenant | #0 vs #1, #4, #8; any sample re-sent |
 | F5 | Device resolution | IMEI missing or names disagree | Resolve by `DeviceName`, else reject; mismatch flagged | #4, #12, #0, #7 |
-| F6 | Edge rejection | Bad key, body > 256 KB, rate limit, backpressure | 401 / 413 / 429 / 503 + `Retry-After`; nothing saved | — |
+| F6 | Edge rejection | Bad key, body > 256 KB, backpressure (rate limiting skipped: ADR 0002) | 401 / 413 / 503 + `Retry-After`; nothing saved | — |
 | F7 | Failure + replay | Error after raw save | Event `failed`; `POST /api/v1/events/{id}/replay` reruns idempotently | — |
 | F8 | Query | GET readings / events / alerts / queue / reconciliation | Tenant-scoped (RLS), cursor-paginated | — |
 | F9 | Async processing | Jobs pending | Workers claim batches, process, delete jobs; retries with backoff | — |
@@ -138,7 +138,7 @@ Dependencies point one way: `httpapi → ingest → provider | rules | domain | 
 | F13 | Lifecycle | Startup / SIGTERM / probes | Config → DB → migrations (+Timescale) → serve; drain on shutdown | — |
 
 ### 4.1 Ingest pipeline (both modes)
-1. Middleware: request ID, auth (key → tenant, authoritative), body ≤ 256 KB, per-tenant rate limit, backpressure check (async). Every DB transaction runs `SET LOCAL app.tenant_id` so row-level security applies.
+1. Middleware: request ID, auth (key → tenant, authoritative), body ≤ 256 KB, backpressure check (async). No rate limit (skipped on purpose: Tive cannot be throttled, ADR 0002). Every DB transaction runs `SET LOCAL app.tenant_id` so row-level security applies.
 1a. Tenant: it is the API key's tenant and nothing else. The payload's `AccountId` is stored as metadata (in the readings' `extras`) and never checked: there is no account-to-tenant mapping, no `TENANT_MISMATCH`, no `common-pool`.
 2. **Tx 1:** insert `raw_events` (payload, hash = SHA-256 of canonical JSON (keys sorted, no insignificant whitespace) so key order or formatting never creates a false conflict, tenant_id, received_at, request/trace context) + insert one `ingest_ledger` row (insert-only, no shared counter row) (+ insert `ingest_jobs` row in async mode). Commit.
 3. Mode comes from the tenant's config (`ingest_mode`, default from env). Sync: run steps 4–6 in-request. Async: return 202 `{event_id}`.
@@ -187,7 +187,7 @@ Unknown extra fields are accepted (kept in raw).
 
 The rules engine is a **framework for configurable rules**, with a set of rules shipped as the default. The framework (`internal/rules`) knows how to load, validate and apply a ruleset; the rules are data: *for this field, when this condition holds, take this action*. The flag table above is the **default ruleset** that ships in the binary (`default_rules.yaml`). Anyone can add, change or switch off a rule by editing YAML, with no Go change (a likely live-change request).
 
-**Rules are configurable on the fly.** An operator publishes a ruleset with `api rules set --file my.yaml` (validated first; stored in the `rulesets` table). Every running instance polls for it (`RULES_REFRESH_INTERVAL`, default 10 s), validates it again and swaps it in atomically (`rules.Holder`) with no restart. A payload is processed with one ruleset, read once. An invalid ruleset is refused at publish; one that fails to load at runtime never replaces the working one (the instance logs it and keeps serving); `api rules reset` goes back to the default. Each event records the `rules_version` that processed it, so a version must change whenever the rules change (publishing an existing version is refused). A ruleset can carry per-tenant `overrides`, so tenants can differ. What is *not* a rule: auth, size and rate limits, conflict handling, and a few checks that need context a rule cannot express (probe fallback, `INVALID_TYPE`, the accuracy category, the `NO_USABLE_DATA` / `NO_TIMESTAMP` rejections).
+**Rules are configurable on the fly.** An operator publishes a ruleset with `api rules set --file my.yaml` (validated first; stored in the `rulesets` table). Every running instance polls for it (`RULES_REFRESH_INTERVAL`, default 10 s), validates it again and swaps it in atomically (`rules.Holder`) with no restart. A payload is processed with one ruleset, read once. An invalid ruleset is refused at publish; one that fails to load at runtime never replaces the working one (the instance logs it and keeps serving); `api rules reset` goes back to the default. Each event records the `rules_version` that processed it, so a version must change whenever the rules change (publishing an existing version is refused). A ruleset can carry per-tenant `overrides`, so tenants can differ. What is *not* a rule: auth, size limits, conflict handling, and a few checks that need context a rule cannot express (probe fallback, `INVALID_TYPE`, the accuracy category, the `NO_USABLE_DATA` / `NO_TIMESTAMP` rejections).
 
 **Guardrails**
 1. Every fix is flagged with original value, new value, and rule ID — nothing changes silently.
@@ -295,7 +295,7 @@ Kept outside PAXAFE output: probe temperature, shipment data, `AccountId`, signa
 | `rulesets` | Rulesets published at runtime (`api rules set`) | `id`, `version` (unique; recorded on every event), `yaml`, `created_by`, `created_at`, `active` | At most one active row; no row = use `RULES_PATH` or the embedded default. Global config, not RLS; the app role can only read |
 | `event_outcome_history` | Outcomes replaced by a reprocess (`api replay --apply`) | `raw_event_id`, `tenant_id`, `replay_run_id`, `status`, `reasons`, `flags`, `expected_outputs`, `transform_version`, `rules_version`, `processed_at`, `attempts`, `archived_at` | RLS; app role may only read and insert |
 | `replay_runs` | Audit of applied replays, one row per tenant per run | `run_id`, `tenant_id`, `requested_by`, `params`, `started_at`, `finished_at`, counts, `transitions` | Operator data (owner connection); no app access |
-| `tenants` | Tenant registry | `id`, `name`, `status`, `plan`, `retention_days`, `config` JSONB (ingest_mode, workers, capacity, temp bands, alert thresholds, rule overrides, rate limit) | PK `id` |
+| `tenants` | Tenant registry | `id`, `name`, `status`, `plan`, `retention_days`, `config` JSONB (ingest_mode, workers, capacity, temp bands, alert thresholds, rule overrides, per-tenant `settings`) | PK `id` |
 
 ### 7.1 Storage toggle — `STORAGE_BACKEND=postgres|timescale`
 TimescaleDB is a Postgres extension: same driver, tables, inserts. Only three things differ:
@@ -314,7 +314,7 @@ Fail fast at startup if the extension is missing. `/readyz` reports the backend.
 | Tenant resolution | The API key's tenant, and nothing else. The payload's `AccountId` is stored as metadata (readings' `extras`) and never checked. There is no account-to-tenant mapping, no `common-pool`, no `TENANT_MISMATCH` |
 | Device identity | Scoped per tenant with validity windows, so a reused tracker's history stays with the right customer |
 | Keys and indexes | Every unique key and index leads with `tenant_id` |
-| Limits | Rate limit and quota per tenant (from plan/config); 429 is tenant-scoped |
+| Limits | Queue limit per tenant (backpressure); no rate limit, see ADR 0002 |
 | Per-tenant config | `ingest_mode`, worker allocation (§8.6), capacity profile (§14.1), temperature bands, alert thresholds, rule overrides, retention |
 | Observability | `tenant_id` in every log line and span; metrics labeled by tenant only for low-cardinality series (tenant counts are small) |
 | Alerts and reconciler | Evaluated per tenant; daily completeness report per tenant |
@@ -522,7 +522,7 @@ All endpoints except probes/metrics require `X-API-Key`; all queries are tenant-
 | 401 | Missing/invalid/expired key | — |
 | 413 | Body > 256 KB | — |
 | 422 | Unusable record | `rejected` |
-| 429 | Rate limit (`Retry-After`) | — |
+| 429 | not used: rate limiting was skipped (ADR 0002) | — |
 | 503 | Backpressure (`Retry-After`) | — |
 | 500 | Failure after raw save | `failed` |
 
@@ -549,7 +549,7 @@ Errors: same envelope, `errors[]` of `{code, field, message}`.
 - Stored as SHA-256 hash + display prefix; plaintext shown once at creation; bound to a tenant; `expires_at`, `revoked_at`.
 - CLI: `./api keys create --tenant reviewer --name paxafe-reviewer --expires 2026-12-15` (also `list`, `revoke`).
 - Two keys at submission: **reviewer key** (in email, own tenant `reviewer`) and **sender key** (sender's Render env; server-to-server, never in the browser). Sender UI also accepts a user-entered key.
-- Rate limit per key (token bucket, in-memory per instance; Redis/DB-backed noted for multi-instance).
+- No rate limit: Tive cannot be throttled, so a refusal would lose data (ADR 0002). Protection is the queue limit, the worker pools and cap, and alerts.
 
 ---
 
@@ -566,7 +566,7 @@ Errors: same envelope, `errors[]` of `{code, field, message}`.
 | Scalability | Horizontal API + workers | Stateless, SKIP LOCKED, order-independent | Kafka partitions |
 | Availability | Zero-downtime deploys | Probes, graceful drain | Paid tier (no cold start) |
 | Auditability | Every row traceable | Immutable raw, outcome + transform_version, UTC | Signed audit log |
-| Security | No unauthenticated writes | Hashed scoped keys, body limit, rate limit, env secrets | HMAC signatures, key UI |
+| Security | No unauthenticated writes | Hashed scoped keys, body limit, env secrets (no rate limit: ADR 0002) | HMAC signatures, key UI |
 | Tenant isolation | No cross-tenant reads | Key → tenant; RLS on every table; fair queueing; per-tenant limits | Schema/DB per tenant |
 | Observability | Diagnose any event < 5 min | Correlated logs, metrics, traces, dashboards | — |
 | Recoverability | Fix bugs without loss | Single-event replay; `api replay` reprocesses a window after a fix (dry run first, history and audit kept); reconciler heal designed | Pulling missing data from Tive's API |
@@ -807,7 +807,7 @@ Live-change workflow: change the spec → change the test → change the code.
 ## 22. Scale path
 Tive → API (validate, persist raw, ack) → Kafka (partitioned by IMEI) → stateless transform workers (consumer group) → Postgres/TimescaleDB (operational) → CDC (Debezium) → ClickHouse/Snowflake (analytics). Per-device stateful checks (excursion duration, travel) move to a Flink job keyed by device.
 
-**With more time:** HMAC signatures, key management UI, distributed rate limiting, second provider, signed audit log.
+**With more time:** HMAC signatures, key management UI, a rate limit for providers that honour 429, second provider, signed audit log.
 
 ---
 
@@ -906,7 +906,7 @@ Do not start the next milestone without my approval. Do not add features outside
 - `internal/ingest` (sync mode only): pipeline §4.1 — tx1 (raw event + ledger row) commit → parse → tenant from the API key (§4.1 1a) → rules → transform → tx2 (readings, conflicts, device/shipment upserts with "only if newer", outcome with `expected_outputs`, `transform_version`, `rules_version`).
 - Duplicate handling: same hash → 200 `duplicate`, no write; different hash → the tenant's conflict policy (default `keep_first`: first kept, row in `reading_conflicts`, 200 `conflict` + `DUPLICATE_CONFLICT` flag).
 - Failure after tx1 → outcome `failed`, 500; `POST /api/v1/events/{id}/replay` re-runs idempotently.
-- `internal/httpapi`: routes `POST /api/webhook/tive` (alias `POST /api/v1/webhook/tive`), `GET /api/v1/events/{id}`, `POST /api/v1/events/{id}/replay`, `GET /api/v1/readings` (device_id, from, to, cursor); response envelope and status codes per §12; body limit 256 KB; per-tenant token-bucket rate limit (in-memory).
+- `internal/httpapi`: routes `POST /api/webhook/tive` (alias `POST /api/v1/webhook/tive`), `GET /api/v1/events/{id}`, `POST /api/v1/events/{id}/replay`, `GET /api/v1/readings` (device_id, from, to, cursor); response envelope and status codes per §12; body limit 256 KB; no rate limit (ADR 0002).
 
 **Tests**
 - HTTP integration: all 13 samples through the real endpoint → match `expected/`.
@@ -1019,6 +1019,8 @@ Do not start the next milestone without my approval. Do not add features outside
 ---
 
 ## 24. Changelog
+
+- **2026-11-06 (rate limiting removed, on purpose)** — Rate limiting is skipped, and the reason is recorded in `docs/adr/0002-no-rate-limiting.md`: Tive cannot be throttled (it retries a 5xx once, does not honour 429 or `Retry-After`), so a request refused for rate is lost on Tive's side. Removed: the token-bucket limiter and its middleware, the `rate_limit_per_sec` / `rate_limit_burst` / `rate_limit_webhook` settings and `RATE_LIMIT_*` env vars, the 429 response in the OpenAPI contract, and spec F6-R4 (retired). Migration 00008 deletes any stored values of those settings. The webhook is protected by raw-first storage, async mode, the per-tenant queue limit (503 as a last resort), per-tenant worker pools, the hard worker cap and alerts. Supersedes the "Tive cannot be throttled" entry's `rate_limit_webhook` switch and §12's per-tenant limit; text above that still mentions a rate limit describes the original design.
 
 - **2026-11-06 (Tive cannot be throttled)** — Tive's developer documentation and the operator's confirmation: Tive does not support throttling (it does not honour 429 or `Retry-After`; on a 5xx it retries once, then gives up). So the Tive webhook is **exempt from the rate limit by default**: `rate_limit_webhook` (0 or 1, global or per tenant, env `RATE_LIMIT_WEBHOOK`) turns the limit on for a tenant that wants it. The rate limit (`rate_limit_per_sec` / `rate_limit_burst`) now protects the read and replay endpoints, and webhook traffic no longer uses up their tokens. The webhook is protected instead by raw-first storage, the async queue (202), the queue limit (503 as a last resort), the per-tenant worker pools and the hard worker cap, and the alerts for a queue nearing its limit. Corrected the earlier assumption that Tive retries buffer the excess. Not built: verification of Tive's `x-tive-signature` (HMAC-SHA256 over `timestamp.body`) and a source-IP allow-list (Tive sends from 34.195.102.163).
 

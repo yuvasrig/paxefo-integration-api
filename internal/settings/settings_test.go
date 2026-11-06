@@ -11,7 +11,7 @@ import (
 )
 
 func base() Values {
-	return Values{RateLimitPerSec: 100, RateLimitBurst: 200, QueueMaxDepth: 5000, WorkersMin: 2, WorkersMax: 8, JobsPerWorker: 50, LagSLOSeconds: 10, MaxAttempts: 5}
+	return Values{QueueMaxDepth: 5000, WorkersMin: 2, WorkersMax: 8, JobsPerWorker: 50, LagSLOSeconds: 10, MaxAttempts: 5}
 }
 
 func TestEveryDefHasAGetter(t *testing.T) {
@@ -24,7 +24,7 @@ func TestEveryDefHasAGetter(t *testing.T) {
 			t.Errorf("%s needs a title and help", d.Key)
 		}
 	}
-	if v.Get("rate_limit_per_sec") != "100" || v.Get("queue_max_depth") != "5000" || v.Get("nope") != "" {
+	if v.Get("lag_slo_seconds") != "10" || v.Get("queue_max_depth") != "5000" || v.Get("nope") != "" {
 		t.Fatal("getter values")
 	}
 }
@@ -34,13 +34,14 @@ func TestValidate(t *testing.T) {
 		key, val string
 		wantErr  string
 	}{
-		{"rate_limit_per_sec", "250.5", ""},
-		{"rate_limit_burst", "1", ""},
+		{"queue_max_depth", "250", ""},
+		{"max_attempts", "1", ""},
 		{"workers_min", "0", ""},
 		{"workers_max", "16", ""},
-		{"rate_limit_per_sec", "0", "between"},
-		{"rate_limit_per_sec", "fast", "number"},
-		{"rate_limit_burst", "2.5", "whole"},
+		{"lag_slo_seconds", "0", "between"},
+		{"lag_slo_seconds", "fast", "number"},
+		{"max_attempts", "2.5", "whole"},
+		{"rate_limit_per_sec", "100", "unknown"}, // rate limiting was removed: Tive cannot be throttled
 		{"queue_max_depth", "-1", "between"},
 		{"workers_max", "5000", "between"},
 		{"max_attempts", "0", "between"},
@@ -58,14 +59,14 @@ func TestValidate(t *testing.T) {
 
 func TestApplyIgnoresBadOverrides(t *testing.T) {
 	rows := []store.SettingRow{
-		{Key: "rate_limit_per_sec", Value: "250"},
+		{Key: "lag_slo_seconds", Value: "250"},
 		{Key: "queue_max_depth", Value: "garbage"},
 		{Key: "unknown", Value: "1"},
 		{Key: "workers_min", Value: "99"},
 		{Key: "workers_max", Value: "12"},
 	}
 	v, errs := Apply(base(), rows)
-	if v.RateLimitPerSec != 250 || v.QueueMaxDepth != 5000 || v.WorkersMax != 12 || v.WorkersMin != 2 {
+	if v.LagSLOSeconds != 250 || v.QueueMaxDepth != 5000 || v.WorkersMax != 12 || v.WorkersMin != 2 {
 		t.Fatalf("values %+v", v)
 	}
 	if len(errs) != 3 {
@@ -143,7 +144,7 @@ func TestResolveTenantValueWinsOverGlobal(t *testing.T) {
 	if len(errs) != 0 || v.QueueMaxDepth != 10 || v.WorkersMax != 3 || v.WorkersMin != 1 {
 		t.Fatalf("%+v %v", v, errs)
 	}
-	if v.RateLimitPerSec != g.RateLimitPerSec || v.MaxAttempts != g.MaxAttempts {
+	if v.LagSLOSeconds != g.LagSLOSeconds || v.MaxAttempts != g.MaxAttempts {
 		t.Fatalf("anything the tenant does not set is the global value: %+v", v)
 	}
 	if g != base() {
@@ -235,22 +236,5 @@ func TestSyncerAppliesTenantOverridesAndTheyBeatChangedGlobals(t *testing.T) {
 	src.err = errors.New("db down")
 	if err := s.Refresh(context.Background()); err == nil || h.For("bioco").QueueMaxDepth != 999 {
 		t.Fatal("an error leaves everything as it was")
-	}
-}
-
-func TestWebhookRateLimitSettingIsPerTenantAndOffByDefault(t *testing.T) {
-	g := base()
-	if g.RateLimitWebhook != 0 {
-		t.Fatal("the webhook is not rate limited unless asked")
-	}
-	v, errs := Resolve(g, map[string]string{"rate_limit_webhook": "1"})
-	if len(errs) != 0 || v.RateLimitWebhook != 1 || g.RateLimitWebhook != 0 {
-		t.Fatalf("a tenant can switch it on for itself: %+v %v", v, errs)
-	}
-	if _, err := g.With("rate_limit_webhook", "2"); err == nil {
-		t.Fatal("only 0 or 1")
-	}
-	if g.Get("rate_limit_webhook") != "0" || v.Get("rate_limit_webhook") != "1" {
-		t.Fatal("Get reads it back")
 	}
 }

@@ -24,7 +24,6 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
 	"github.com/yuvasrig/paxefo-integration-api/internal/config"
 	"github.com/yuvasrig/paxefo-integration-api/internal/httpapi"
-	"github.com/yuvasrig/paxefo-integration-api/internal/httpapi/middleware"
 	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
 	"github.com/yuvasrig/paxefo-integration-api/internal/observability"
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
@@ -50,17 +49,15 @@ func (f *failingStore) Commit(c context.Context, in store.CommitInput) (store.Co
 }
 
 type env struct {
-	t              *testing.T
-	st             *failingStore
-	srv            *httptest.Server
-	keys           map[string]string // tenant -> plaintext key
-	limiter        *middleware.RateLimiter
-	now            time.Time
-	logs           *syncBuffer
-	holder         *rules.Holder
-	metrics        *observability.Metrics
-	ing            *ingest.Service
-	webhookLimited atomic.Bool // whether the rate limit also applies to the webhook (off by default, as in production)
+	t       *testing.T
+	st      *failingStore
+	srv     *httptest.Server
+	keys    map[string]string // tenant -> plaintext key
+	now     time.Time
+	logs    *syncBuffer
+	holder  *rules.Holder
+	metrics *observability.Metrics
+	ing     *ingest.Service
 }
 
 type syncBuffer struct {
@@ -106,7 +103,6 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(rcancel)
 	go (&rulesync.Reloader{Source: pg, Holder: e.holder, Base: rs, BaseSource: rules.SourceDefault, Interval: 20 * time.Millisecond,
 		Log: slog.New(slog.NewJSONHandler(io.Discard, nil))}).Run(rctx)
-	e.limiter = &middleware.RateLimiter{Rate: 1000, Burst: 1000, Now: func() time.Time { return time.Now() }}
 	log := slog.New(slog.NewJSONHandler(e.logs, nil))
 	metrics := observability.NewMetrics(pg.Pool().Stat)
 	e.metrics = metrics
@@ -123,11 +119,9 @@ func newEnv(t *testing.T) *env {
 			v, err := pg.MigrationVersion(c)
 			return httpapi.ReadyInfo{MigrationVersion: v, StorageBackend: "postgres", IngestMode: "sync"}, err
 		},
-		Authenticator:  &auth.Authenticator{Keys: pg, Now: func() time.Time { return time.Now() }},
-		Limiter:        e.limiter,
-		WebhookLimited: func(string) bool { return e.webhookLimited.Load() },
-		BodyLimit:      256 << 10,
-		Log:            log,
+		Authenticator: &auth.Authenticator{Keys: pg, Now: func() time.Time { return time.Now() }},
+		BodyLimit:     256 << 10,
+		Log:           log,
 	}
 	e.srv = httptest.NewServer(api.Handler())
 	t.Cleanup(e.srv.Close)
@@ -381,71 +375,23 @@ func TestAccountIDIsMetadataOnly(t *testing.T) {
 }
 
 // F6-R4: per-tenant rate limit with Retry-After.
-// Tive does not honour 429 or Retry-After, so by default the webhook is never rate limited: a refused payload would be
-// lost on Tive's side. The queue limit and the workers protect the service instead.
-func TestWebhookIsNotRateLimitedByDefault_F6R4(t *testing.T) {
+// Tive does not honour 429 or Retry-After, so the service has no rate limit that could refuse its traffic: a burst far
+// beyond anything a tracker fleet sends is all accepted.
+func TestNoRateLimitRefusesTheWebhook_F6(t *testing.T) {
 	e := newEnv(t)
-	e.limiter.Rate, e.limiter.Burst = 0.5, 2 // far below what is sent
-	e.limiter.Now = func() time.Time { return e.now }
-	for i := 0; i < 12; i++ {
-		if code, _ := e.post("reviewer", sample(t, 2)); code != 200 {
-			t.Fatalf("webhook request %d: %d (the webhook must not be refused for rate)", i, code)
+	for i := 0; i < 60; i++ {
+		path := "/api/webhook/tive"
+		if i%2 == 1 {
+			path = "/api/v1/webhook/tive"
+		}
+		if code, hdr, _ := e.do("POST", path, e.keys["reviewer"], sample(t, 2)); code == 429 || hdr.Get("Retry-After") != "" {
+			t.Fatalf("request %d was refused for rate: %d", i, code)
 		}
 	}
-	for i := 0; i < 5; i++ {
-		if code, _, _ := e.do("POST", "/api/v1/webhook/tive", e.keys["reviewer"], sample(t, 2)); code == 429 {
-			t.Fatalf("the alias path is exempt too")
-		}
-	}
-}
-
-// The limit still protects the read and replay API, per tenant, and webhook traffic does not use up its tokens.
-func TestRateLimitStillAppliesToTheReadAPI_F6R4(t *testing.T) {
-	e := newEnv(t)
-	e.limiter.Rate, e.limiter.Burst = 0.5, 2
-	e.limiter.Now = func() time.Time { return e.now }
-	for i := 0; i < 20; i++ {
-		e.post("reviewer", sample(t, 2)) // heavy webhook traffic first
-	}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 30; i++ {
 		if code, _, _ := e.do("GET", "/api/v1/rules", e.keys["reviewer"], nil); code != 200 {
-			t.Fatalf("read %d: %d (webhook traffic must not consume the read API's tokens)", i, code)
+			t.Fatalf("read %d: %d", i, code)
 		}
-	}
-	code, hdr, _ := e.do("GET", "/api/v1/rules", e.keys["reviewer"], nil)
-	if code != 429 || hdr.Get("Retry-After") != "2" {
-		t.Fatalf("third read: %d Retry-After=%q", code, hdr.Get("Retry-After"))
-	}
-	if code, _, _ := e.do("GET", "/api/v1/rules", e.keys["acme-pharma"], nil); code != 200 {
-		t.Fatalf("the limit is per tenant, acme got %d", code)
-	}
-	e.now = e.now.Add(3 * time.Second)
-	if code, _, _ := e.do("GET", "/api/v1/rules", e.keys["reviewer"], nil); code != 200 {
-		t.Fatalf("after waiting: %d", code)
-	}
-}
-
-// An operator can still cap a tenant's webhook (accepting that Tive will not retry what is refused).
-func TestWebhookRateLimitCanBeTurnedOn_F6R4(t *testing.T) {
-	e := newEnv(t)
-	e.webhookLimited.Store(true)
-	e.limiter.Rate, e.limiter.Burst = 0.5, 2
-	e.limiter.Now = func() time.Time { return e.now }
-	for i := 0; i < 2; i++ {
-		if code, _ := e.post("reviewer", sample(t, 2)); code != 200 {
-			t.Fatalf("request %d: %d", i, code)
-		}
-	}
-	code, hdr, _ := e.do("POST", "/api/v1/webhook/tive", e.keys["reviewer"], sample(t, 2))
-	if code != 429 || hdr.Get("Retry-After") != "2" {
-		t.Fatalf("third request: %d Retry-After=%q", code, hdr.Get("Retry-After"))
-	}
-	if code, _ := e.post("acme-pharma", sample(t, 10)); code != 200 {
-		t.Fatalf("the limit is per tenant, acme got %d", code)
-	}
-	e.now = e.now.Add(3 * time.Second)
-	if code, _ := e.post("reviewer", sample(t, 2)); code != 200 {
-		t.Fatalf("after waiting: %d", code)
 	}
 }
 

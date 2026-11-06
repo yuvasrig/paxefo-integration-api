@@ -1381,3 +1381,39 @@ func TestListConflicts(t *testing.T) {
 		t.Fatalf("conflicts are per tenant: %+v", other)
 	}
 }
+
+func TestMigrationDropsRateLimitSettings(t *testing.T) {
+	st := newStore(t)
+	sql, err := os.ReadFile("../../migrations/00008_drop_rate_limit_settings.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := strings.SplitN(strings.SplitN(string(sql), "-- +goose Up", 2)[1], "-- +goose Down", 2)[0]
+	for _, kv := range [][2]string{{"rate_limit_per_sec", "5"}, {"rate_limit_burst", "9"}, {"queue_max_depth", "77"}} {
+		if err := st.SetSetting(ctx, kv[0], kv[1], "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.CreateTenant(ctx, "limited", "Limited", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Pool().Exec(ctx, `UPDATE tenants SET config = '{"ingest_mode":"async","settings":{"rate_limit_burst":"3","rate_limit_webhook":"1","queue_max_depth":"10"}}'::jsonb WHERE id = 'limited'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Pool().Exec(ctx, up); err != nil {
+		t.Fatalf("migration: %v", err)
+	}
+	rows, _ := st.ListSettings(ctx)
+	if len(rows) != 1 || rows[0].Key != "queue_max_depth" {
+		t.Fatalf("only the rate-limit settings are removed: %+v", rows)
+	}
+	for _, i := range mustList(t, st) {
+		if i.ID != "limited" {
+			continue
+		}
+		got := settings.TenantOverrides(i.Config)
+		if len(got) != 1 || got["queue_max_depth"] != "10" || store.ParseIngestMode(i.Config) != "async" {
+			t.Fatalf("a tenant keeps its other settings: %s", i.Config)
+		}
+	}
+}

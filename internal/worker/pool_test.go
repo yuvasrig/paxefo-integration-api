@@ -81,7 +81,7 @@ func newEnv(t *testing.T, tenants ...string) *env {
 	}
 	rs, _ := rules.Default()
 	st := &flaky{PGStore: pg, fails: map[string]int{}}
-	set := settings.NewHolder(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 2, WorkersMax: 4, JobsPerWorker: 5, LagSLOSeconds: 10, MaxAttempts: 3})
+	set := settings.NewHolder(settings.Values{QueueMaxDepth: 1000, WorkersMin: 2, WorkersMax: 4, JobsPerWorker: 5, LagSLOSeconds: 10, MaxAttempts: 3})
 	svc := &ingest.Service{
 		Store: st, Provider: tive.NewDynamic(rules.NewHolder(rs, rules.SourceDefault, time.Now()), config.Default()),
 		Now: func() time.Time { return time.Date(2026, 11, 5, 8, 0, 0, 0, time.UTC) }, Log: slog.New(slog.NewJSONHandler(io.Discard, nil)),
@@ -229,7 +229,7 @@ func TestPanicInProcessingDoesNotKillTheWorker(t *testing.T) {
 
 func TestPoolScalesUpWithBacklogAndDownAfterwards(t *testing.T) {
 	e := newEnv(t, "reviewer")
-	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 4, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
+	e.set.Set(settings.Values{QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 4, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
 	// Hold the jobs back with a far-future retry time so they stay pending (a backlog) without being processed.
 	for i := 0; i < 20; i++ {
 		e.send(t, "reviewer", 2)
@@ -269,7 +269,7 @@ func TestShutdownFinishesTheClaimedBatchAndRemovesTheHeartbeat(t *testing.T) {
 // Every tenant has its own pool, sized from its own backlog: one tenant's burst does not add workers for another.
 func TestEachTenantHasItsOwnPool(t *testing.T) {
 	e := newEnv(t, "reviewer", "acme-pharma")
-	e.set.Set(settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 4, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
+	e.set.Set(settings.Values{QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 4, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3})
 	for i := 0; i < 20; i++ { // a big backlog for reviewer only, held back so it stays a backlog
 		e.send(t, "reviewer", 2)
 	}
@@ -291,7 +291,7 @@ func TestEachTenantHasItsOwnPool(t *testing.T) {
 // A tenant's own settings replace the global ones, and changing them at runtime resizes its pool.
 func TestTenantSettingsOverrideTheGlobalOnes(t *testing.T) {
 	e := newEnv(t, "reviewer", "acme-pharma")
-	global := settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 4, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3}
+	global := settings.Values{QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 4, JobsPerWorker: 2, LagSLOSeconds: 10, MaxAttempts: 3}
 	e.set.Set(global)
 	// The Syncer loads each tenant's own settings from the database, exactly as in production.
 	sctx, stopSync := context.WithCancel(ctx)
@@ -332,7 +332,7 @@ func TestTenantSettingsOverrideTheGlobalOnes(t *testing.T) {
 // A tenant's own retry limit decides when its poison job is given up on, while others use the global one.
 func TestTenantMaxAttemptsOverride(t *testing.T) {
 	e := newEnv(t, "reviewer", "acme-pharma")
-	global := settings.Values{RateLimitPerSec: 100, RateLimitBurst: 100, QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 2, JobsPerWorker: 5, LagSLOSeconds: 10, MaxAttempts: 5}
+	global := settings.Values{QueueMaxDepth: 1000, WorkersMin: 1, WorkersMax: 2, JobsPerWorker: 5, LagSLOSeconds: 10, MaxAttempts: 5}
 	e.set.SetAll(global, map[string]settings.Values{"acme-pharma": func() settings.Values { v := global; v.MaxAttempts = 1; return v }()})
 	a := e.send(t, "acme-pharma", 2)
 	r := e.send(t, "reviewer", 2)

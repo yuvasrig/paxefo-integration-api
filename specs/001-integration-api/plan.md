@@ -38,7 +38,7 @@ auth → tenant routing → **tx1** raw event + ledger (commit) → parse → ru
 | Tenant isolation | No cross-tenant reads | Key → tenant; RLS on every table | RLS + API tests (M2, M3) |
 | Auditability | Row traces to raw event + versions | Immutable raw, `transform_version`, `rules_version` | Outcome tests |
 | Latency | p95 < 200 ms sync | Pure transform, indexed writes | Sender load run (M6/M8c) |
-| Security | No unauthenticated writes | Hashed keys, 256 KB cap, rate limit, no secrets in logs | F6 tests, log test |
+| Security | No unauthenticated writes | Hashed keys, 256 KB cap, no rate limit (ADR 0002), no secrets in logs | F6 tests, log test |
 | Testability | Unit suite < 10 s | Pure functions, table tests | CI |
 
 Designed, not built: async queue, elastic workers, reconciler, alerting, traces, Timescale, KEDA demo, Kafka path (DESIGN.md §8–§11, §16, §22).

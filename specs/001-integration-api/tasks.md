@@ -31,7 +31,7 @@ Rule for every task: write the failing test (table-driven, requirement ID in the
 - [x] T3.4 Duplicate/conflict handling and status precedence (F4-R2, F4-R3, F4-R6).
 - [x] T3.5 Failure after tx1 → `failed`, 500; replay endpoint, idempotent, 409 when already ok (F7-R1…R4).
 - [x] T3.6 Handlers: webhook (+ alias), `GET /events/{id}` (owner or submitter), `GET /readings` (cursor), envelope and codes (F1-R1, F1-R7, F7-R6).
-- [x] T3.7 Body limit 256 KB, per-tenant token bucket (F6-R3, F6-R4); invalid JSON → 400 (F3-R1).
+- [x] T3.7 Body limit 256 KB (F6-R3); per-tenant token bucket (F6-R4) built, then removed: ADR 0002; invalid JSON → 400 (F3-R1).
 - [x] T3.8 HTTP integration: 13 samples in order → match `expected/`; 401/413/400/422/429; cross-tenant read blocked; raw-first fault injection.
 - [x] T3.9 `scripts/smoke.sh <url> <key>` posts 13 samples, checks statuses (accepts first-run or re-run column).
 - **Exit (verified locally 2026-11-05):** all tests green; `scripts/smoke.sh` passes 13/13 on first run and on re-run against the compose stack; every sample response matches `expected/` (HTTP test).

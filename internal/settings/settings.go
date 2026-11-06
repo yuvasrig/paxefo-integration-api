@@ -24,17 +24,14 @@ import (
 
 // Values is the set of runtime settings in force.
 type Values struct {
-	RateLimitPerSec    float64 // requests per second per tenant
-	RateLimitBurst     int     // burst size per tenant
-	RateLimitWebhook   int     // 1: the rate limit also applies to the Tive webhook (0, the default: it does not)
-	QueueMaxDepth      int     // jobs a tenant may have waiting before ingest answers 503
-	WorkersMin         int     // fewest workers an instance keeps running
-	WorkersMax         int     // most workers an instance runs
-	WorkersTotalMax    int     // most workers one process runs across all tenants' pools (0 = no cap)
-	JobsPerWorker      int     // backlog one worker is expected to keep up with (sizes the pool)
-	LagSLOSeconds      int     // a job waiting longer than this is "behind"
-	MaxAttempts        int     // tries before a job is given up as dead
-	AlertRejectPercent int     // alert when this share of a tenant's recent events is rejected (0 = off)
+	QueueMaxDepth      int // jobs a tenant may have waiting before ingest answers 503
+	WorkersMin         int // fewest workers an instance keeps running
+	WorkersMax         int // most workers an instance runs
+	WorkersTotalMax    int // most workers one process runs across all tenants' pools (0 = no cap)
+	JobsPerWorker      int // backlog one worker is expected to keep up with (sizes the pool)
+	LagSLOSeconds      int // a job waiting longer than this is "behind"
+	MaxAttempts        int // tries before a job is given up as dead
+	AlertRejectPercent int // alert when this share of a tenant's recent events is rejected (0 = off)
 }
 
 // Def describes one setting for the console and for validation.
@@ -48,9 +45,6 @@ type Def struct {
 }
 
 var defs = []Def{
-	{"rate_limit_per_sec", "Rate limit (requests/s per tenant)", "Requests per second each tenant may send to the API (events, readings, replay) before it gets 429. The Tive webhook is exempt unless 'Also limit the Tive webhook' is 1.", true, 0.1, 100000},
-	{"rate_limit_burst", "Rate limit burst", "How many requests a tenant may send at once before the per-second limit applies.", false, 1, 1000000},
-	{"rate_limit_webhook", "Also limit the Tive webhook (0 or 1)", "Tive does not honour 429 or Retry-After, so a refused webhook payload is lost on Tive's side. Leave at 0 (the webhook is protected by the queue limit and the workers instead). Set 1 only for a tenant you want to cap, accepting that.", false, 0, 1},
 	{"queue_max_depth", "Queue limit per tenant", "Waiting jobs a tenant may have before ingest answers 503 with Retry-After (backpressure).", false, 1, 100000000},
 	{"workers_min", "Workers per tenant: minimum", "Fewest workers each async tenant's pool keeps running per instance. A tenant can set its own on the Tenants page.", false, 0, 1000},
 	{"workers_max", "Workers per tenant: maximum", "Most workers each tenant's pool runs per instance. Keep tenants x workers x instances within the database connection budget.", false, 1, 1000},
@@ -77,12 +71,6 @@ func Lookup(key string) (Def, bool) {
 // Get returns a setting's current value as text.
 func (v Values) Get(key string) string {
 	switch key {
-	case "rate_limit_per_sec":
-		return strconv.FormatFloat(v.RateLimitPerSec, 'f', -1, 64)
-	case "rate_limit_burst":
-		return strconv.Itoa(v.RateLimitBurst)
-	case "rate_limit_webhook":
-		return strconv.Itoa(v.RateLimitWebhook)
 	case "queue_max_depth":
 		return strconv.Itoa(v.QueueMaxDepth)
 	case "workers_min":
@@ -145,12 +133,6 @@ func (v Values) With(key, raw string) (Values, error) {
 		return v, err
 	}
 	switch key {
-	case "rate_limit_per_sec":
-		v.RateLimitPerSec = f
-	case "rate_limit_burst":
-		v.RateLimitBurst = int(f)
-	case "rate_limit_webhook":
-		v.RateLimitWebhook = int(f)
 	case "queue_max_depth":
 		v.QueueMaxDepth = int(f)
 	case "workers_min":

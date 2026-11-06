@@ -38,7 +38,7 @@ Body:    JSON (Tive's standard payload)</pre>
     <label>Answer with <select name="http_status"><option value="200" {{if eq .Policy.HTTPStatus 200}}selected{{end}}>200</option><option value="409" {{if eq .Policy.HTTPStatus 409}}selected{{end}}>409</option></select></label>
     <button>Save</button>
   </form>
-  <p>Settings: {{if .Overrides}}this tenant overrides {{range .Overrides}}<code>{{.}}</code> {{end}}{{else}}uses the global values{{end}} · <a href="/admin/config?tenant={{.Info.ID}}">edit settings for {{.Info.ID}}</a> (worker limits, rate limit, queue limit, retries, alerts)</p>
+  <p>Settings: {{if .Overrides}}this tenant overrides {{range .Overrides}}<code>{{.}}</code> {{end}}{{else}}uses the global values{{end}} · <a href="/admin/config?tenant={{.Info.ID}}">edit settings for {{.Info.ID}}</a> (worker limits, queue limit, retries, alerts)</p>
   <table>
     <thead><tr><th>Key</th><th>Name</th><th>Created</th><th>State</th><th></th></tr></thead>
     <tbody>

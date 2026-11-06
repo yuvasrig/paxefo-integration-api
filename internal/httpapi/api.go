@@ -23,7 +23,6 @@ import (
 type API struct {
 	Ingest        *ingest.Service
 	Authenticator *auth.Authenticator
-	Limiter       *middleware.RateLimiter
 	BodyLimit     int64
 	Log           *slog.Logger
 
@@ -31,10 +30,7 @@ type API struct {
 	Ready    func(context.Context) (ReadyInfo, error) // /readyz
 	Metrics  http.Handler                             // /metrics (nil disables it)
 	Observer middleware.RequestObserver               // request metrics (may be nil)
-	// WebhookLimited says whether the rate limit also applies to a tenant's Tive webhook. Nil means never: Tive does not
-	// honour 429 or Retry-After, so by default the webhook is protected by the queue limit and the workers, not refused.
-	WebhookLimited func(tenant string) bool
-	Admin          http.Handler // the admin console (mounted at /admin when set; it does its own sign-in)
+	Admin    http.Handler                             // the admin console (mounted at /admin when set; it does its own sign-in)
 	// WorkerOnly serves just the probes and metrics (the worker role has no public API).
 	WorkerOnly bool
 }
@@ -51,12 +47,13 @@ func (a *API) Handler() http.Handler {
 		return middleware.Chain(mux, middleware.RequestID, middleware.AccessLog(a.Log, a.Observer), middleware.Recover(a.Log))
 	}
 
-	securedWith := func(limit func(http.Handler) http.Handler, h http.HandlerFunc, extra ...func(http.Handler) http.Handler) http.Handler {
-		chain := append([]func(http.Handler) http.Handler{middleware.Auth(a.Authenticator, a.Log), limit}, extra...)
+	// There is deliberately no rate limit: Tive does not honour 429 or Retry-After, so refusing its traffic would lose
+	// data. The webhook is protected by raw-first storage, the async queue and its limit, and the worker pools.
+	secured := func(h http.HandlerFunc, extra ...func(http.Handler) http.Handler) http.Handler {
+		chain := append([]func(http.Handler) http.Handler{middleware.Auth(a.Authenticator, a.Log)}, extra...)
 		return middleware.Chain(h, chain...)
 	}
-	secured := func(h http.HandlerFunc) http.Handler { return securedWith(middleware.RateLimit(a.Limiter), h) }
-	webhook := securedWith(middleware.RateLimitWhen(a.Limiter, a.WebhookLimited), a.webhook, middleware.BodyLimit(a.BodyLimit))
+	webhook := secured(a.webhook, middleware.BodyLimit(a.BodyLimit))
 	mux.Handle("POST /api/webhook/tive", webhook)    // the path the exercise requires
 	mux.Handle("POST /api/v1/webhook/tive", webhook) // versioned alias, same handler
 	mux.Handle("GET /api/v1/events/{id}", secured(a.getEvent))

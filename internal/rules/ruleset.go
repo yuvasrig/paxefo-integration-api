@@ -14,7 +14,7 @@
 // at runtime never replaces the working one. Each event records the rules version that processed it.
 // A ruleset can also carry per-tenant overrides, so tenants can differ.
 //
-// What is NOT a rule: authentication, size and rate limits, duplicate/conflict handling, and the few
+// What is NOT a rule: authentication, size limits, duplicate/conflict handling, and the few
 // checks that need context a rule cannot express (the probe fallback, the "no usable data" rejection). Those are
 // Go code, with their own settings.
 //

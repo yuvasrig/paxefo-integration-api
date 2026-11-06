@@ -34,5 +34,5 @@ worker containers (413 and 387). Stopping one worker container mid-run lost noth
 ## Consequences
 - On the free tier one container restart or idle sleep stops the API and the workers together. Queued jobs wait in Postgres and resume on wake.
 - Per-tenant worker totals are `max` times the number of worker containers; database connections are budgeted per container (`DB_MAX_CONNS`).
-- The rate limiter is in memory per `api` container, so with several API instances the effective limit per tenant is multiplied. A shared limiter (for example Postgres or Redis) is the next step if that matters.
+- There is no rate limiter to share between API containers (it was removed on purpose: `docs/adr/0002-no-rate-limiting.md`).
 - Not built: a worker container dedicated to chosen tenants (it would need a `WORKER_TENANTS` filter).

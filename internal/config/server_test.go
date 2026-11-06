@@ -14,19 +14,19 @@ func TestFromEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.Port != "8080" || s.LogLevel != "info" || s.IngestMode != "sync" || s.Role != "all" ||
-		s.BodyLimitBytes != 256<<10 || s.RateLimitPerSec != 100 || s.RateLimitBurst != 200 ||
+		s.BodyLimitBytes != 256<<10 ||
 		s.DBMaxConns != 10 || s.QueryTimeout != 5*time.Second || s.RulesRefresh != 10*time.Second {
 		t.Fatalf("unexpected defaults: %+v", s)
 	}
 
 	s, err = FromEnv(env(map[string]string{
 		"DATABASE_URL": "postgres://x", "PORT": "10000", "LOG_LEVEL": "debug", "BODY_LIMIT_BYTES": "1024",
-		"RATE_LIMIT_PER_SEC": "2.5", "RATE_LIMIT_BURST": "7", "DB_MAX_CONNS": "3", "DB_QUERY_TIMEOUT": "750ms", "RULES_PATH": "/r.yaml", "RULES_REFRESH_INTERVAL": "2s",
+		"DB_MAX_CONNS": "3", "DB_QUERY_TIMEOUT": "750ms", "RULES_PATH": "/r.yaml", "RULES_REFRESH_INTERVAL": "2s",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Port != "10000" || s.LogLevel != "debug" || s.BodyLimitBytes != 1024 || s.RateLimitPerSec != 2.5 || s.RateLimitBurst != 7 ||
+	if s.Port != "10000" || s.LogLevel != "debug" || s.BodyLimitBytes != 1024 ||
 		s.DBMaxConns != 3 || s.QueryTimeout != 750*time.Millisecond || s.RulesPath != "/r.yaml" || s.RulesRefresh != 2*time.Second {
 		t.Fatalf("unexpected overrides: %+v", s)
 	}
@@ -49,7 +49,6 @@ func TestFromEnvErrors_F13R2(t *testing.T) {
 		{"bad port", map[string]string{"PORT": "abc"}, "PORT"},
 		{"bad level", map[string]string{"LOG_LEVEL": "loud"}, "LOG_LEVEL"},
 		{"bad body limit", map[string]string{"BODY_LIMIT_BYTES": "0"}, "BODY_LIMIT_BYTES"},
-		{"bad rate", map[string]string{"RATE_LIMIT_PER_SEC": "-1"}, "RATE_LIMIT_PER_SEC"},
 		{"bad timeout", map[string]string{"DB_QUERY_TIMEOUT": "soon"}, "DB_QUERY_TIMEOUT"},
 		{"bad refresh", map[string]string{"RULES_REFRESH_INTERVAL": "-1s"}, "RULES_REFRESH_INTERVAL"},
 	}

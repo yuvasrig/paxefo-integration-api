@@ -20,7 +20,6 @@ import (
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
 	"github.com/yuvasrig/paxefo-integration-api/internal/config"
 	"github.com/yuvasrig/paxefo-integration-api/internal/httpapi"
-	"github.com/yuvasrig/paxefo-integration-api/internal/httpapi/middleware"
 	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
 	"github.com/yuvasrig/paxefo-integration-api/internal/observability"
 	"github.com/yuvasrig/paxefo-integration-api/internal/provider/tive"
@@ -154,8 +153,8 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 
 	// Runtime settings: environment variables are the defaults; values changed in the admin console override them.
 	defaults := settings.Values{
-		RateLimitPerSec: cfg.RateLimitPerSec, RateLimitBurst: cfg.RateLimitBurst, RateLimitWebhook: cfg.RateLimitWebhook, QueueMaxDepth: cfg.QueueMaxDepth,
-		WorkersMin: cfg.WorkersMin, WorkersMax: cfg.WorkersMax, WorkersTotalMax: cfg.WorkersTotal, JobsPerWorker: cfg.JobsPerWorker,
+		QueueMaxDepth: cfg.QueueMaxDepth,
+		WorkersMin:    cfg.WorkersMin, WorkersMax: cfg.WorkersMax, WorkersTotalMax: cfg.WorkersTotal, JobsPerWorker: cfg.JobsPerWorker,
 		LagSLOSeconds: cfg.LagSLOSeconds, MaxAttempts: cfg.MaxAttempts, AlertRejectPercent: cfg.AlertRejectPercent,
 	}
 	live := settings.NewHolder(defaults)
@@ -177,17 +176,12 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	api := &httpapi.API{
 		Ingest:        svc,
 		Authenticator: &auth.Authenticator{Keys: st, Now: time.Now},
-		Limiter: &middleware.RateLimiter{Now: time.Now, Limits: func(tenant string) (float64, int) {
-			v := live.For(tenant) // the tenant's own limits, else the global ones
-			return v.RateLimitPerSec, v.RateLimitBurst
-		}},
-		WebhookLimited: func(tenant string) bool { return live.For(tenant).RateLimitWebhook == 1 },
-		BodyLimit:      cfg.BodyLimitBytes,
-		Log:            log,
-		Rules:          holder,
-		Metrics:        metrics.Handler(),
-		Observer:       metrics,
-		WorkerOnly:     cfg.Role == "worker",
+		BodyLimit:     cfg.BodyLimitBytes,
+		Log:           log,
+		Rules:         holder,
+		Metrics:       metrics.Handler(),
+		Observer:      metrics,
+		WorkerOnly:    cfg.Role == "worker",
 		Ready: func(c context.Context) (httpapi.ReadyInfo, error) {
 			if err := st.Ping(c); err != nil {
 				return httpapi.ReadyInfo{}, err
