@@ -34,3 +34,20 @@ services:
         value: info
       - key: ADMIN_TOKEN   # enables /admin; you type the value into the Render dashboard (never committed)
         sync: false
+
+  # Scale-out layout (paid): run the web service as ROLE=api and enable this worker service, same image and database.
+  # See docs/adr/0001-deployment-topology.md. Free tier: leave it commented out and keep ROLE=all above.
+  #
+  # - type: worker
+  #   name: paxafe-worker
+  #   runtime: docker
+  #   plan: starter
+  #   region: oregon
+  #   dockerfilePath: ./Dockerfile
+  #   envVars:
+  #     - key: DATABASE_URL
+  #       fromDatabase: { name: paxafe-db, property: connectionString }
+  #     - key: ROLE
+  #       value: worker
+  #     - { key: WORKERS_MIN, value: "0" }
+  #     - { key: WORKERS_MAX, value: "3" }

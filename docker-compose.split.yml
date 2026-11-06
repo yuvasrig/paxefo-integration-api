@@ -1,0 +1,25 @@
+# Multi-container layout on one machine: the API container takes webhooks, separate worker containers process them.
+# Same image and database as the default stack; only ROLE differs.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.split.yml up --build -d
+#
+# Back to one container: docker compose up -d --force-recreate (without the second file) after removing the worker.
+services:
+  api:
+    environment:
+      ROLE: api            # webhooks, /admin and /metrics only; no workers in this process
+
+  worker:
+    build: .
+    environment:
+      PORT: "8080"         # serves only /healthz, /readyz and /metrics inside the container
+      DATABASE_URL: postgres://paxafe:paxafe@db:5432/paxafe?sslmode=disable
+      ROLE: worker
+      INGEST_MODE: sync    # the default for tenants without a mode of their own; the demo tenants set theirs
+      LOG_LEVEL: info
+      SETTINGS_REFRESH_INTERVAL: 3s
+    deploy:
+      replicas: 2          # two worker containers; each runs a pool for every async tenant
+    depends_on:
+      db:
+        condition: service_healthy

@@ -17,6 +17,8 @@ Render dashboard → **New → Blueprint** → pick the repo. `render.yaml` crea
 
 **Async mode:** the web service also runs the workers (`ROLE=all`), one pool per async tenant, so no extra Render service is needed. The seeded `reviewer` tenant stays sync (instant results from curl); `acme-pharma` and `bioco` are async: a webhook returns `202 queued` and a worker processes it a moment later (read it with `GET /api/v1/events/{id}`; the mock sender follows it automatically). Free web services sleep when idle and the workers sleep with them; queued jobs wait safely in Postgres and drain when the service wakes. To scale workers separately later, add a second service from the same image with `ROLE=worker` and set the web service to `ROLE=api` (Render background workers are a paid service type).
 
+**Multiple containers:** the same image runs as `ROLE=api` (webhooks) or `ROLE=worker` (processing). `make up-split` runs one API and two worker containers locally to prove it; `render.yaml` has the paid worker service commented out. Rationale and test results: `docs/adr/0001-deployment-topology.md`.
+
 **Admin console:** the blueprint asks you for `ADMIN_TOKEN` (any long random string you choose; keep it in your password manager). With it set, `https://<your-service>.onrender.com/admin` is the operator console; leave it empty and the console does not exist. Optionally set `PUBLIC_BASE_URL` (shown in webhook setup), `LOGS_URL` (the service's Logs page in Render) and `DASHBOARD_URL`.
 
 Free Postgres expires 30 days after creation (plus a 14-day grace). Create it on deploy day. Recovery: new database → update `DATABASE_URL` → the service migrates on start → re-seed and re-create keys.

@@ -1,4 +1,4 @@
-.PHONY: test lint run up down seed smoke itest
+.PHONY: test lint run up up-split down seed smoke itest
 
 test:
 	go vet ./... && go test ./...
@@ -13,6 +13,10 @@ run:
 
 up:
 	docker compose up --build -d
+
+# One API container (ROLE=api) plus two worker containers (ROLE=worker), sharing the same database.
+up-split:
+	docker compose -f docker-compose.yml -f docker-compose.split.yml up --build -d
 
 down:
 	docker compose down
