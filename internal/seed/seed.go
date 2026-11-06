@@ -15,11 +15,11 @@ type tenantSpec struct {
 	config   map[string]any
 }
 
-// Tenants in the demo. Only reviewer's config is used before M8a; the others record the designed worker allocation.
+// Tenants in the demo. reviewer is sync (instant curl results); the others are async and each has its own worker pool.
 var tenants = []tenantSpec{
 	{"reviewer", "Reviewer", map[string]any{"ingest_mode": "sync"}},
-	{"acme-pharma", "Acme Pharma", map[string]any{"ingest_mode": "async", "workers": map[string]any{"mode": "shared", "weight": 1}}},
-	{"bioco", "BioCo", map[string]any{"ingest_mode": "async", "workers": map[string]any{"mode": "dedicated", "min": 2, "weight": 3}}},
+	{"acme-pharma", "Acme Pharma", map[string]any{"ingest_mode": "async", "workers": map[string]any{"min": 0, "max": 2}}},
+	{"bioco", "BioCo", map[string]any{"ingest_mode": "async", "workers": map[string]any{"min": 1, "max": 3}}},
 }
 
 // Run is idempotent: tenants are upserted, and a tenant that already has a seed key gets no new one.
