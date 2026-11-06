@@ -47,3 +47,10 @@ Note the number; the sender pings `/healthz` on load for this reason.
 - [ ] `scripts/smoke.sh https://<api>.onrender.com <reviewer-key>` passes 13/13
 - [ ] `/readyz` green and `/docs` reachable
 - [ ] cold start measured
+
+## Sender (M6)
+The Mock Tive Sender lives in its own repo (`paxafe-mock-sender`) with its own `render.yaml`. After the API is up:
+1. Create the service from its blueprint (New -> Blueprint).
+2. Set `API_BASE_URL` to the API's public URL and `SENDER_API_KEY` to the `sender` key from step 3 above.
+3. Open the sender URL: it wakes the API, then **Provided samples** should show 13 passed and 0 missing (M6 exit criterion).
+4. From your laptop, for load numbers: `sender run --scenario load --rate 100 --duration 30s --url https://<api>.onrender.com --key <key>`.
