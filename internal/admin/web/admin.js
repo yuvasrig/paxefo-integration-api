@@ -4,15 +4,19 @@
   if (!el) return;
   var url = el.getAttribute('data-live-url');
   var every = parseInt(el.getAttribute('data-interval'), 10) || 3000;
+  var busy = false; // never start a refresh while the previous one is still running: a slow database must not pile up requests
   function tick() {
-    if (document.hidden) return;
+    if (document.hidden || busy) return;
+    busy = true;
     fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
       .then(function (r) {
         if (r.status === 401 || r.redirected) { location.reload(); return null; }
+        el.classList.toggle('stale', !r.ok); // keep showing the last figures, dimmed, until the next good refresh
         return r.ok ? r.text() : null;
       })
       .then(function (html) { if (html) el.innerHTML = html; })
-      .catch(function () {});
+      .catch(function () { el.classList.add('stale'); })
+      .finally(function () { busy = false; });
   }
   setInterval(tick, every);
 })();

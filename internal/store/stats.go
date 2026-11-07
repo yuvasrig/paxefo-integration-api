@@ -14,7 +14,8 @@ import (
 // rows (read under row-level security); queue figures come from the work queue.
 type TenantStats struct {
 	TenantID                string
-	TotalEvents             int
+	TotalEvents             int            // all events, counted up to totalEventsCap
+	TotalCapped             bool           // true when there are at least totalEventsCap events (the figure is a floor)
 	EventsLastMinute        int            // payloads received in the last 60 s
 	ActiveDevicesLastMinute int            // distinct devices among them
 	CompletedLastMinute     int            // events whose outcome was written in the last 60 s
@@ -26,12 +27,26 @@ type TenantStats struct {
 	LatencyP50, LatencyP95  time.Duration  // received -> outcome written, for outcomes of the last 5 minutes
 }
 
+// The console refreshes these figures every few seconds for every tenant, so each query is bounded: its cost must not grow
+// with traffic. Latency percentiles are taken over the most recent statsSample outcomes of the last 5 minutes, and the
+// status mix over the most recent statusSample outcomes of the last 15 minutes (the whole window when traffic is lower).
+const (
+	statsSample  = 2000
+	statusSample = 20000
+)
+
+var totalEventsCap = 100_000
+
 // TenantStats gathers the figures for one tenant.
 func (s *PGStore) TenantStats(ctx context.Context, tenantID string) (TenantStats, error) {
 	st := TenantStats{TenantID: tenantID, Statuses15m: map[string]int{}}
 	err := s.WithTenantTx(ctx, tenantID, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM raw_events WHERE tenant_id = $1`, tenantID).Scan(&st.TotalEvents); err != nil {
+		// Counting every event of a busy tenant on each refresh would cost more as the tenant grows, so the count stops at a cap.
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM (SELECT 1 FROM raw_events WHERE tenant_id = $1 LIMIT $2) t`, tenantID, totalEventsCap+1).Scan(&st.TotalEvents); err != nil {
 			return err
+		}
+		if st.TotalEvents > totalEventsCap {
+			st.TotalEvents, st.TotalCapped = totalEventsCap, true
 		}
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*), count(DISTINCT COALESCE(payload->>'DeviceId', payload->>'DeviceName'))
@@ -50,8 +65,10 @@ func (s *PGStore) TenantStats(ctx context.Context, tenantID string) (TenantStats
 		if err := tx.QueryRow(ctx, `
 			SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY lat), percentile_cont(0.95) WITHIN GROUP (ORDER BY lat)
 			FROM (SELECT EXTRACT(EPOCH FROM o.processed_at - r.received_at) AS lat
-			      FROM event_outcomes o JOIN raw_events r ON r.id = o.raw_event_id
-			      WHERE o.tenant_id = $1 AND o.processed_at > now() - interval '5 minutes') x`, tenantID).Scan(&p50, &p95); err != nil {
+			      FROM (SELECT raw_event_id, processed_at FROM event_outcomes
+			            WHERE tenant_id = $1 AND processed_at > now() - interval '5 minutes'
+			            ORDER BY processed_at DESC LIMIT $2) o
+			      JOIN raw_events r ON r.id = o.raw_event_id) x`, tenantID, statsSample).Scan(&p50, &p95); err != nil {
 			return err
 		}
 		if p50 != nil && p95 != nil {
@@ -59,7 +76,9 @@ func (s *PGStore) TenantStats(ctx context.Context, tenantID string) (TenantStats
 			st.LatencyP95 = time.Duration(*p95 * float64(time.Second))
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT status, count(*) FROM event_outcomes WHERE tenant_id = $1 AND processed_at > now() - interval '15 minutes' GROUP BY status`, tenantID)
+			SELECT status, count(*) FROM (
+				SELECT status FROM event_outcomes WHERE tenant_id = $1 AND processed_at > now() - interval '15 minutes'
+				ORDER BY processed_at DESC LIMIT $2) recent GROUP BY status`, tenantID, statusSample)
 		if err != nil {
 			return err
 		}

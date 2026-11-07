@@ -80,11 +80,13 @@ type Console struct {
 	PublicBaseURL  string       // used in webhook URLs; the request's own address when empty
 	LogsURL        string
 	DashboardURL   string
-	RefreshSeconds int // how long a change takes to reach every instance (shown in messages)
+	SnapshotTTL    time.Duration // how long live figures are shared between pages (default 2s; negative turns sharing off)
+	RefreshSeconds int           // how long a change takes to reach every instance (shown in messages)
 	Now            func() time.Time
 	Log            *slog.Logger
 
 	once  sync.Once
+	snaps snapshotCache
 	tmpl  *template.Template
 	fails failures
 }

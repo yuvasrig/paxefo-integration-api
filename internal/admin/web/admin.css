@@ -37,3 +37,4 @@ details.edit { margin-top:4px; } details.edit > summary, details.advanced > summ
 button.switch { min-width:52px; border-radius:14px; font-weight:600; } button.switch.is-on { background:color-mix(in srgb,var(--ok) 18%,var(--card)); border-color:var(--ok); color:var(--ok); } button.switch.is-off { background:var(--bg); color:var(--muted); }
 .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px; } pre { max-height:420px; }
 .filters .inline { margin:4px 0; } label.check { flex-direction:row; align-items:center; gap:6px; }
+#live.stale { opacity:.55; transition:opacity .2s; }

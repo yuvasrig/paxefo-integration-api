@@ -1,6 +1,6 @@
 {{define "monitoring"}}{{template "head" .}}
 <p class="muted">This page refreshes itself every 3 seconds.</p>
-<div id="live" data-live-url="/admin/monitoring/live" data-interval="3000">{{template "monitoring_live" .}}</div>
+<div id="live" data-live-url="/admin/monitoring/live" data-interval="3000">{{template "notice" .Snap}}{{if not .Snap.Failed}}{{template "monitoring_live" .}}{{end}}</div>
 <h2>Links</h2>
 <ul class="links">
 {{range .Links}}<li><a href="{{.URL}}">{{.Title}}</a> <span class="muted">{{.Note}}</span></li>{{end}}
@@ -8,6 +8,7 @@
 {{template "foot" .}}{{end}}
 
 {{define "monitoring_live"}}
+{{template "notice" .Snap}}
 {{template "alerts" .Snap}}
 {{template "prediction" .Snap}}
 <section class="cards">

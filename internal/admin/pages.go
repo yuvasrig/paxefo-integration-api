@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/alerts"
@@ -106,6 +107,7 @@ type TenantView struct {
 	Webhook string
 	Keys    []store.APIKey
 
+	StatsOK    bool              // false when this tenant's figures could not be read in time
 	Workers    int               // this tenant's workers running now, across all processes
 	InFlight   int               // jobs those workers are processing
 	Overrides  []string          // the tenant's own settings, "key=value": everything else is the global value
@@ -130,6 +132,8 @@ type Snapshot struct {
 	Recent                          []RejectRow
 	RulesVersion                    string
 	Alerts                          []alerts.Alert
+	Unavailable                     []string // tenants whose figures could not be read in time (the database is busy)
+	Failed                          bool     // nothing could be read: show a notice instead of figures
 }
 
 // RejectRow is a recent event with its tenant, for the monitoring tables.
@@ -201,20 +205,65 @@ func (c *Console) webhookURL(r *http.Request) string { return c.baseURL(r) + "/a
 
 // ---- live figures ----
 
-// snapshot gathers the figures. It asks the database a few small questions per tenant, which is fine for the number
-// of tenants this service has; a much larger fleet would want these precomputed.
-func (c *Console) snapshot(ctx context.Context, r *http.Request, withEvents bool) (*Snapshot, error) {
+// snapshotTTL is how long a computed snapshot is shared: every page that polls the console (and the alert notifier)
+// within this time reads the same figures instead of asking the database again, so more open pages cost no more.
+const defaultSnapshotTTL = 2 * time.Second
+
+func (c *Console) snapshotTTL() time.Duration {
+	if c.SnapshotTTL == 0 {
+		return defaultSnapshotTTL
+	}
+	return c.SnapshotTTL // negative: always compute
+}
+
+// snapshotBudget bounds one computation, so a busy database cannot make a page hang: tenants not read in time are
+// reported as unavailable and the rest is shown.
+const snapshotBudget = 8 * time.Second
+
+type snapshotCache struct {
+	mu     sync.Mutex
+	at     time.Time
+	events bool // whether the cached snapshot includes the recent-event tables
+	snap   *Snapshot
+}
+
+// snapshot returns the live figures: the cached ones when they are fresh, else newly computed (callers wait for the
+// one computation in progress rather than each starting their own).
+func (c *Console) snapshot(ctx context.Context, withEvents bool) (*Snapshot, error) {
+	c.snaps.mu.Lock()
+	defer c.snaps.mu.Unlock()
+	if c.snaps.snap != nil && (c.snaps.events || !withEvents) && c.Now().Sub(c.snaps.at) < c.snapshotTTL() {
+		return c.snaps.snap, nil
+	}
+	bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotBudget) // a viewer that leaves does not waste the work
+	defer cancel()
+	s, err := c.buildSnapshot(bctx, withEvents)
+	if err != nil {
+		return nil, err
+	}
+	c.snaps.snap, c.snaps.at, c.snaps.events = s, c.Now(), withEvents
+	return s, nil
+}
+
+// buildSnapshot gathers the figures. It asks the database a few bounded questions per tenant. A tenant whose figures
+// cannot be read (a timeout on a busy database) is listed in Unavailable and left out of the totals; the page still
+// renders. Only a failure to list the tenants or the workers fails the whole snapshot.
+func (c *Console) buildSnapshot(ctx context.Context, withEvents bool) (*Snapshot, error) {
 	infos, err := c.Store.ListTenantInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
 	s := &Snapshot{At: c.Now(), Limits: c.Settings.Current(), RulesVersion: c.Rules.Current().Version}
 	for _, info := range infos {
-		tv := TenantView{Info: info, Mode: c.modeOf(info), Webhook: c.webhookURL(r)}
+		tv := TenantView{Info: info, Mode: c.modeOf(info), StatsOK: true}
 		tv.Policy, _ = store.ParseConflictSettings(info.Config)
 		tv.Overrides = overridesOf(info.Config)
 		if tv.Stats, err = c.Store.TenantStats(ctx, info.ID); err != nil {
-			return nil, err
+			c.Log.Warn("admin: figures for a tenant could not be read in time", "tenant_id", info.ID, "error", err)
+			tv.StatsOK = false
+			s.Unavailable = append(s.Unavailable, info.ID)
+			s.Tenants = append(s.Tenants, tv)
+			continue
 		}
 		st := tv.Stats
 		s.Pending += st.Pending
@@ -234,16 +283,14 @@ func (c *Console) snapshot(ctx context.Context, r *http.Request, withEvents bool
 		}
 		s.Tenants = append(s.Tenants, tv)
 		if withEvents {
-			rej, err := c.Store.RecentEvents(ctx, info.ID, 10, []string{"rejected", "dead", "failed", "conflict"})
-			if err != nil {
-				return nil, err
+			rej, err1 := c.Store.RecentEvents(ctx, info.ID, 10, []string{"rejected", "dead", "failed", "conflict"})
+			rec, err2 := c.Store.RecentEvents(ctx, info.ID, 10, nil)
+			if err1 != nil || err2 != nil { // the tables are a convenience: skip them for this tenant
+				c.Log.Warn("admin: recent events for a tenant could not be read in time", "tenant_id", info.ID)
+				continue
 			}
 			for _, e := range rej {
 				s.Rejects = append(s.Rejects, RejectRow{info.ID, e})
-			}
-			rec, err := c.Store.RecentEvents(ctx, info.ID, 10, nil)
-			if err != nil {
-				return nil, err
 			}
 			for _, e := range rec {
 				s.Recent = append(s.Recent, RejectRow{info.ID, e})
@@ -298,6 +345,9 @@ func (c *Console) snapshot(ctx context.Context, r *http.Request, withEvents bool
 func (c *Console) alertInput(s *Snapshot) alerts.Input {
 	var in alerts.Input
 	for _, t := range s.Tenants {
+		if !t.StatsOK {
+			continue // no figures, no alerts: better silent than wrong
+		}
 		total := 0
 		for _, n := range t.Stats.Statuses15m {
 			total += n
@@ -315,7 +365,7 @@ func (c *Console) alertInput(s *Snapshot) alerts.Input {
 // Alerts is the list of current alerts; the notifier polls it.
 func (c *Console) Alerts(ctx context.Context) ([]alerts.Alert, error) {
 	c.init()
-	s, err := c.snapshot(ctx, nil, false)
+	s, err := c.snapshot(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -339,6 +389,9 @@ func overall(tenants []TenantView) worker.Prediction {
 	var worst *TenantView
 	for i := range tenants {
 		t := &tenants[i]
+		if !t.StatsOK {
+			continue
+		}
 		if worst == nil || rank[t.Prediction.State] > rank[worst.Prediction.State] ||
 			(t.Prediction.State == worst.Prediction.State && t.Prediction.ETA > worst.Prediction.ETA) {
 			worst = t
@@ -371,32 +424,41 @@ func (c *Console) modeOf(info store.TenantInfo) string {
 	return ingest.ModeSync
 }
 
+// failedSnapshot is what a page shows when no figures could be read at all.
+func (c *Console) failedSnapshot() *Snapshot {
+	return &Snapshot{At: c.Now(), Limits: c.Settings.Current(), RulesVersion: c.Rules.Current().Version, Failed: true}
+}
+
 // ---- dashboard and monitoring ----
 
 func (c *Console) dashboard(w http.ResponseWriter, r *http.Request) {
-	snap, err := c.snapshot(r.Context(), r, false)
+	snap, err := c.snapshot(r.Context(), false)
 	if err != nil {
-		c.fail(w, r, "could not read live figures", err)
+		c.Log.Error("admin: could not read live figures", "error", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		c.render(w, r, "dashboard", view{Title: "Dashboard", Nav: "dashboard", Snap: c.failedSnapshot()})
 		return
 	}
 	c.render(w, r, "dashboard", view{Title: "Dashboard", Nav: "dashboard", Snap: snap})
 }
 
 func (c *Console) monitoring(w http.ResponseWriter, r *http.Request) {
-	snap, err := c.snapshot(r.Context(), r, true)
+	snap, err := c.snapshot(r.Context(), true)
 	if err != nil {
-		c.fail(w, r, "could not read live figures", err)
+		c.Log.Error("admin: could not read live figures", "error", err)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		c.render(w, r, "monitoring", view{Title: "Monitoring", Nav: "monitoring", Snap: c.failedSnapshot(), Links: c.links()})
 		return
 	}
-	v := view{Title: "Monitoring", Nav: "monitoring", Snap: snap, Links: c.links()}
-	c.render(w, r, "monitoring", v)
+	c.render(w, r, "monitoring", view{Title: "Monitoring", Nav: "monitoring", Snap: snap, Links: c.links()})
 }
 
 // monitoringLive is the part of the monitoring page that refreshes itself.
 func (c *Console) monitoringLive(w http.ResponseWriter, r *http.Request) {
-	snap, err := c.snapshot(r.Context(), r, true)
-	if err != nil {
-		c.fail(w, r, "could not read live figures", err)
+	snap, err := c.snapshot(r.Context(), true)
+	if err != nil { // the page keeps showing the last figures it has and marks them stale
+		c.Log.Error("admin: could not read live figures", "error", err)
+		http.Error(w, "live figures are unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	c.render(w, r, "monitoring_live", view{Snap: snap})

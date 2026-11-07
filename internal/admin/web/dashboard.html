@@ -1,4 +1,6 @@
 {{define "dashboard"}}{{template "head" .}}
+{{template "notice" .Snap}}
+{{if not .Snap.Failed}}
 <section class="cards">
   <div class="card"><span class="big">{{.Snap.ArrivalsPerMin}}</span><span>events / min arriving</span></div>
   <div class="card"><span class="big">{{.Snap.ActiveDevices}}</span><span>devices active in the last minute</span></div>
@@ -10,4 +12,5 @@
 <h2>Tenants</h2>
 {{template "tenant_table" .Snap}}
 <p class="muted">Rules in force: <strong>{{.Snap.RulesVersion}}</strong> · <a href="/admin/rules">rules</a> · <a href="/admin/config">config</a> · <a href="/admin/monitoring">monitoring and logs</a></p>
+{{end}}
 {{template "foot" .}}{{end}}

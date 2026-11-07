@@ -1533,3 +1533,30 @@ func TestListPayloads(t *testing.T) {
 		t.Fatal("a huge limit is capped, not an error")
 	}
 }
+
+func TestTenantStatsAreBounded(t *testing.T) {
+	st := newStore(t)
+	for i := 0; i < 8; i++ {
+		process(t, st, "reviewer", sample(t, 2+i%2))
+	}
+	s, err := st.TenantStats(ctx, "reviewer")
+	if err != nil || s.TotalEvents != 8 || s.TotalCapped {
+		t.Fatalf("%+v %v", s, err)
+	}
+	store.SetTotalEventsCap(5)
+	t.Cleanup(func() { store.SetTotalEventsCap(100_000) })
+	s, err = st.TenantStats(ctx, "reviewer")
+	if err != nil || s.TotalEvents != 5 || !s.TotalCapped {
+		t.Fatalf("the total stops at the cap and says so, so its cost does not grow with the tenant: %+v %v", s, err)
+	}
+	if s.Statuses15m["accepted"]+s.Statuses15m["duplicate"] == 0 || s.LatencyP95 < 0 {
+		t.Fatalf("the other figures are still there: %+v", s)
+	}
+}
+
+func TestOutcomeIndexLeadsWithTheTenant(t *testing.T) {
+	st := newStore(t)
+	if n := count(t, st, "reviewer", `SELECT count(*) FROM pg_indexes WHERE indexname = 'event_outcomes_tenant_processed' AND indexdef LIKE '%(tenant_id, processed_at DESC) INCLUDE (status)%'`); n != 1 {
+		t.Fatalf("the console's reads need the tenant-led outcomes index: %d", n)
+	}
+}

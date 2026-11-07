@@ -3,6 +3,7 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,7 +51,10 @@ func must(t *testing.T, err error) {
 	}
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, nil, -1) } // -1: no sharing of live figures, so a test sees every change at once
+
+// newEnvWith builds the test console; wrap, when given, wraps the store the console reads through (to inject failures).
+func newEnvWith(t *testing.T, wrap func(admin.Store) admin.Store, ttl time.Duration) *env {
 	t.Helper()
 	st, err := store.Open(ctx, pgtest.NewDSN(t), store.Options{MaxConns: 10})
 	must(t, err)
@@ -67,9 +72,13 @@ func newEnv(t *testing.T) *env {
 		Store: st, Provider: tive.NewDynamic(holder, config.Default()),
 		Now: func() time.Time { return time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC) }, Log: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	}
+	var consoleStore admin.Store = st
+	if wrap != nil {
+		consoleStore = wrap(st)
+	}
 	c := &admin.Console{
-		Replayer: ing, Store: st, Token: token, Settings: live, Defaults: defaults, Rules: holder,
-		ReloadRules: reloader.Refresh, ReloadSettings: syncer.Refresh, DefaultMode: "sync",
+		Replayer: ing, Store: consoleStore, Token: token, Settings: live, Defaults: defaults, Rules: holder,
+		ReloadRules: reloader.Refresh, ReloadSettings: syncer.Refresh, DefaultMode: "sync", SnapshotTTL: ttl,
 		Restart:       []admin.ConfigItem{{Name: "PORT", Value: "8080", Note: "listen"}},
 		PublicBaseURL: "https://api.example.com", LogsURL: "https://logs.example.com/x", DashboardURL: "https://grafana.example.com",
 		RefreshSeconds: 10, Log: slog.New(slog.NewJSONHandler(io.Discard, nil)),
@@ -1043,4 +1052,101 @@ func TestPayloadsPageNeedsASessionAndKnowsTheTenant(t *testing.T) {
 	has(t, e.get("/admin/payloads"), "No payloads match") // no tenants yet: the page still renders
 	must(t, e.st.CreateTenant(ctx, "first-co", "First Co", nil))
 	has(t, e.get("/admin/payloads"), `<option value="first-co" selected>`) // the first tenant is chosen by default
+}
+
+// ---- the console under a busy database ----
+
+// flaky makes the live figures fail the way a busy database does: a tenant's stats time out, or listing fails outright.
+type flaky struct {
+	admin.Store
+	failTenant string
+	failList   atomic.Bool
+	statsCalls atomic.Int32
+}
+
+func (f *flaky) TenantStats(c context.Context, id string) (store.TenantStats, error) {
+	f.statsCalls.Add(1)
+	if id == f.failTenant {
+		return store.TenantStats{}, errors.New("store: tenant stats: store: commit: timeout: context already done: context deadline exceeded")
+	}
+	return f.Store.TenantStats(c, id)
+}
+
+func (f *flaky) ListTenantInfo(c context.Context) ([]store.TenantInfo, error) {
+	if f.failList.Load() {
+		return nil, errors.New("store: list tenant info: context deadline exceeded")
+	}
+	return f.Store.ListTenantInfo(c)
+}
+
+func newFlakyEnv(t *testing.T, failTenant string, ttl time.Duration) (*env, *flaky) {
+	var f *flaky
+	e := newEnvWith(t, func(s admin.Store) admin.Store { f = &flaky{Store: s, failTenant: failTenant}; return f }, ttl)
+	e.signIn()
+	return e, f
+}
+
+// One tenant's figures timing out must not take the page down: the other tenants are shown, the slow one is named.
+func TestAPageStillRendersWhenOneTenantsFiguresTimeOut(t *testing.T) {
+	e, _ := newFlakyEnv(t, "slow-co", -1)
+	must(t, e.st.CreateTenant(ctx, "slow-co", "Slow Co", nil))
+	must(t, e.st.CreateTenant(ctx, "ok-co", "Ok Co", nil))
+	for _, p := range []string{"/admin/", "/admin/monitoring", "/admin/monitoring/live"} {
+		code, body, _ := e.do("GET", p, nil)
+		if code != 200 {
+			t.Fatalf("%s: %d %s", p, code, body)
+		}
+		has(t, body, "Some figures are late", "slow-co", "figures unavailable", "ok-co")
+	}
+	if code, _, _ := e.do("GET", "/admin/tenants", nil); code != 200 {
+		t.Fatalf("pages that do not need the live figures are unaffected: %d", code)
+	}
+	// No alerts or predictions are invented for a tenant whose figures are missing.
+	body := e.get("/admin/monitoring/live")
+	if strings.Contains(body, "slow-co has") || strings.Contains(body, "slow-co:") {
+		t.Fatalf("an unread tenant must not raise alerts or predictions: %s", body)
+	}
+}
+
+// When nothing can be read, the page says so and keeps working (and recovers by itself), instead of a bare 500.
+func TestPagesExplainAndRecoverWhenTheDatabaseIsBusy(t *testing.T) {
+	e, f := newFlakyEnv(t, "", -1)
+	must(t, e.st.CreateTenant(ctx, "any-co", "Any Co", nil))
+	f.failList.Store(true)
+	code, body, _ := e.do("GET", "/admin/", nil)
+	if code != 503 || !strings.Contains(body, "Live figures are unavailable") || !strings.Contains(body, "Dashboard") {
+		t.Fatalf("a readable page with a notice, not a plain error: %d %s", code, body)
+	}
+	if strings.Contains(body, "context deadline exceeded") {
+		t.Fatal("internal error text must not be shown to the viewer")
+	}
+	if code, body, _ := e.do("GET", "/admin/monitoring", nil); code != 503 || !strings.Contains(body, "Live figures are unavailable") || !strings.Contains(body, "Monitoring") {
+		t.Fatalf("%d", code)
+	}
+	if code, _, _ := e.do("GET", "/admin/monitoring/live", nil); code != 503 {
+		t.Fatalf("the refreshing fragment answers 503 so the page keeps its last figures: %d", code)
+	}
+	f.failList.Store(false) // the database recovers
+	if code, body, _ := e.do("GET", "/admin/", nil); code != 200 || !strings.Contains(body, "any-co") {
+		t.Fatalf("it recovers by itself: %d", code)
+	}
+}
+
+// Many open pages share one computation: more viewers must not mean more database work.
+func TestLiveFiguresAreSharedBetweenViewers(t *testing.T) {
+	e, f := newFlakyEnv(t, "", 0) // 0: the default sharing time
+	must(t, e.st.CreateTenant(ctx, "a-co", "A", nil))
+	must(t, e.st.CreateTenant(ctx, "b-co", "B", nil))
+	for i := 0; i < 5; i++ {
+		e.get("/admin/monitoring/live") // the fuller snapshot (with the recent-event tables) also serves the dashboard
+		e.get("/admin/")
+	}
+	if got := f.statsCalls.Load(); got != 2 {
+		t.Fatalf("ten page loads within a moment read each tenant's figures once (2 tenants = 2 reads), got %d", got)
+	}
+	time.Sleep(2200 * time.Millisecond)
+	e.get("/admin/")
+	if got := f.statsCalls.Load(); got != 4 {
+		t.Fatalf("after the figures go stale they are read again: %d", got)
+	}
 }

@@ -50,11 +50,12 @@
   <tbody>
   {{range .Tenants}}<tr>
     <td><a href="/admin/tenants#{{.Info.ID}}">{{.Info.ID}}</a></td><td>{{.Mode}}</td>
-    <td class="n">{{.Stats.EventsLastMinute}}</td><td class="n">{{.Stats.ActiveDevicesLastMinute}}</td>
+    {{if .StatsOK}}<td class="n">{{.Stats.EventsLastMinute}}</td><td class="n">{{.Stats.ActiveDevicesLastMinute}}</td>
     <td class="n">{{.Workers}}</td><td class="n">{{.Stats.CompletedLastMinute}}</td><td class="n">{{.Stats.Pending}}</td><td class="n">{{.Stats.Processing}}</td>
     <td class="n">{{dur .Stats.OldestPendingAge}}</td><td class="n {{if .Stats.Dead}}bad{{end}}">{{.Stats.Dead}}</td>
-    <td class="n">{{dur .Stats.LatencyP50}} / {{dur .Stats.LatencyP95}}</td><td class="n">{{.Stats.TotalEvents}}</td>
+    <td class="n">{{dur .Stats.LatencyP50}} / {{dur .Stats.LatencyP95}}</td><td class="n">{{.Stats.TotalEvents}}{{if .Stats.TotalCapped}}+{{end}}</td>
     <td><span class="tag {{.Prediction.State}}">{{if eq .Prediction.State "up_to_date"}}yes{{else if eq .Prediction.State "catching_up"}}catching up{{else if eq .Prediction.State "falling_behind"}}falling behind{{else}}stalled{{end}}</span>{{if .Prediction.HasETA}} <span class="muted">{{dur .Prediction.ETA}}</span>{{end}}</td>
+    {{else}}<td colspan="11" class="muted">figures unavailable: the database is busy</td>{{end}}
   </tr>{{else}}<tr><td colspan="13">No tenants yet. <a href="/admin/tenants">Add one.</a></td></tr>{{end}}
   </tbody>
 </table>
@@ -79,6 +80,11 @@
   {{else}}<tr><td colspan="6">Nothing yet.</td></tr>{{end}}
   </tbody>
 </table>
+{{end}}
+
+{{define "notice"}}
+{{if .Failed}}<div class="alert critical" role="alert"><strong>Live figures are unavailable.</strong> <span>The database is busy or unreachable. This page keeps trying and will show the figures again on its own.</span></div>{{end}}
+{{if .Unavailable}}<div class="alert warning" role="alert"><strong>Some figures are late.</strong> <span>The figures for {{join .Unavailable ", "}} could not be read in time because the database is busy; the other tenants are shown.</span></div>{{end}}
 {{end}}
 
 {{define "alerts"}}

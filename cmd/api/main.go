@@ -32,6 +32,9 @@ import (
 
 const shutdownTimeout = 10 * time.Second // F13-R5
 
+// adminPoolConns is the size of the admin console's own database pool.
+const adminPoolConns = 4
+
 func main() {
 	os.Exit(realMain(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -195,8 +198,15 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 	}
 
 	if cfg.Role != "worker" {
+		// The console reads through a small pool of its own, so its figures neither wait behind ingest and the workers for a
+		// connection when the system is busy (the moment they matter most) nor can they take connections from them.
+		adminStore, err := store.Open(ctx, cfg.DatabaseURL, store.Options{MaxConns: adminPoolConns, QueryTimeout: cfg.QueryTimeout})
+		if err != nil {
+			return fmt.Errorf("open the console's database pool: %w", err)
+		}
+		defer adminStore.Close()
 		console := &admin.Console{
-			Store: st, Token: cfg.AdminToken, Settings: live, Defaults: defaults, Rules: holder,
+			Store: adminStore, Token: cfg.AdminToken, Settings: live, Defaults: defaults, Rules: holder,
 			ReloadRules: reloader.Refresh, ReloadSettings: syncer.Refresh, Replayer: svc, DefaultMode: cfg.IngestMode,
 			Restart: restartConfig(cfg), PublicBaseURL: cfg.PublicBaseURL, LogsURL: cfg.LogsURL, DashboardURL: cfg.DashboardURL,
 			RefreshSeconds: int(cfg.SettingsRefresh.Seconds()), Log: log,
