@@ -10,7 +10,12 @@ services:
       ROLE: api            # webhooks, /admin and /metrics only; no workers in this process
 
   worker:
-    build: .
+    image: paxefo-api   # the very image the api service builds: one image, a different ROLE (so the two can never drift apart)
+    depends_on:
+      api:
+        condition: service_started
+      db:
+        condition: service_healthy
     environment:
       PORT: "8080"         # serves only /healthz, /readyz and /metrics inside the container
       DATABASE_URL: postgres://paxafe:paxafe@db:5432/paxafe?sslmode=disable
@@ -20,6 +25,3 @@ services:
       SETTINGS_REFRESH_INTERVAL: 3s
     deploy:
       replicas: 2          # two worker containers; each runs a pool for every async tenant
-    depends_on:
-      db:
-        condition: service_healthy

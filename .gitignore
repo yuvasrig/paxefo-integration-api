@@ -3,3 +3,10 @@
 *.out
 .env
 .DS_Store
+
+# performance test output and keys
+scripts/perf/keys.env
+scripts/perf/results-*.json
+scripts/perf/state.json
+scripts/perf/*.log
+scripts/perf/tuned.yml

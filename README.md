@@ -44,6 +44,10 @@ api replay runs                                                                 
 - **Order and conflicts:** events are processed oldest received first, so under `keep_last` the last received wins, and an older event never overwrites a later one. Replaying the same window twice changes nothing the second time.
 - **Operator only:** tenant API keys cannot start a replay. The API's `POST /api/v1/events/{id}/replay` still replays one failed or rejected event.
 
+## Performance
+
+Measured on the local stack with the mock sender (`docs/PERFORMANCE.md`, reproducible with `scripts/perf/`): about 1,200 events/s sustained for an async tenant and 1,450/s for a sync one on a laptop, p95 under 10 ms to the acknowledgement at realistic rates, nothing acknowledged ever lost, including with workers killed, the API restarted and a flooding neighbour. The report lists what broke along the way and what to size (notably `QUEUE_MAX_DEPTH`).
+
 ## Async mode and workers
 
 By default a webhook is processed before it is answered (sync). A tenant can instead be **async**: the webhook stores the raw payload and queues a job, answers `202 {"status":"queued"}`, and a worker pool processes it. Choose it per tenant (`tenants.config.ingest_mode`) or for everyone with `INGEST_MODE=async`.

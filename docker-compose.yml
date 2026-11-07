@@ -6,6 +6,8 @@ services:
       POSTGRES_USER: paxafe
       POSTGRES_PASSWORD: paxafe
       POSTGRES_DB: paxafe
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # kept across `docker compose down`; `down -v` removes it
     ports:
       - "5433:5432"   # 5433 on the host: a local Postgres often already owns 5432
     healthcheck:
@@ -30,3 +32,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+volumes:
+  pgdata:
