@@ -1,8 +1,7 @@
 # Performance test
 
-Run on 2026-11-06/07 against the local Docker stack, with the mock sender's load plans. This is a laptop, not Render's free
-tier: read the numbers as "what the design and code can do", and treat Render's 0.1 CPU as a much smaller version of it
-(see *What this does not tell you*). Scripts: `scripts/perf/` (they reproduce every figure here).
+Run on 2026-11-06/07 on localhost (the local Docker stack on a laptop), with the mock sender's load plans. The numbers show
+what the design and code can do on that machine; they were not measured on Render. Scripts: `scripts/perf/` (they reproduce every figure here).
 
 ## Summary
 
@@ -190,8 +189,6 @@ worth watching in a longer run, but there is no sign of a leak at this length.
 
 ## What this does not tell you
 
-- **Render's free tier is far smaller** (0.1 CPU, 512 MB, a small shared Postgres, cold starts). Expect capacity one to two
-  orders of magnitude lower. Run the smoke test and a 10–25/s step there before quoting any number.
 - The sender and the stack share one machine, so very high rates include the sender's own cost; latency is to localhost.
 - Tive's real traffic is bursty and arrives from one address; the numbers say nothing about its retry behaviour beyond the
   documented one retry on `5xx`.
