@@ -1,6 +1,6 @@
 # Runbook
 
-Where to look first: the console (`/admin`) Dashboard and Monitoring pages show per-tenant arrival and completion rates, queue depth, oldest wait and workers. Alerts appear as banners and, when `ALERT_WEBHOOK_URL` is set, are posted once when they start and once when they clear.
+Where to look first: the console (`/admin`) Dashboard and Monitoring pages show per-tenant arrival and completion rates, queue depth, oldest wait and workers. Alerts appear as banners, are kept in the console's **Notifications** tab (start, clear, wording) and, when `ALERT_WEBHOOK_URL` is set, are posted once when they start and once when they clear.
 
 | Alert / symptom | Meaning | What to do |
 |---|---|---|

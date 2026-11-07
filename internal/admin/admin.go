@@ -33,6 +33,7 @@ var webFS embed.FS
 // Store is what the console needs from the database (implemented by *store.PGStore).
 type Store interface {
 	ListTenantInfo(ctx context.Context) ([]store.TenantInfo, error)
+	ListAlertHistory(ctx context.Context, limit int) ([]store.AlertRecord, error)
 	CreateTenant(ctx context.Context, id, name string, config map[string]any) error
 	TenantExists(ctx context.Context, id string) (bool, error)
 	CreateAPIKey(ctx context.Context, tenantID, name, prefix, hash string, expiresAt *time.Time) error
@@ -134,6 +135,7 @@ func (c *Console) Handler() http.Handler {
 	page("GET /admin/payloads.json", c.payloadsJSON)
 	page("GET /admin/payloads/{id}", c.payloadDetail)
 	page("GET /admin/compare", c.comparePage)
+	page("GET /admin/notifications", c.notificationsPage)
 	page("GET /admin/conflicts", c.conflictsPage)
 	page("POST /admin/conflicts/replay", c.conflictsReplay)
 	page("GET /admin/rules", c.rulesPage)

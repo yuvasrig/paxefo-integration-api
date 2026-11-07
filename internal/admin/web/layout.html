@@ -18,6 +18,7 @@
     <a href="/admin/rules" {{if eq .Nav "rules"}}class="on"{{end}}>Rules</a>
     <a href="/admin/config" {{if eq .Nav "config"}}class="on"{{end}}>Config</a>
     <a href="/admin/monitoring" {{if eq .Nav "monitoring"}}class="on"{{end}}>Monitoring</a>
+    <a href="/admin/notifications" {{if eq .Nav "notifications"}}class="on"{{end}}>Notifications</a>
   </nav>
   <form method="post" action="/admin/logout"><button class="link">Sign out</button></form>
 </header>{{end}}

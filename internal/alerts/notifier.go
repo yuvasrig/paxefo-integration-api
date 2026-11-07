@@ -17,8 +17,11 @@ import (
 // when an alert starts and when it clears, never on every check. It keeps its state in memory: after a restart a
 // still-firing alert is announced once more, which is the safe direction to be wrong in.
 type Notifier struct {
-	Source   func(ctx context.Context) ([]Alert, error)
-	URL      string // ALERT_WEBHOOK_URL; empty disables the notifier
+	Source func(ctx context.Context) ([]Alert, error)
+	URL    string // ALERT_WEBHOOK_URL; empty means no webhook (the history is still recorded)
+	// Record, when set, is given every check's full list of firing alerts so it can keep a history (the console's
+	// Notifications page). It must be idempotent: it is called on every check, by every instance.
+	Record   func(ctx context.Context, firing []Alert) error
 	Interval time.Duration
 	HTTP     *http.Client
 	Log      *slog.Logger
@@ -28,7 +31,7 @@ type Notifier struct {
 
 // Run checks until ctx ends.
 func (n *Notifier) Run(ctx context.Context) {
-	if n.URL == "" {
+	if n.URL == "" && n.Record == nil {
 		return
 	}
 	if n.Interval <= 0 {
@@ -54,6 +57,14 @@ func (n *Notifier) Check(ctx context.Context) {
 		if ctx.Err() == nil {
 			n.log().Error("could not evaluate alerts", "error", err)
 		}
+		return
+	}
+	if n.Record != nil {
+		if err := n.Record(ctx, current); err != nil && ctx.Err() == nil {
+			n.log().Error("could not record alerts", "error", err)
+		}
+	}
+	if n.URL == "" {
 		return
 	}
 	started, cleared, state := n.diff(current)

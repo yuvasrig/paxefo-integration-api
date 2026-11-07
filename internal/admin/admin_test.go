@@ -1194,3 +1194,22 @@ func TestPayloadDetailShowsReceivedVersusProcessed(t *testing.T) {
 	page := e.get("/admin/payloads/" + m[1] + "?tenant=cmp-c")
 	has(t, page, "Received vs processed", "Temperature °C", "Timestamp")
 }
+
+// ---- notifications page ----
+
+func TestNotificationsPageListsAlertHistory(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	has(t, e.get("/admin/notifications"), "No alerts have fired yet")
+
+	must(t, e.st.SyncAlerts(ctx, []store.AlertState{{Key: "dead:n-co", Severity: "warning", TenantID: "n-co", Title: "Dead events", Detail: "n-co has 2 events"}}))
+	page := e.get("/admin/notifications")
+	has(t, page, "Dead events", "n-co has 2 events", `<span class="tag rejected">firing</span>`, `<span class="muted">still firing</span>`)
+
+	must(t, e.st.SyncAlerts(ctx, nil))
+	page = e.get("/admin/notifications")
+	has(t, page, "cleared", "Dead events")
+	if strings.Contains(page, `<span class="muted">still firing</span>`) {
+		t.Fatal("a cleared alert has an end time")
+	}
+}

@@ -215,10 +215,23 @@ func serve(ctx context.Context, ln net.Listener, cfg config.Server, log *slog.Lo
 			api.Admin = console.Handler()
 			log.Info("admin console enabled at /admin")
 		}
-		// Alerts: shown in the console, and posted to ALERT_WEBHOOK_URL when one starts or clears.
-		if cfg.AlertWebhookURL != "" {
-			go (&alerts.Notifier{Source: console.Alerts, URL: cfg.AlertWebhookURL, Log: log}).Run(ctx)
-			log.Info("alert notifications enabled")
+		// Alerts: shown in the console, recorded in its Notifications history, and posted to ALERT_WEBHOOK_URL when one
+		// starts or clears.
+		if cfg.AdminToken != "" || cfg.AlertWebhookURL != "" {
+			n := &alerts.Notifier{Source: console.Alerts, URL: cfg.AlertWebhookURL, Log: log}
+			if cfg.AdminToken != "" {
+				n.Record = func(ctx context.Context, firing []alerts.Alert) error {
+					states := make([]store.AlertState, 0, len(firing))
+					for _, a := range firing {
+						states = append(states, store.AlertState{Key: a.Key, Severity: a.Severity, TenantID: a.Tenant, Title: a.Title, Detail: a.Detail})
+					}
+					return adminStore.SyncAlerts(ctx, states)
+				}
+			}
+			go n.Run(ctx)
+			if cfg.AlertWebhookURL != "" {
+				log.Info("alert notifications enabled")
+			}
 		}
 	}
 

@@ -173,3 +173,23 @@ func TestEvaluateUsesEachTenantsOwnThresholds(t *testing.T) {
 		t.Fatalf("only the tenant with the tighter lag target alerts: %q", got)
 	}
 }
+
+func TestNotifierRecordsEveryCheckEvenWithoutAWebhook(t *testing.T) {
+	var calls, lastLen int
+	n := &Notifier{Source: func(context.Context) ([]Alert, error) { return []Alert{{Key: "a"}, {Key: "b"}}, nil },
+		Record: func(_ context.Context, firing []Alert) error { calls++; lastLen = len(firing); return nil }}
+	n.Check(context.Background())
+	n.Check(context.Background())
+	if calls != 2 || lastLen != 2 {
+		t.Fatalf("Record is called with all firing alerts on every check: calls=%d len=%d", calls, lastLen)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan struct{})
+	go func() { n.Run(ctx); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run must start for a Recorder alone, and stop with its context")
+	}
+}

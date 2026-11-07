@@ -40,7 +40,7 @@ Command line (same engine): `go run ./cmd/sender list`, `go run ./cmd/sender run
 
 ## Integration API console
 
-Open `/admin` and sign in with the operator token (`ADMIN_TOKEN`). Without that variable set the console does not exist. The tabs, left to right:
+Open `/admin` and sign in with the operator token (`ADMIN_TOKEN`). Without that variable set the console does not exist. The tabs, left to right (Dashboard, Tenants, Payloads, Compare, Conflicts, Rules, Config, Monitoring, Notifications):
 
 ### Dashboard
 ![Dashboard](img/admin-dashboard.png)
@@ -94,6 +94,11 @@ Settings (queue limit, worker minimum and maximum, jobs per worker, lag target, 
 
 Live rates and latency, recent rejects, conflicts and failures, recent events, the workers, and a prediction of whether the workers are keeping up or how long a backlog needs to clear. Links to `/metrics`, your logs and your dashboard.
 
+### Notifications
+![Notifications](img/admin-notifications.png)
+
+Every operational alert the API has raised, with its severity, tenant, when it started, when it cleared and what it said. Alerts that are still firing are at the top. The alert banners on the Dashboard and Monitoring tabs show only what is firing now; this tab keeps the history. If `ALERT_WEBHOOK_URL` is set (a Slack incoming webhook works) each alert is also posted when it starts and when it clears.
+
 ## Common tasks
 
 | I want to… | Do this |
@@ -105,3 +110,4 @@ Live rates and latency, recent rejects, conflicts and failures, recent events, t
 | Change a threshold for one tenant only | Rules (pick the tenant) or Config (pick the tenant). |
 | Fix a rule and reprocess old events | Rules (change), then Conflicts (preview, apply) or `api replay`. |
 | Find out why something is slow | Dashboard alerts, Monitoring, then the [runbook](RUNBOOK.md). |
+| See which alerts fired and when | Notifications tab. |

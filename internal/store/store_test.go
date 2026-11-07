@@ -1560,3 +1560,35 @@ func TestOutcomeIndexLeadsWithTheTenant(t *testing.T) {
 		t.Fatalf("the console's reads need the tenant-led outcomes index: %d", n)
 	}
 }
+
+func TestAlertHistoryOpensRefreshesAndClosesOnce(t *testing.T) {
+	st := newStore(t)
+	dead := store.AlertState{Key: "dead:acme", Severity: "warning", TenantID: "acme", Title: "Dead events", Detail: "acme has 1"}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(st.SyncAlerts(ctx, []store.AlertState{dead}))
+	dead.Detail = "acme has 3"
+	must(st.SyncAlerts(ctx, []store.AlertState{dead})) // still firing: one row, refreshed
+	rows, err := st.ListAlertHistory(ctx, 10)
+	must(err)
+	if len(rows) != 1 || rows[0].ClearedAt != nil || rows[0].Detail != "acme has 3" {
+		t.Fatalf("one open row with the latest detail, got %+v", rows)
+	}
+
+	must(st.SyncAlerts(ctx, nil)) // cleared
+	must(st.SyncAlerts(ctx, nil)) // and again: nothing more to close
+	rows, _ = st.ListAlertHistory(ctx, 10)
+	if len(rows) != 1 || rows[0].ClearedAt == nil {
+		t.Fatalf("the row is closed, got %+v", rows)
+	}
+
+	must(st.SyncAlerts(ctx, []store.AlertState{dead})) // it comes back: a new occurrence
+	rows, _ = st.ListAlertHistory(ctx, 10)
+	if len(rows) != 2 || rows[0].ClearedAt != nil || rows[1].ClearedAt == nil {
+		t.Fatalf("firing first, then the earlier occurrence, got %+v", rows)
+	}
+}

@@ -1,0 +1,21 @@
+{{define "notifications"}}{{template "head" .}}
+<p>Every operational alert the API has raised: when it started, when it cleared and what it said. An alert that is still firing is at the top. The same alerts are posted to the alert webhook (<code>ALERT_WEBHOOK_URL</code>) when one is set. Times are UTC.</p>
+
+{{if .AlertHistory}}
+<div class="scroll"><table>
+  <thead><tr><th>State</th><th>Severity</th><th>Alert</th><th>Tenant</th><th>Started (UTC)</th><th>Cleared (UTC)</th><th>Detail</th></tr></thead>
+  <tbody>
+  {{range .AlertHistory}}<tr>
+    <td>{{if .ClearedAt}}<span class="tag">cleared</span>{{else}}<span class="tag rejected">firing</span>{{end}}</td>
+    <td><span class="tag {{if eq .Severity "critical"}}rejected{{else}}flagged{{end}}">{{.Severity}}</span></td>
+    <td><strong>{{.Title}}</strong></td>
+    <td>{{if .TenantID}}{{.TenantID}}{{else}}<span class="muted">all</span>{{end}}</td>
+    <td>{{ts .StartedAt}}</td>
+    <td>{{if .ClearedAt}}{{ts (deref .ClearedAt)}}{{else}}<span class="muted">still firing</span>{{end}}</td>
+    <td>{{.Detail}}</td>
+  </tr>{{end}}
+  </tbody>
+</table></div>
+<p class="muted">The latest {{len .AlertHistory}} are shown{{if eq (len .AlertHistory) 200}} (older ones are kept in the database){{end}}. Detail is the last wording the alert had.</p>
+{{else}}<p class="muted">No alerts have fired yet.</p>{{end}}
+{{template "foot" .}}{{end}}

@@ -71,6 +71,7 @@ type view struct {
 	PayloadEvent  *store.EventRecord
 	FieldRows     []compare.Row
 	Compare       *compareView
+	AlertHistory  []store.AlertRecord
 	PaxafeJSON    string
 	SensorJSON    string
 	LocationJSON  string
@@ -167,9 +168,10 @@ var funcs = template.FuncMap{
 		}
 		return worker.FormatETA(d) + " ago"
 	},
-	"ts":   func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") + " UTC" },
-	"join": strings.Join,
-	"num":  func(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) },
+	"ts":    func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") + " UTC" },
+	"join":  strings.Join,
+	"deref": func(t *time.Time) time.Time { return *t },
+	"num":   func(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) },
 }
 
 func (c *Console) render(w http.ResponseWriter, r *http.Request, name string, v view) {
