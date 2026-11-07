@@ -19,6 +19,9 @@ Both are sent in the submission email (not committed to this public repository).
 2. Open the sender, pick scenarios (route, excursion, fault, duplicates, malformed, auth, load), run them, and read the report: counts sent, acknowledged and processed, plus sent-vs-stored charts for temperature and location.
 3. In the API console (`/admin`, operator token): **Payloads** shows each tenant's PAXAFE records; **Compare** sets what a device sent beside what the API produced, per device, with charts and a list of what the rules changed.
 
+## Performance
+Tested locally (about 1,200 events/s async on a laptop) and on the deployed Render free tier with 5, 10, 15 and 25 events/s steps: no errors and no lost or wrong events at any rate, comfortable to about 5/s, latency grows from about 10/s, and acknowledgements top out near 15/s on the free plan. Details and limits: `docs/PERFORMANCE.md`.
+
 ## Assumptions
 - Idempotency key is `(tenant, device IMEI, timestamp)`; the same content is a duplicate and different content is a conflict handled by a per-tenant policy.
 - The raw payload is stored untouched before anything else happens; transforms can be replayed after a rule fix.

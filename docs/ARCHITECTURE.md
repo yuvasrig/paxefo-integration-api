@@ -154,7 +154,7 @@ Until retention exists, size the database for the expected fleet, watch its grow
 | Bad data | One bad field is cleared and flagged; only a missing timestamp or no usable data rejects a reading. |
 | Fixing mistakes | Replay with a dry-run preview; previous outcomes are archived. |
 
-Measured on a laptop (`docs/PERFORMANCE.md`): about 1,200 events per second sustained for an async tenant, nothing acknowledged ever lost.
+Measured (`docs/PERFORMANCE.md`): on a laptop about 1,200 events per second sustained for an async tenant; on Render's free plan comfortable to about 5 events per second, with acknowledgements topping out near 15 per second. In both, nothing acknowledged was lost.
 
 ## 8. Configuration and operation
 

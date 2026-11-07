@@ -1,7 +1,42 @@
 # Performance test
 
-Run on 2026-11-06/07 on localhost (the local Docker stack on a laptop), with the mock sender's load plans. The numbers show
-what the design and code can do on that machine; they were not measured on Render. Scripts: `scripts/perf/` (they reproduce every figure here).
+This report has two parts. **Part 1 (Render free tier)** is a short step test of the deployed service. **Part 2 (localhost)** is the
+full test, run on the local Docker stack on a laptop; its numbers show what the design and code can do on that machine and do not
+apply to Render. Scripts: `scripts/perf/` (they reproduce every localhost figure).
+
+## Part 1. Render free tier (deployed service)
+
+**Setup.** Live service https://paxafe-api.onrender.com on Render's free plan (0.1 CPU, 512 MB, small shared Postgres), tenant
+`reviewer` in async mode with the deployed defaults (up to 3 workers for the tenant). The load came from the mock sender's CLI
+(`sender run --scenario load --rate R --duration 30s`) on a laptop over the internet, so latencies include the network round trip.
+Each step ran for 30 seconds and the sender then waited for the workers and compared a sample of 300 acknowledged events with what
+the API stored. Measured 2026-11-07, after the service had been woken.
+
+| Target rate | Sent | Achieved rate | p50 | p95 | p99 | max | Errors | Missing | Sample stored correctly |
+|---|---|---|---|---|---|---|---|---|---|
+| 5/s | 150 | 5.0/s | 91 ms | 373 ms | 882 ms | 973 ms | 0 | 0 | 150 of 150 |
+| 10/s | 300 | 10.0/s | 108 ms | 2.3 s | 3.3 s | 3.9 s | 0 | 0 | 300 of 300 |
+| 15/s | 450 | 14.5/s | 1.1 s | 2.4 s | 2.9 s | 3.5 s | 0 | 0 | 300 of 450 (even sample) |
+| 25/s | 750 | 15.5/s | 1.9 s | 3.2 s | 3.8 s | 4.6 s | 0 | 0 | 300 of 750 (even sample) |
+
+**What this shows**
+- **Nothing was lost or wrong at any rate.** Every acknowledged event was found again and matched what was sent; there were no
+  errors and no rejected requests.
+- **Comfortable up to about 5 events/s.** Acknowledgements take about 90 ms at the median.
+- **Latency degrades from about 10 events/s.** The median is still low but the tail reaches seconds. By 15/s the median is over a
+  second.
+- **The acknowledgement rate tops out near 15 events/s.** At a target of 25/s the sender could only submit 15.5/s because
+  acknowledgements slowed down. The same sender kept up with 30/s on localhost with a p95 of 7 ms, so the limit here was the free
+  instance, not the sender.
+- **About 15 events/s is roughly 1,300,000 events a day,** well above a realistic fleet of a few thousand trackers reporting every few
+  minutes, but there is no headroom for bursts on the free plan. For burst capacity, use a paid plan, more CPU, or separate worker
+  containers (see ADR 0001).
+
+**Limits of this test.** One 30-second run per rate, from one location. The 15/s and 25/s steps verified a 300-event sample, not
+every event. The queue's drain time after the load stopped was not measured separately. Cold starts after idle add up to about a
+minute to the first request and are not included. Treat the figures as an indication of free-tier capacity, not a guarantee.
+
+## Part 2. Localhost
 
 ## Summary
 
