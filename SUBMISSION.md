@@ -26,6 +26,7 @@ Tested locally (about 1,200 events/s async on a laptop) and on the deployed Rend
 - Idempotency key is `(tenant, device IMEI, timestamp)`; the same content is a duplicate and different content is a conflict handled by a per-tenant policy.
 - The raw payload is stored untouched before anything else happens; transforms can be replayed after a rule fix.
 - Tive cannot be throttled and retries a 5xx only once, so there is no rate limiting; overload shows as backpressure (503 with Retry-After) at a queue limit. See `docs/adr/0002-no-rate-limiting.md`.
+- `type` is always `Active`. The Tive webhook payload has no field for it, and Tive's Public API (`GET https://api.tive.com/public/v3/Devices/{deviceId}`) documents no model, type or real-time-versus-upload field either, so a `Passive` classification would need to be agreed with PAXAFE. See `docs/ARCHITECTURE.md`.
 - Webhook signature verification and the Tive source-IP allow-list are documented but not built.
 - No retention policy is built; storage is roughly 2.6 to 4.6 KB per event (`docs/PERFORMANCE.md`).
 - The free Render database expires after about 30 days.
