@@ -3,9 +3,97 @@ info:
   title: PAXAFE Tive Integration API
   version: 0.1.0
   description: |
-    Receives Tive tracker payloads, stores the raw payload, and transforms them into PAXAFE sensor and
-    location records. Scope: milestones M1–M4 (sync ingest). Source of truth: DESIGN.md §12.
-    Async mode, queue, alerts and reconciliation endpoints are designed but not part of this contract.
+    Receives **Tive** tracker webhook payloads, stores each one untouched, and turns it into **PAXAFE** sensor and
+    location records. This page is the API contract. The service also has an operator console (the *admin view*) at
+    [`/admin/`](/admin/), which is where tenants, keys, rules, payloads, conflicts and alerts are managed.
+
+    ## Quick start
+    1. **Get a key.** An operator creates a tenant in the console (`/admin/`, tab *Tenants*) and copies its API key
+       (`pxk_test_...`). The key identifies the tenant; send it in the `X-API-Key` header.
+    2. **Send a payload.** `POST /api/webhook/tive` with Tive's JSON body.
+    3. **Read the answer.** The response carries the `status`, the PAXAFE `sensor` and `location` records, and any
+       quality `flags`. `GET /api/v1/events/{id}` returns the same later, together with the raw payload.
+
+    ```bash
+    curl -i -X POST https://paxafe-api.onrender.com/api/webhook/tive \
+      -H 'X-API-Key: pxk_test_...' -H 'Content-Type: application/json' -d @payload.json
+    ```
+    A free-tier instance sleeps when idle; the first request can take about a minute.
+
+    ## What happens to a payload
+    1. The key is checked and the **raw payload is stored untouched** (it is never modified or deleted).
+    2. **Rules** clean it: numeric strings are coerced, sentinel values such as `-32768` are cleared, seconds
+       timestamps are scaled, ranges are checked, a device named only by `DeviceName` is resolved. Each fix is
+       reported as a **flag**; one bad field does not reject the reading.
+    3. It is **transformed** into the PAXAFE `sensor` and `location` records (rounded only at output, and
+       validated against the PAXAFE JSON schemas).
+    4. The outcome is stored and returned. The reading's identity is `(tenant, device IMEI, EntryTimeEpoch)`.
+
+    ## Status values
+    | status | meaning | HTTP |
+    |---|---|---|
+    | `accepted` | Stored, nothing to report | 200 |
+    | `flagged` | Stored, with one or more flags (a value was cleared, converted or defaulted) | 200 |
+    | `duplicate` | The same reading with identical content was already stored; nothing written | 200 |
+    | `conflict` | The same reading arrived earlier with *different* content; the tenant's conflict policy decides | 200 or 409 |
+    | `rejected` | No timestamp or no usable data; no PAXAFE record. The raw payload is still stored | 422 |
+    | `failed` | A server error after the raw payload was saved; recoverable with the replay endpoint | 500 |
+    | `queued` | Async tenants only: stored and queued, processed shortly after | 202 |
+
+    Precedence when several apply: rejected > conflict > duplicate > flagged > accepted.
+
+    ## Ingest modes
+    A tenant is **sync** (processed before the answer, `200`) or **async** (the payload and a queue job are
+    committed, the answer is `202 {"status":"queued"}`, and that tenant's own worker pool processes it). Read an async
+    result with `GET /api/v1/events/{id}`. When an async tenant's queue is full the answer is `503` with `Retry-After`
+    and nothing is stored. There is no rate limiting: Tive cannot be throttled (see ADR 0002 in the repository).
+
+    ## Conflicts
+    A second payload for the same device and time with different content is a conflict. The tenant's policy decides:
+    `keep_first` (default: the stored reading stays), `keep_last` (the new version replaces it; the old event stays
+    archived) or `reject` (nothing written). Both versions are always kept. The tenant also chooses whether a conflict is
+    answered `200` or `409`.
+
+    ## Flags
+    | code | severity | meaning |
+    |---|---|---|
+    | `SENSOR_FAULT` | warn | A sentinel temperature (`-32768`, `327.67`, `32767`) was cleared |
+    | `TEMPERATURE_FALLBACK` | info | The device temperature was unusable; the probe temperature was used |
+    | `TEMPERATURE_CONVERTED` | info | Only Fahrenheit was sent; Celsius was computed |
+    | `OUT_OF_RANGE` | warn | A humidity, light or battery value outside its range was cleared |
+    | `INVALID_COORDINATES` | error | Latitude or longitude outside the valid range; no location record |
+    | `COERCED_TYPE` | info | A numeric value sent as a string was converted |
+    | `TIMESTAMP_SECONDS` | warn | The timestamp was in seconds and was scaled to milliseconds |
+    | `TIMESTAMP_FUTURE` | error | The timestamp is too far in the future; the reading is rejected |
+    | `INVALID_TYPE` | warn | A value of the wrong type (for example text where a number belongs) was cleared |
+    | `DEVICE_RESOLVED_BY_NAME` | info | The device id was resolved from `DeviceName` |
+    | `IDENTITY_MISMATCH` | warn | `EntityName`, `DeviceName` or `DeviceId` disagree |
+    | `NO_DEVICE_IDENTITY` | error | No usable device identity; the reading is rejected |
+    | `NO_TIMESTAMP` | error | No usable timestamp; the reading is rejected |
+    | `NO_USABLE_DATA` | error | No temperature and no location after cleaning; the reading is rejected |
+    | `DUPLICATE_CONFLICT` | warn | The reading conflicts with a stored one (see Conflicts) |
+
+    The rules are configurable per deployment and per tenant, so the live list is `GET /api/v1/rules`.
+
+    ## Errors
+    Errors use one envelope: `{"error": {"code": "...", "message": "..."}}`. `400` invalid JSON (the raw bytes are
+    still stored), `401` missing, invalid, expired or revoked key, `413` body over 256 KB (nothing saved), `404`
+    unknown event or not visible to this tenant, `422` rejected, `503` queue full or not ready.
+
+    ## Not part of this contract
+    Tenant, key, rule and settings management, alerts and the payload and comparison views are in the admin view at
+    [`/admin/`](/admin/) (and the `api` command line), not in this HTTP API.
+tags:
+  - name: Ingest
+    description: Receive Tive payloads. Authenticated with a tenant API key.
+  - name: Events
+    description: Read back what was stored for an event, or reprocess it.
+  - name: Readings
+    description: Query a device's PAXAFE records.
+  - name: Rules
+    description: The quality rules in force.
+  - name: Operations
+    description: Probes, metrics and this contract. No key needed.
 servers:
   - url: https://paxafe-api.onrender.com
   - url: http://localhost:8080
@@ -16,6 +104,7 @@ paths:
   /api/webhook/tive:
     post:
       operationId: ingestTive
+      tags: [Ingest]
       summary: Ingest one Tive payload
       description: |
         The raw payload is committed before any 2xx. The tenant is the API key's; the payload's `AccountId` is stored
@@ -31,6 +120,30 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/TivePayload' }
+            examples:
+              normal:
+                summary: A normal reading
+                value:
+                  EntityName: B234567
+                  EntryTimeEpoch: 1739999999000
+                  DeviceId: '866088073468440'
+                  DeviceName: B234567
+                  AccountId: 478
+                  Temperature: { Celsius: 4.5, Fahrenheit: 40.1 }
+                  ProbeTemperature: { Celsius: 3.875, Fahrenheit: 38.975 }
+                  Humidity: { Percentage: 55.3 }
+                  Battery: { Percentage: 82 }
+                  Cellular: { Dbm: -75 }
+                  Location: { Latitude: 37.7749, Longitude: -122.4194, Accuracy: { Meters: 5 }, LocationMethod: gps, FormattedAddress: 'San Francisco, CA 94102, USA' }
+              sensor_fault:
+                summary: Sensor fault and an impossible latitude
+                value:
+                  EntityName: B234567
+                  EntryTimeEpoch: 1739999888000
+                  DeviceId: '866088073468440'
+                  Temperature: { Celsius: -32768 }
+                  ProbeTemperature: { Celsius: 3.875 }
+                  Location: { Latitude: 95, Longitude: -71.06 }
       responses:
         '200':
           description: Processed (accepted, flagged, duplicate, or conflict when the tenant's conflict `http_status` is 200)
@@ -38,6 +151,30 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IngestResponse' }
+              examples:
+                accepted:
+                  summary: accepted (the normal reading above)
+                  value:
+                    event_id: evt_01M6T2ZQK7XEAK9AX3H7AH0QRZ
+                    request_id: req_dfe94c1e211c8e2fdcec68e0
+                    status: accepted
+                    sensor: { device_id: B234567, device_imei: '866088073468440', timestamp: 1739999999000, provider: Tive, type: Active, temperature: 4.5, humidity: 55.3, light_level: null, accelerometer: null, tilt: null, box_open: null }
+                    location: { device_id: B234567, device_imei: '866088073468440', timestamp: 1739999999000, provider: Tive, type: Active, latitude: 37.7749, longitude: -122.4194, altitude: null, location_accuracy: 5, location_accuracy_category: High, location_source: GPS, address: { street: null, locality: San Francisco, state: CA, country: USA, postal_code: '94102', full_address: 'San Francisco, CA 94102, USA' }, battery_level: 82, cellular_dbm: -75, cellular_network_type: null, cellular_operator: null, wifi_access_points: 0 }
+                    flags: []
+                    errors: []
+                flagged:
+                  summary: flagged (the sensor-fault reading above)
+                  value:
+                    event_id: evt_01M6T2ZY2W02W6542A73VPBXZ7
+                    request_id: req_a68d76410eb34ab9520dc5bc
+                    status: flagged
+                    sensor: { device_id: '866088073468440', device_imei: '866088073468440', timestamp: 1739999888000, provider: Tive, type: Active, temperature: 3.88, humidity: null, light_level: null, accelerometer: null, tilt: null, box_open: null }
+                    location: null
+                    flags:
+                      - { code: SENSOR_FAULT, severity: warn, field: Temperature.Celsius, value: -32768, action: nullified, rule_id: TEMP-SENTINEL }
+                      - { code: INVALID_COORDINATES, severity: error, field: Location.Latitude, value: 95, action: location_skipped, rule_id: LAT-RANGE }
+                      - { code: TEMPERATURE_FALLBACK, severity: info, field: Temperature.Celsius, new_value: 3.875, action: fixed }
+                    errors: []
         '202':
           description: |
             Queued (tenants in async ingest mode only). The raw payload and its queue job are committed; a worker
@@ -74,6 +211,7 @@ paths:
   /api/v1/webhook/tive:
     post:
       operationId: ingestTiveV1
+      tags: [Ingest]
       summary: Alias of /api/webhook/tive (the path the exercise requires)
       requestBody:
         required: true
@@ -91,6 +229,7 @@ paths:
   /api/v1/events/{id}:
     get:
       operationId: getEvent
+      tags: [Events]
       summary: Raw event, outcome, flags and PAXAFE output
       description: |
         Visible only to the tenant that owns the event.
@@ -108,6 +247,7 @@ paths:
   /api/v1/events/{id}/replay:
     post:
       operationId: replayEvent
+      tags: [Events]
       summary: Re-run a failed or rejected event from its stored raw payload
       description: |
         Only failed, rejected or unfinished events can be replayed. Idempotent: readings are inserted with ON CONFLICT. The raw payload is never modified.
@@ -131,6 +271,7 @@ paths:
   /api/v1/readings:
     get:
       operationId: listReadings
+      tags: [Readings]
       summary: Sensor and location readings for a device (cursor-paginated)
       parameters:
         - { name: device_id, in: query, required: true, schema: { type: string, example: A571992 } }
@@ -149,6 +290,7 @@ paths:
   /api/v1/rules:
     get:
       operationId: getRules
+      tags: [Rules]
       summary: The ruleset currently in force
       description: |
         Rules are configurable at runtime (`api rules set`), so this can change between two calls. `source` says where the
@@ -170,6 +312,7 @@ paths:
   /healthz:
     get:
       operationId: healthz
+      tags: [Operations]
       summary: Liveness
       security: []
       responses:
@@ -179,6 +322,7 @@ paths:
   /readyz:
     get:
       operationId: readyz
+      tags: [Operations]
       summary: Readiness (database, migration version, storage backend, ingest mode)
       security: []
       responses:
@@ -197,6 +341,7 @@ paths:
   /metrics:
     get:
       operationId: metrics
+      tags: [Operations]
       summary: Prometheus metrics
       security: []
       responses:
@@ -204,6 +349,7 @@ paths:
   /docs:
     get:
       operationId: docs
+      tags: [Operations]
       summary: Redoc API documentation
       security: []
       responses:
@@ -211,6 +357,7 @@ paths:
   /openapi.yaml:
     get:
       operationId: openapi
+      tags: [Operations]
       summary: This contract
       security: []
       responses:
@@ -292,7 +439,7 @@ components:
         request_id: { type: string, example: req_01JABCDEF }
         status:
           type: string
-          enum: [accepted, flagged, duplicate, conflict, rejected, failed]
+          enum: [accepted, flagged, duplicate, conflict, rejected, failed, queued]
         sensor:
           allOf: [ { $ref: '#/components/schemas/SensorRecord' } ]
           nullable: true

@@ -9,7 +9,7 @@ Two apps work together. The **Mock Tive Sender** pretends to be Tive and sends p
 
 The Integration API is a webhook service, so the page you open in a browser is its **admin view** (the operator console, described below); it asks for the admin token. Tive itself talks to `POST /api/webhook/tive`, which has no page. Free Render services sleep when idle; the first request can take about a minute (the sender's home page wakes the API for you).
 
-Contents: [Tutorial](#tutorial-add-a-tenant-send-load-check-the-results) (tenants, load, results, conflicts, comparison) · [Mock Tive Sender](#mock-tive-sender) · [Integration API console](#integration-api-console) · [Command line](#command-line) · [Common tasks](#common-tasks)
+Contents: [Tutorial](#tutorial-add-a-tenant-send-load-check-the-results) (tenants, load, results, conflicts, comparison) · [Mock Tive Sender](#mock-tive-sender) · [Integration API console](#integration-api-console) · [API reference](#api-reference-page-docs) · [Command line](#command-line) · [Common tasks](#common-tasks)
 
 ## The short version
 
@@ -222,6 +222,18 @@ Live rates and latency, recent rejects, conflicts and failures, recent events, t
 ![Notifications](img/admin-notifications.png)
 
 Every operational alert the API has raised, with its severity, tenant, when it started, when it cleared and what it said. Alerts that are still firing are at the top. The alert banners on the Dashboard and Monitoring tabs show only what is firing now; this tab keeps the history. If `ALERT_WEBHOOK_URL` is set (a Slack incoming webhook works) each alert is also posted when it starts and when it clears.
+
+## API reference page (`/docs`)
+
+The bare address of the API (`https://paxafe-api.onrender.com/`) opens the API reference at `/docs`; the machine-readable contract is at `/openapi.yaml`. It is the contract for the HTTP API that Tive and other systems call. It is separate from the admin view (`/admin/`), which is for operators.
+
+![The API reference page](img/api-docs.png)
+
+The left menu has two parts:
+- **Guides:** quick start, what happens to a payload, every **status** value and its HTTP code, sync and async **ingest modes**, how **conflicts** are handled, a table of every quality **flag** with its severity and meaning, the error format, and what is not part of the HTTP API (tenant, key and rule management live in the admin view).
+- **Endpoints:** *Ingest* (`POST /api/webhook/tive`, with a normal and a sensor-fault request and the real responses to each), *Events* (read an event with its raw payload, outcome and PAXAFE records; replay a failed one), *Readings* (a device's records, cursor-paginated), *Rules* (the rules in force) and *Operations* (`/healthz`, `/readyz`, `/metrics`).
+
+Every endpoint except the probes needs the tenant's key in the `X-API-Key` header.
 
 ## Command line
 
