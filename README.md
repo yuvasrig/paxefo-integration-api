@@ -2,6 +2,7 @@
 
 Receives Tive webhook payloads, transforms them to PAXAFE sensor and location records, and stores them in Postgres.
 This README is a stub; the full version (quick start, architecture, decisions, built vs designed) is written in M7.
+**Live:** API https://paxafe-api.onrender.com · sender https://paxafe-sender.onrender.com · see [SUBMISSION.md](SUBMISSION.md).
 For now see [DESIGN.md](DESIGN.md), [specs/001-integration-api/](specs/001-integration-api), and [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Rules framework (configurable on the fly)
