@@ -1,9 +1,50 @@
 # PAXAFE Tive Integration API
 
-Receives Tive webhook payloads, transforms them to PAXAFE sensor and location records, and stores them in Postgres.
-This README is a stub; the full version (quick start, architecture, decisions, built vs designed) is written in M7.
-**Live:** API https://paxafe-api.onrender.com · sender https://paxafe-sender.onrender.com · see [SUBMISSION.md](SUBMISSION.md).
-For now see [DESIGN.md](DESIGN.md), [specs/001-integration-api/](specs/001-integration-api), and [docs/DEPLOY.md](docs/DEPLOY.md).
+Receives Tive webhook payloads, transforms them to PAXAFE sensor and location records, and stores them in Postgres. Raw payloads are stored first and never changed; everything else (validation, transform, quality flags) is replayable.
+
+**Live:** API https://paxafe-api.onrender.com · mock sender https://paxafe-sender.onrender.com · see [SUBMISSION.md](SUBMISSION.md) for how to verify it.
+The companion repository is the [mock Tive sender](https://github.com/yuvasrig/paxafe-mock-sender).
+
+## Quick start (local)
+
+```bash
+make up                      # Postgres + API on http://localhost:8080 (docker compose)
+docker compose exec api /api seed      # creates tenants and prints their API keys once
+scripts/smoke.sh http://localhost:8080 <reviewer-key>   # posts the 13 provided samples, checks each result
+```
+Admin console: http://localhost:8080/admin (token `local-admin-token` in `docker-compose.yml`). OpenAPI docs: `/docs`. Tests: `go test ./...` (needs Docker for the database tests), lint: `golangci-lint run`.
+
+## What it does
+
+`POST /api/webhook/tive` with an `x-api-key` header (the key identifies the tenant):
+
+1. **Authenticate and store.** The raw JSON is stored untouched in `raw_events` (immutable).
+2. **Process.** Rules clean the payload (sentinel temperatures, numeric strings, seconds timestamps, ranges, device lookup by name), then the transform maps it to PAXAFE `sensor` and `location` records, validated against the PAXAFE JSON schemas. A bad field is nulled and flagged; the event is only rejected when there is no timestamp or no usable data.
+3. **Store and answer.** Records are stored with an outcome (`accepted`, `flagged`, `rejected`, `duplicate`, `conflict`). Idempotency key: `(tenant, device IMEI, timestamp)`.
+4. **Sync or async.** A sync tenant is processed before the answer (200). An async tenant gets `202` and its event is processed by that tenant's worker pool from a Postgres queue.
+
+Read side: `GET /api/v1/events/{id}`, `GET /api/v1/rules`, `/healthz`, `/readyz`, `/metrics`, `/docs`.
+
+## Architecture
+
+```
+Tive ──▶ webhook ──▶ raw_events (immutable) ──▶ ingest_jobs ──▶ worker pool (per tenant)
+                │                                                    │
+                └── sync tenants: process inline ───────────────────┤
+                                                                     ▼
+                                         event_outcomes · sensor/location records · reading_conflicts
+```
+Pooled multi-tenancy with Postgres row-level security; one binary with `ROLE=all|api|worker`; stdlib `net/http`, `pgx/v5`, `goose`, `slog`. Pure functions for parse, rules, transform and validation (no I/O, enforced by a purity test). Details: [DESIGN.md](DESIGN.md), [specs/001-integration-api/](specs/001-integration-api), decisions in [docs/adr/](docs/adr/README.md).
+
+## Compare what was received with what was produced
+
+The console's **Compare** page (`/admin/compare`) sets what a device sent beside what the API produced, per tenant and device and for a time window: temperature and location charts (received as a line, produced as dots, out-of-range received values as red rings), counts of events changed by rules, and a list of what changed. Each event page has a field-by-field table of received versus processed values with the flag and rule behind each change. The mock sender's report does the same from the sender's side.
+
+## Built versus designed
+
+Built: everything above, the rules framework, per-tenant settings and overrides, async workers with backpressure, conflict handling and replay, the admin console with alerts, the Render deployment, performance tests. Designed but not built (see ADRs and DESIGN.md): the in-service reconciler, OpenTelemetry tracing, Prometheus alert rules, the local k3d/KEDA scaling demo, Timescale, retention, webhook signature verification and source-IP allow-listing.
+
+Operations: [docs/RUNBOOK.md](docs/RUNBOOK.md) · deployment: [docs/DEPLOY.md](docs/DEPLOY.md) · load results: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ## Rules framework (configurable on the fly)
 
