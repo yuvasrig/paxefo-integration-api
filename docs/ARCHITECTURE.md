@@ -8,6 +8,26 @@
 | **Companion** | [Mock Tive Sender](https://github.com/yuvasrig/paxafe-mock-sender): simulates Tive for testing |
 | **Related** | [DESIGN.md](../DESIGN.md) (full design) · [ADRs](adr/README.md) (decisions) · [RUNBOOK.md](RUNBOOK.md) (operations) · [USER_GUIDE.md](USER_GUIDE.md) (how to use it) |
 
+## Tech stack
+
+| Layer | Choice | Used for |
+|---|---|---|
+| Language | **Go 1.23** | One statically linked service binary |
+| HTTP | Go standard library `net/http` | Routing, handlers, middleware (no web framework) |
+| Database | **PostgreSQL 16** | Storage, queue, row-level security, idempotency constraints |
+| DB access | `pgx/v5` | Connection pooling and queries (no ORM) |
+| Migrations | `goose` | Versioned SQL migrations, applied on start |
+| Validation | `santhosh-tekuri/jsonschema` | Checking output against the PAXAFE JSON schemas |
+| Rules | YAML (`yaml.v3`) | Configurable rule definitions |
+| Logging | `slog` (standard library) | Structured logs with request ids |
+| Metrics | Prometheus client | `/metrics` endpoint |
+| Admin console | Server-rendered `html/template`, plain CSS and a little JavaScript | Operator view, no external scripts, strict content-security policy |
+| API reference | OpenAPI 3 + Redoc | `/docs` and `/openapi.yaml` |
+| Packaging | Docker (multi-stage, distroless image) | One image, three roles (`all`, `api`, `worker`) |
+| Hosting | Render (web service + managed Postgres, Blueprint) | Live deployment |
+| CI | GitHub Actions, `golangci-lint` | Tests, vet and lint gate every deploy |
+| Test sender | Go + htmx UI + CLI (separate repository) | Simulates Tive, compares what was sent with what was stored |
+
 ## 1. Goals
 
 1. **Never lose an acknowledged payload.** The raw payload is stored before any success answer.
