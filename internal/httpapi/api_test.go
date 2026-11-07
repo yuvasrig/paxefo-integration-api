@@ -732,11 +732,16 @@ func TestInvalidPublishedRulesetIsIgnored(t *testing.T) {
 	e.publishRules("2026-11-06.good", defaultPlus("2026-11-06.good", humidityHigh))
 	e.waitForRules("2026-11-06.good", rules.SourceDatabase)
 
-	// Bypass the CLI's validation to simulate a corrupt row.
-	_, err := e.st.Pool().Exec(ctx, `UPDATE rulesets SET active = false WHERE active`)
-	must(t, err)
-	_, err = e.st.Pool().Exec(ctx, `INSERT INTO rulesets (version, yaml, active) VALUES ('2026-11-06.broken', 'version: [', true)`)
-	must(t, err)
+	// Bypass the CLI's validation to simulate a corrupt row. Both statements are one transaction: between two separate
+	// ones the reloader can see "no active ruleset" and fall back to the defaults, which is a different (and correct)
+	// behaviour than the one under test.
+	must(t, pgx.BeginFunc(ctx, e.st.Pool(), func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `UPDATE rulesets SET active = false WHERE active`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO rulesets (version, yaml, active) VALUES ('2026-11-06.broken', 'version: [', true)`)
+		return err
+	}))
 	time.Sleep(150 * time.Millisecond) // several refresh intervals
 
 	if l := e.holder.Loaded(); l.Ruleset.Version != "2026-11-06.good" {
