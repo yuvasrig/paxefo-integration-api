@@ -17,7 +17,6 @@
 | Database | **PostgreSQL 16** | Storage, queue, row-level security, idempotency constraints |
 | DB access | `pgx/v5` | Connection pooling and queries (no ORM) |
 | Migrations | `goose` | Versioned SQL migrations, applied on start |
-| Validation | `santhosh-tekuri/jsonschema` | Checking output against the PAXAFE JSON schemas |
 | Rules | YAML (`yaml.v3`) | Configurable rule definitions |
 | Logging | `slog` (standard library) | Structured logs with request ids |
 | Metrics | Prometheus client | `/metrics` endpoint |
