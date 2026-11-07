@@ -45,6 +45,8 @@ type Store interface {
 	TenantStats(ctx context.Context, tenantID string) (store.TenantStats, error)
 	RecentEvents(ctx context.Context, tenantID string, limit int, statuses []string) ([]store.RecentEvent, error)
 	ActiveHeartbeats(ctx context.Context, within time.Duration) ([]store.Heartbeat, error)
+	ListPayloads(ctx context.Context, f store.PayloadFilter) ([]store.PayloadRow, *store.PayloadCursor, error)
+	GetEvent(ctx context.Context, viewerTenant, id string) (*store.EventRecord, error)
 	ListConflicts(ctx context.Context, tenantID string, limit int) ([]store.ConflictRow, error)
 	ListSettings(ctx context.Context) ([]store.SettingRow, error)
 	SetSetting(ctx context.Context, key, value, by string) error
@@ -126,6 +128,9 @@ func (c *Console) Handler() http.Handler {
 	page("POST /admin/tenants/{id}/keys", c.keyCreate)
 	page("POST /admin/tenants/{id}/keys/{key}/revoke", c.keyRevoke)
 	page("POST /admin/tenants/{id}/settings", c.tenantSettings)
+	page("GET /admin/payloads", c.payloadsPage)
+	page("GET /admin/payloads.json", c.payloadsJSON)
+	page("GET /admin/payloads/{id}", c.payloadDetail)
 	page("GET /admin/conflicts", c.conflictsPage)
 	page("POST /admin/conflicts/replay", c.conflictsReplay)
 	page("GET /admin/rules", c.rulesPage)

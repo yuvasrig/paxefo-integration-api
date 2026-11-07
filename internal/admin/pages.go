@@ -58,6 +58,20 @@ type view struct {
 	// monitoring page
 	Links []link
 
+	// payloads page
+	PF            payloadFilter
+	Ranges        []struct{ Value, Label string }
+	StatusOptions []string
+	Limits        []int
+	Payloads      []payloadView
+	NextURL       string
+	JSONURL       string
+	PayloadEvent  *store.EventRecord
+	PaxafeJSON    string
+	SensorJSON    string
+	LocationJSON  string
+	RawJSON       string
+
 	// conflicts page
 	TenantID  string
 	Conflicts []store.ConflictRow

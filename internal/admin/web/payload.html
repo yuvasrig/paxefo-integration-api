@@ -1,0 +1,42 @@
+{{define "payload"}}{{template "head" .}}
+{{with .PayloadEvent}}
+<p><a href="/admin/payloads?tenant={{$.Scope}}">&larr; Payloads for {{$.Scope}}</a></p>
+<table>
+  <tbody>
+    <tr><th>Event</th><td><code>{{.ID}}</code></td></tr>
+    <tr><th>Tenant</th><td>{{.TenantID}}</td></tr>
+    <tr><th>Status</th><td>{{if .HasOutcome}}<span class="tag {{.Status}}">{{.Status}}</span>{{else}}<span class="tag pending">pending</span> (still queued){{end}}</td></tr>
+    <tr><th>Received</th><td>{{ts .ReceivedAt}}</td></tr>
+    {{if .HasOutcome}}<tr><th>Processed</th><td>{{ts .ProcessedAt}} · attempts {{.Attempts}}</td></tr>
+    <tr><th>Versions</th><td>transform {{.TransformVersion}} · rules {{.RulesVersion}}</td></tr>{{end}}
+    {{if .Error}}<tr><th>Error</th><td>{{.Error}}</td></tr>{{end}}
+    <tr><th>Request id</th><td><code>{{.RequestID}}</code></td></tr>
+  </tbody>
+</table>
+
+{{if .Reasons}}<h2>Why it was rejected</h2>
+<table><thead><tr><th>Code</th><th>Field</th><th>Message</th></tr></thead><tbody>
+{{range .Reasons}}<tr><td><strong>{{.Code}}</strong></td><td>{{.Field}}</td><td>{{.Message}}</td></tr>{{end}}
+</tbody></table>{{end}}
+
+{{if .Flags}}<h2>Quality flags</h2>
+<table><thead><tr><th>Code</th><th>Severity</th><th>Field</th><th>Action</th><th>Rule</th></tr></thead><tbody>
+{{range .Flags}}<tr><td><strong>{{.Code}}</strong></td><td>{{.Severity}}</td><td>{{.Field}}</td><td>{{.Action}}</td><td>{{.RuleID}}</td></tr>{{end}}
+</tbody></table>{{end}}
+
+<div class="two">
+  <section>
+    <h2>PAXAFE payload</h2>
+    {{if or $.SensorJSON $.LocationJSON}}
+      {{if $.SensorJSON}}<h3>sensor</h3><pre>{{$.SensorJSON}}</pre>{{end}}
+      {{if $.LocationJSON}}<h3>location</h3><pre>{{$.LocationJSON}}</pre>{{end}}
+    {{else}}<p class="muted">No PAXAFE record was produced for this event.</p>{{end}}
+  </section>
+  <section>
+    <h2>Tive payload as received</h2>
+    <pre>{{$.RawJSON}}</pre>
+    <p class="muted">Stored byte for byte before anything else happened; it is never changed.</p>
+  </section>
+</div>
+{{end}}
+{{template "foot" .}}{{end}}

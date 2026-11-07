@@ -1,0 +1,63 @@
+{{define "payloads"}}{{template "head" .}}
+<p>The <strong>PAXAFE payloads</strong> this API produced: for each event a tenant sent, the sensor and location records in PAXAFE's format, as stored. Pick a tenant and a time window; open an event to see the Tive payload it came from. All times are UTC.</p>
+
+<form method="get" action="/admin/payloads" class="card filters">
+  <div class="inline">
+    <label>Tenant
+      <select name="tenant" data-autosubmit>
+        {{range .Tenants}}<option value="{{.Info.ID}}" {{if eq .Info.ID $.PF.Tenant}}selected{{end}}>{{.Info.ID}}</option>{{end}}
+      </select>
+    </label>
+    <label>Time is
+      <select name="time">
+        <option value="received" {{if eq .PF.TimeField "received"}}selected{{end}}>when the API received it</option>
+        <option value="event" {{if eq .PF.TimeField "event"}}selected{{end}}>the reading's own time</option>
+      </select>
+    </label>
+    <label>Window
+      <select name="range">
+        {{range .Ranges}}<option value="{{.Value}}" {{if eq .Value $.PF.Range}}selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label>From (UTC, custom) <input type="datetime-local" name="from" value="{{.PF.From}}"></label>
+    <label>To (UTC, custom) <input type="datetime-local" name="to" value="{{.PF.To}}"></label>
+  </div>
+  <div class="inline">
+    <label>Device (name or IMEI) <input name="device" value="{{.PF.Device}}" size="20" placeholder="A571992"></label>
+    <label>Status
+      <select name="status">
+        <option value="">any</option>
+        {{range .StatusOptions}}<option value="{{.}}" {{if eq . $.PF.Status}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </label>
+    <label>Show <select name="limit">{{range .Limits}}<option value="{{.}}" {{if eq . $.PF.Limit}}selected{{end}}>{{.}} per page</option>{{end}}</select></label>
+    <label class="check"><input type="checkbox" name="output" value="1" {{if .PF.Output}}checked{{end}}> only events that produced a PAXAFE record</label>
+    <button class="primary">Show</button>
+  </div>
+</form>
+
+{{if .Payloads}}
+<p class="muted">{{len .Payloads}} shown, newest first{{if .NextURL}} · there are more{{end}} · <a href="{{.JSONURL}}">the PAXAFE records of this selection as JSON</a></p>
+<div class="scroll">
+<table>
+  <thead><tr><th>Received (UTC)</th><th>Device</th><th>Status</th><th>PAXAFE record</th><th>Flags / reasons</th><th></th></tr></thead>
+  <tbody>
+  {{range .Payloads}}<tr>
+    <td>{{ts .ReceivedAt}}</td><td>{{.Device}}</td>
+    <td><span class="tag {{.Status}}">{{.Status}}</span></td>
+    <td>{{if or .SensorJSON .LocationJSON}}{{.Summary}}
+      <details class="edit"><summary>PAXAFE JSON</summary>
+        {{if .SensorJSON}}<strong>sensor</strong><pre>{{.SensorJSON}}</pre>{{end}}
+        {{if .LocationJSON}}<strong>location</strong><pre>{{.LocationJSON}}</pre>{{end}}
+      </details>{{else}}<span class="muted">none: no PAXAFE record was produced</span>{{end}}</td>
+    <td>{{if .Reasons}}<strong>{{join .Reasons ", "}}</strong> {{end}}{{join .Flags ", "}}</td>
+    <td><a href="/admin/payloads/{{.ID}}?tenant={{$.PF.Tenant}}">Open</a></td>
+  </tr>{{end}}
+  </tbody>
+</table>
+</div>
+{{if .NextURL}}<p><a href="{{.NextURL}}">Older &rarr;</a></p>{{end}}
+{{else}}
+<p>{{if .Error}}{{else}}No payloads match this tenant and window.{{end}}</p>
+{{end}}
+{{template "foot" .}}{{end}}

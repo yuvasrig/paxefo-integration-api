@@ -1417,3 +1417,119 @@ func TestMigrationDropsRateLimitSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestListPayloads(t *testing.T) {
+	st := newStore(t)
+	// Three events for reviewer received an hour apart (the received time is what we pin), one for another tenant.
+	base := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
+	var ids []string
+	for i, n := range []int{2, 0, 12} { // accepted, flagged, rejected (no device)
+		raw := sample(t, n)
+		id := store.NewID("evt_")
+		if err := st.SaveRaw(ctx, store.RawEvent{ID: id, TenantID: "reviewer", Provider: "Tive", Raw: raw, Hash: doc.CanonicalHash(raw), ReceivedAt: base.Add(time.Duration(i) * time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		commit(t, st, "reviewer", id, raw)
+		ids = append(ids, id)
+	}
+	process(t, st, "acme-pharma", sample(t, 3))
+	enqueue(t, st, "reviewer", 1) // a queued event: no outcome yet
+
+	all, next, err := st.ListPayloads(ctx, store.PayloadFilter{TenantID: "reviewer"})
+	if err != nil || next != nil || len(all) != 4 {
+		t.Fatalf("%d rows, next %v, %v", len(all), next, err)
+	}
+	if all[0].Status != "pending" || all[3].ID != ids[0] {
+		t.Fatalf("newest first, queued events show as pending: %s ... %s", all[0].Status, all[3].ID)
+	}
+	var accepted store.PayloadRow
+	for _, r := range all {
+		if r.ID == ids[0] {
+			accepted = r
+		}
+	}
+	if accepted.Status != "accepted" || len(accepted.Sensor) == 0 || len(accepted.Location) == 0 || !strings.Contains(string(accepted.Sensor), `"temperature"`) {
+		t.Fatalf("the PAXAFE records come with the row: %+v", accepted)
+	}
+
+	// Paging: two at a time, no row twice, none lost.
+	seen := map[string]bool{}
+	var cur *store.PayloadCursor
+	pages := 0
+	for {
+		rows, nx, err := st.ListPayloads(ctx, store.PayloadFilter{TenantID: "reviewer", Limit: 2, After: cur})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			if seen[r.ID] {
+				t.Fatalf("%s returned twice", r.ID)
+			}
+			seen[r.ID] = true
+		}
+		pages++
+		if nx == nil {
+			break
+		}
+		cur = nx
+	}
+	if len(seen) != 4 || pages != 2 {
+		t.Fatalf("%d rows over %d pages", len(seen), pages)
+	}
+
+	list := func(f store.PayloadFilter) []store.PayloadRow {
+		f.TenantID = "reviewer"
+		rows, _, err := st.ListPayloads(ctx, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	// Time window on the received time: From inclusive, To exclusive.
+	if got := list(store.PayloadFilter{From: base.Add(30 * time.Minute), To: base.Add(90 * time.Minute)}); len(got) != 1 || got[0].ID != ids[1] {
+		t.Fatalf("window: %+v", got)
+	}
+	if got := list(store.PayloadFilter{From: base, To: base.Add(time.Hour)}); len(got) != 1 || got[0].ID != ids[0] {
+		t.Fatalf("From is inclusive, To exclusive: %+v", got)
+	}
+	if got := list(store.PayloadFilter{To: base.Add(time.Hour)}); len(got) != 1 {
+		t.Fatalf("open start: %d", len(got))
+	}
+	if got := list(store.PayloadFilter{From: base.Add(90 * time.Minute)}); len(got) != 2 { // the rejected one and the queued one
+		t.Fatalf("open end: %d", len(got))
+	}
+	// Status, output and device filters.
+	if got := list(store.PayloadFilter{Status: "rejected"}); len(got) != 1 || got[0].ID != ids[2] || len(got[0].Reasons) == 0 {
+		t.Fatalf("status: %+v", got)
+	}
+	if got := list(store.PayloadFilter{Status: "pending"}); len(got) != 1 {
+		t.Fatalf("pending: %d", len(got))
+	}
+	if got := list(store.PayloadFilter{OnlyOutput: true}); len(got) != 2 {
+		t.Fatalf("only events that produced a PAXAFE record (not the rejected or queued ones): %d", len(got))
+	}
+	if got := list(store.PayloadFilter{Device: "B234567"}); len(got) != 1 || got[0].ID != ids[0] {
+		t.Fatalf("device by name: %+v", got)
+	}
+	if got := list(store.PayloadFilter{Device: "no-such-device"}); len(got) != 0 {
+		t.Fatalf("%d", len(got))
+	}
+	// The reading's own time (EntryTimeEpoch of sample 2 is 2025-02-10): a window around it finds it.
+	ev := time.Date(2025, 2, 10, 0, 0, 0, 0, time.UTC)
+	if got := list(store.PayloadFilter{TimeField: store.TimeEvent, From: ev, To: ev.Add(48 * time.Hour)}); len(got) < 1 {
+		t.Fatalf("event-time window found nothing")
+	}
+	if got := list(store.PayloadFilter{TimeField: store.TimeEvent, From: time.Now().Add(-time.Hour), To: time.Now()}); len(got) != 0 {
+		t.Fatalf("no reading was made in the last hour: %d", len(got))
+	}
+	// Tenants are isolated; bad input is refused; the page size is capped.
+	if other, _, _ := st.ListPayloads(ctx, store.PayloadFilter{TenantID: "acme-pharma"}); len(other) != 1 {
+		t.Fatalf("acme sees only its own: %d", len(other))
+	}
+	if _, _, err := st.ListPayloads(ctx, store.PayloadFilter{TenantID: "reviewer", TimeField: "nonsense"}); err == nil {
+		t.Fatal("unknown time field")
+	}
+	if rows, _, _ := st.ListPayloads(ctx, store.PayloadFilter{TenantID: "reviewer", Limit: 100000}); len(rows) != 4 {
+		t.Fatal("a huge limit is capped, not an error")
+	}
+}

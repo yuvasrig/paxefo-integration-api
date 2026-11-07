@@ -2,6 +2,7 @@ package admin_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -553,7 +554,7 @@ func TestNoInlineHandlersAndConfirmsAreWired(t *testing.T) {
 	e := newEnv(t)
 	e.signIn()
 	must(t, e.st.CreateTenant(ctx, "confirm-co", "Confirm Co", nil)) // the replay form needs a tenant
-	for _, p := range []string{"/admin/", "/admin/tenants", "/admin/conflicts", "/admin/rules", "/admin/config", "/admin/monitoring"} {
+	for _, p := range []string{"/admin/", "/admin/tenants", "/admin/payloads", "/admin/conflicts", "/admin/rules", "/admin/config", "/admin/monitoring"} {
 		page := e.get(p)
 		for _, bad := range []string{" onclick=", " onsubmit=", " onchange=", " onload="} {
 			if strings.Contains(page, bad) {
@@ -830,4 +831,216 @@ func TestVersionsNeverCollide(t *testing.T) {
 		}
 		seen[v] = true
 	}
+}
+
+// ---- payloads page ----
+
+func TestPayloadsPageShowsThePAXAFERecordsOfOneTenant(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "pay-a", "Pay A", nil))
+	must(t, e.st.CreateTenant(ctx, "pay-b", "Pay B", nil))
+	e.send("pay-a", 2) // accepted
+	e.send("pay-a", 0) // flagged
+	e.send("pay-a", 12)
+	e.send("pay-b", 3)
+
+	page := e.get("/admin/payloads?tenant=pay-a&range=all")
+	has(t, page, "B234567", "PAXAFE JSON", "&#34;temperature&#34;", "&#34;latitude&#34;", `class="tag accepted"`, `class="tag flagged"`, `class="tag rejected"`, "none: no PAXAFE record was produced", "/admin/payloads/evt_")
+	if strings.Contains(page, "evt_pay-b") {
+		t.Fatal("another tenant's payloads must not appear")
+	}
+	for _, other := range []string{"pay-b"} {
+		p := e.get("/admin/payloads?tenant=" + other + "&range=all")
+		if strings.Count(p, "/admin/payloads/evt_") != 1 {
+			t.Fatalf("%s sees only its own payload", other)
+		}
+	}
+
+	// Filters.
+	if p := e.get("/admin/payloads?tenant=pay-a&range=all&status=flagged"); strings.Count(p, "/admin/payloads/evt_") != 1 || !strings.Contains(p, `class="tag flagged"`) {
+		t.Fatal("status filter")
+	}
+	if p := e.get("/admin/payloads?tenant=pay-a&range=all&output=1"); strings.Count(p, "/admin/payloads/evt_") != 2 || strings.Contains(p, "none: no PAXAFE record") {
+		t.Fatal("only events that produced a PAXAFE record")
+	}
+	if p := e.get("/admin/payloads?tenant=pay-a&range=all&device=B234567"); strings.Count(p, "/admin/payloads/evt_") != 1 {
+		t.Fatal("device filter")
+	}
+	if p := e.get("/admin/payloads?tenant=pay-a&range=all&device=nobody"); !strings.Contains(p, "No payloads match") {
+		t.Fatal("no match says so")
+	}
+}
+
+func TestPayloadsTimeWindows(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "win-co", "Win Co", nil))
+	e.send("win-co", 2) // received at the test ingest clock: 2026-11-05 12:00 UTC
+	count := func(q string) int {
+		return strings.Count(e.get("/admin/payloads?tenant=win-co&"+q), "/admin/payloads/evt_")
+	}
+	if count("range=custom&from=2026-11-05T11:00&to=2026-11-05T13:00") != 1 {
+		t.Fatal("a window around the received time finds it")
+	}
+	if count("range=custom&from=2026-11-05T12:00&to=2026-11-05T13:00") != 1 {
+		t.Fatal("From is inclusive")
+	}
+	if count("range=custom&from=2026-11-05T13:00&to=2026-11-05T14:00") != 0 || count("range=custom&from=2026-11-05T10:00&to=2026-11-05T12:00") != 0 {
+		t.Fatal("outside the window, and To is exclusive")
+	}
+	if count("range=custom&from=2026-11-05T11:00") != 1 || count("range=custom&to=2026-11-05T13:00") != 1 {
+		t.Fatal("either end of a custom window may be left open")
+	}
+	if count("range=15m") != 0 {
+		t.Fatal("a preset is relative to now: this event is old")
+	}
+	// The reading's own time (sample 2's EntryTimeEpoch is in February 2025).
+	if count("time=event&range=custom&from=2025-02-01T00:00&to=2025-03-01T00:00") != 1 || count("time=event&range=custom&from=2026-01-01T00:00") != 0 {
+		t.Fatal("the reading's own time can be used instead")
+	}
+	// Mistakes are explained, not silently turned into something else.
+	for _, bad := range []string{"range=custom&from=yesterday", "range=custom&to=2026-13-45T99:00", "range=custom&from=2026-11-05T13:00&to=2026-11-05T11:00"} {
+		_, body, _ := e.do("GET", "/admin/payloads?tenant=win-co&"+bad, nil)
+		if !strings.Contains(body, "Nothing shown") {
+			t.Errorf("%s: %s", bad, body)
+		}
+	}
+	has(t, e.get("/admin/payloads?tenant=win-co&range=custom&from=2026-11-05T11:00&to=2026-11-05T13:00"), `value="2026-11-05T11:00"`)
+}
+
+func TestPayloadsPaging(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "page-co", "Page Co", nil))
+	for i := 0; i < 30; i++ {
+		e.send("page-co", 2+i%2)
+	}
+	first := e.get("/admin/payloads?tenant=page-co&range=all")
+	if n := strings.Count(first, "/admin/payloads/evt_"); n != 25 {
+		t.Fatalf("default page size 25, got %d", n)
+	}
+	m := regexp.MustCompile(`href="(/admin/payloads\?[^"]*after_id=[^"]*)"`).FindStringSubmatch(first)
+	if m == nil {
+		t.Fatal("a next-page link")
+	}
+	next := strings.ReplaceAll(m[1], "&amp;", "&")
+	second := e.get(next)
+	if n := strings.Count(second, "/admin/payloads/evt_"); n != 5 || strings.Contains(second, "Older &rarr;") {
+		t.Fatalf("the second page has the other 5 and no further link: %d", n)
+	}
+	ids := func(p string) map[string]bool {
+		out := map[string]bool{}
+		for _, m := range regexp.MustCompile(`/admin/payloads/(evt_[A-Z0-9]+)\?`).FindAllStringSubmatch(p, -1) {
+			out[m[1]] = true
+		}
+		return out
+	}
+	a, b := ids(first), ids(second)
+	for id := range b {
+		if a[id] {
+			t.Fatalf("%s is on both pages", id)
+		}
+	}
+	if len(a)+len(b) != 30 {
+		t.Fatalf("every event is on one page: %d", len(a)+len(b))
+	}
+	if n := strings.Count(e.get("/admin/payloads?tenant=page-co&range=all&limit=50"), "/admin/payloads/evt_"); n != 30 {
+		t.Fatalf("a bigger page: %d", n)
+	}
+	has(t, first, "tenant=page-co", "range=all") // the link keeps the filters
+	_, body, _ := e.do("GET", "/admin/payloads?tenant=page-co&range=all&after_at=garbage&after_id=x", nil)
+	has(t, body, "Nothing shown")
+}
+
+func TestPayloadsJSONExport(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "json-co", "Json Co", nil))
+	e.send("json-co", 2)
+	e.send("json-co", 12)
+	code, body, hdr := e.do("GET", "/admin/payloads.json?tenant=json-co&range=all", nil)
+	if code != 200 || !strings.HasPrefix(hdr.Get("Content-Type"), "application/json") {
+		t.Fatalf("%d %s", code, hdr.Get("Content-Type"))
+	}
+	var items []struct {
+		EventID  string          `json:"event_id"`
+		Status   string          `json:"status"`
+		Sensor   json.RawMessage `json:"sensor"`
+		Location json.RawMessage `json:"location"`
+		Flags    []string        `json:"flags"`
+	}
+	if err := json.Unmarshal([]byte(body), &items); err != nil || len(items) != 2 {
+		t.Fatalf("%v %s", err, body)
+	}
+	var withRecord, without int
+	for _, it := range items {
+		if string(it.Sensor) != "null" && string(it.Location) != "null" {
+			withRecord++
+		} else if string(it.Sensor) == "null" && string(it.Location) == "null" && it.Flags != nil {
+			without++
+		}
+	}
+	if withRecord != 1 || without != 1 {
+		t.Fatalf("a record where one was produced, null where not: %d %d", withRecord, without)
+	}
+	if code, _, _ := e.do("GET", "/admin/payloads.json?range=all", nil); code != 400 {
+		t.Fatalf("a tenant is required: %d", code)
+	}
+	if code, _, _ := e.do("GET", "/admin/payloads.json?tenant=ghost", nil); code != 404 {
+		t.Fatalf("unknown tenant: %d", code)
+	}
+	if code, _, _ := e.do("GET", "/admin/payloads.json?tenant=json-co&range=custom&from=x", nil); code != 400 {
+		t.Fatalf("bad window: %d", code)
+	}
+	e2 := newEnv(t)
+	if code, _, _ := e2.do("GET", "/admin/payloads.json?tenant=json-co", nil); code != 302 {
+		t.Fatalf("the export needs a session too: %d", code)
+	}
+}
+
+func TestPayloadDetailShowsPAXAFEBesideTheTivePayload(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "det-a", "Det A", nil))
+	must(t, e.st.CreateTenant(ctx, "det-b", "Det B", nil))
+	e.send("det-a", 0) // flagged
+	e.send("det-a", 12)
+	rows, _, _ := e.st.ListPayloads(ctx, store.PayloadFilter{TenantID: "det-a"})
+	var flagged, rejected store.PayloadRow
+	for _, r := range rows {
+		switch r.Status {
+		case "flagged":
+			flagged = r
+		case "rejected":
+			rejected = r
+		}
+	}
+	page := e.get("/admin/payloads/" + flagged.ID + "?tenant=det-a")
+	has(t, page, "PAXAFE payload", "Tive payload as received", "Quality flags", "IDENTITY_MISMATCH", "&#34;EntryTimeEpoch&#34;", "&#34;device_imei&#34;", "never changed", "rules "+e.rules.Current().Version)
+	rej := e.get("/admin/payloads/" + rejected.ID + "?tenant=det-a")
+	has(t, rej, "Why it was rejected", "No PAXAFE record was produced")
+	if code, _, _ := e.do("GET", "/admin/payloads/"+flagged.ID+"?tenant=det-b", nil); code != 404 {
+		t.Fatalf("an event opened as another tenant must not be found (row-level security): %d", code)
+	}
+	if code, _, _ := e.do("GET", "/admin/payloads/evt_nope?tenant=det-a", nil); code != 404 {
+		t.Fatalf("unknown event: %d", code)
+	}
+	if code, _, _ := e.do("GET", "/admin/payloads/"+flagged.ID, nil); code != 404 {
+		t.Fatalf("a tenant is required: %d", code)
+	}
+}
+
+func TestPayloadsPageNeedsASessionAndKnowsTheTenant(t *testing.T) {
+	e := newEnv(t)
+	if code, _, hdr := e.do("GET", "/admin/payloads", nil); code != 302 || hdr.Get("Location") != "/admin/login" {
+		t.Fatalf("%d", code)
+	}
+	e.signIn()
+	if code, _, _ := e.do("GET", "/admin/payloads?tenant=ghost", nil); code != 404 {
+		t.Fatalf("unknown tenant: %d", code)
+	}
+	has(t, e.get("/admin/payloads"), "No payloads match") // no tenants yet: the page still renders
+	must(t, e.st.CreateTenant(ctx, "first-co", "First Co", nil))
+	has(t, e.get("/admin/payloads"), `<option value="first-co" selected>`) // the first tenant is chosen by default
 }

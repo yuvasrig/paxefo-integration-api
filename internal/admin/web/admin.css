@@ -21,7 +21,7 @@ a { color:var(--accent); } code, pre { font:13px ui-monospace,Menlo,Consolas,mon
 table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:8px; display:block; overflow-x:auto; }
 th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; } th { font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); } .n { text-align:right; white-space:nowrap; }
 .tag { padding:1px 8px; border-radius:10px; font-size:12px; background:var(--bg); border:1px solid var(--line); } .tag.accepted { color:var(--ok); } .tag.flagged, .tag.conflict, .tag.duplicate, .tag.pending { color:var(--warn); } .tag.rejected, .tag.dead, .tag.failed { color:var(--bad); }
-form.inline { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin:6px 0 12px; } label { display:flex; flex-direction:column; gap:2px; font-size:13px; color:var(--muted); }
+.inline { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin:6px 0 12px; } label { display:flex; flex-direction:column; gap:2px; font-size:13px; color:var(--muted); }
 input, select, textarea, button { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
 textarea { width:100%; font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; } button { cursor:pointer; } button:hover { border-color:var(--accent); }
 button.primary { background:var(--accent); border-color:var(--accent); color:#fff; } button.link { border:0; background:none; color:var(--accent); padding:0; } button.danger, button.link.danger { color:var(--bad); }
@@ -35,3 +35,5 @@ form.mini { display:inline-flex; flex-direction:column; margin-left:6px; vertica
 details.edit { margin-top:4px; } details.edit > summary, details.advanced > summary { cursor:pointer; color:var(--accent); } details.edit[open] { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; }
 .editform { margin:8px 0; } details.advanced { margin:20px 0; }
 button.switch { min-width:52px; border-radius:14px; font-weight:600; } button.switch.is-on { background:color-mix(in srgb,var(--ok) 18%,var(--card)); border-color:var(--ok); color:var(--ok); } button.switch.is-off { background:var(--bg); color:var(--muted); }
+.two { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px; } pre { max-height:420px; }
+.filters .inline { margin:4px 0; } label.check { flex-direction:row; align-items:center; gap:6px; }
