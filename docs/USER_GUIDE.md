@@ -9,12 +9,96 @@ Two apps work together. The **Mock Tive Sender** pretends to be Tive and sends p
 
 The Integration API is a webhook service, so the page you open in a browser is its **admin view** (the operator console, described below); it asks for the admin token. Tive itself talks to `POST /api/webhook/tive`, which has no page. Free Render services sleep when idle; the first request can take about a minute (the sender's home page wakes the API for you).
 
+Contents: [Tutorial](#tutorial-add-a-tenant-send-load-check-the-results) · [Mock Tive Sender](#mock-tive-sender) · [Integration API console](#integration-api-console) · [Common tasks](#common-tasks)
+
 ## The short version
 
 1. **Get an API key.** An operator makes a tenant in the console's **Tenants** tab (the key is shown once) or runs `api seed` for the demo tenants.
 2. **Send data.** Open the sender, paste the key, pick a scenario and press **Run**. (Or point Tive at `POST <api>/api/webhook/tive` with the key in the `x-api-key` header.)
 3. **Check the answer.** The sender's report shows what was sent and what the API stored. The console's **Payloads** and **Compare** tabs show the same from the API's side.
 4. **Tune it.** Change rules, settings or a tenant's conflict policy in the console; no restart needed. **Conflicts** can then reprocess old events.
+
+## Tutorial: add a tenant, send load, check the results
+
+This walks one new tenant (`globex-pharma`) from creation to verified data. It takes about five minutes. The screenshots are from a local run; on the live deployment use the live URLs from the table above.
+
+**You need:** the console's admin token (`ADMIN_TOKEN`) and the sender's URL. Nothing else is installed.
+
+### Part 1. Add a tenant
+
+1. Open the admin view (`/admin/`) and sign in with the admin token.
+2. Click **Tenants**. Under **Add a tenant** fill in:
+   - **Id**: lower-case letters, digits and dashes (for example `globex-pharma`). It cannot be changed later.
+   - **Name**: a display name (optional).
+   - **Ingest**: **sync** answers after processing (HTTP 200, easiest to follow); **async** queues the event, answers `202` and processes it with the tenant's own workers (use it to see queues and workers working).
+3. Click **Create tenant and key**.
+
+   ![Add a tenant](img/walk-1-add-tenant.png)
+
+4. **Copy the API key now.** It is shown once and cannot be recovered; if it is lost, issue another key from the same tenant card. The page also gives the webhook URL and a ready-to-paste Tive setup.
+
+   ![The key and webhook set-up, shown once](img/walk-2-key.png)
+
+   (In this screenshot the key is masked.)
+5. Optional, on the tenant's card: set what happens on a **conflicting duplicate** (keep first, keep last, reject) and the status it answers, or open the tenant's **settings** to override worker limits and the queue limit. Both apply without a restart.
+
+Command-line equivalent: `api tenants create --id globex-pharma`, then `api keys create --tenant globex-pharma`.
+
+### Part 2. Send load
+
+Open the **Mock Tive Sender**. Give the page up to a minute on the live site: it wakes the API first and shows a status line.
+
+1. Scroll to **Load generator**.
+2. In **Load 1**:
+   - tick one or more **scenarios** (requests are drawn evenly from all ticked ones), for example *Realistic route* and *Sensor fault*;
+   - **Tenant label**: any name for the report, for example `Globex`;
+   - **API key(s)**: paste the tenant's key (several keys separated by commas run the same load on every tenant at the same time);
+   - **Requests/s** and **Duration**: for example 10 and 15;
+   - **Start at**: leave empty to start now, or set a time of day.
+3. To drive several tenants differently, click **Add another load** (up to 6) and give each its own key, scenarios and rate.
+4. Click **Run the plan**.
+
+   ![A load plan](img/walk-3-load-plan.png)
+
+For a single quick run use the **Scenario** box at the top of the page instead (pick a scenario, paste the key, **Run**). From a terminal:
+
+```bash
+export API_BASE_URL=https://paxafe-api.onrender.com
+go run ./cmd/sender run --scenario route --key <tenant-key>                       # one scenario
+go run ./cmd/sender run --load "scenarios=route,fault rate=10 duration=15s key=<tenant-key> label=Globex"
+```
+
+### Part 3. Check the results
+
+**a. The sender's report** appears when the run finishes:
+
+![The sender's report](img/walk-4-report.png)
+
+It is healthy when **missing** is 0, every check passed, and **sent vs stored** has no "differ (unexplained)". For an async tenant the sender waits for the workers before it compares.
+
+**b. Dashboard** (console): the tenant's row shows events per minute, active devices, workers, completed per minute, queue and oldest wait. An async tenant's **waiting** count rises during the load and returns to 0; **dead** must stay 0.
+
+![The dashboard with the new tenant](img/walk-5-dashboard.png)
+
+**c. Payloads**: choose the tenant to see the PAXAFE records that were produced, newest first. Open an event to see its Tive payload beside its PAXAFE payload and the flags.
+
+![Payloads of the tenant](img/walk-6-payloads.png)
+
+**d. Compare**: choose the tenant and click **compare** next to a device (or pick it in the Compare tab) to chart the Tive payload against the PAXAFE payload.
+
+![Compare for one device](img/walk-7-compare.png)
+
+**e. Notifications and Monitoring**: any alert the run caused (for example a high reject rate after a *Malformed burst*) is listed under **Notifications**; **Monitoring** shows live rates, latency and recent rejects.
+
+### Troubleshooting
+
+| Symptom | Likely cause and fix |
+|---|---|
+| Sender status stays "Waking the API…" | A free-tier service is starting; wait about a minute. |
+| Every request answers 401 | Wrong or revoked key, or a key from another tenant. Issue a new key on the Tenants tab. |
+| "No workers" alert, jobs waiting | An async tenant has no running worker: check its worker maximum under **Config** and the global worker cap. See the [runbook](RUNBOOK.md). |
+| Payloads page is empty | The window is too short or the wrong tenant is chosen: set **Window** to *all time*. |
+| Sender report says events are missing | The workers had not finished within the sender's wait; open Dashboard to see the queue, then run again. |
 
 ## Mock Tive Sender
 
