@@ -8,6 +8,7 @@
 - Integration API: https://paxafe-api.onrender.com/admin/ . This is the admin view: the app is a webhook service with no end-user pages, so what you open in a browser is the operator console (dashboard, tenants, payloads, compare, conflicts, rules, config, monitoring, notifications). Sign in with the admin token from the submission email. The service itself is at https://paxafe-api.onrender.com (`/readyz`, `/docs`, and the webhook below).
 - Mock Tive Sender: https://paxafe-sender.onrender.com
 - Free services sleep when idle; the first request can take about a minute.
+- API documentation: https://paxafe-api.onrender.com/docs (the API contract: quick start, statuses, flags, examples; the bare address redirects here). The raw spec is at `/openapi.yaml`.
 - Webhook endpoint: `POST https://paxafe-api.onrender.com/api/webhook/tive` with header `x-api-key`.
 
 ## Test API key and admin token
