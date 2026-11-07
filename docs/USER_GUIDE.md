@@ -9,7 +9,7 @@ Two apps work together. The **Mock Tive Sender** pretends to be Tive and sends p
 
 The Integration API is a webhook service, so the page you open in a browser is its **admin view** (the operator console, described below); it asks for the admin token. Tive itself talks to `POST /api/webhook/tive`, which has no page. Free Render services sleep when idle; the first request can take about a minute (the sender's home page wakes the API for you).
 
-Contents: [Tutorial](#tutorial-add-a-tenant-send-load-check-the-results) · [Mock Tive Sender](#mock-tive-sender) · [Integration API console](#integration-api-console) · [Common tasks](#common-tasks)
+Contents: [Tutorial](#tutorial-add-a-tenant-send-load-check-the-results) (tenants, load, results, conflicts, comparison) · [Mock Tive Sender](#mock-tive-sender) · [Integration API console](#integration-api-console) · [Common tasks](#common-tasks)
 
 ## The short version
 
@@ -89,6 +89,46 @@ It is healthy when **missing** is 0, every check passed, and **sent vs stored** 
 ![Compare for one device](img/walk-7-compare.png)
 
 **e. Notifications and Monitoring**: any alert the run caused (for example a high reject rate after a *Malformed burst*) is listed under **Notifications**; **Monitoring** shows live rates, latency and recent rejects.
+
+### Part 4. Conflicts
+
+A **conflict** is a second payload for a reading the API already has (same tenant, same device, same reading time) whose content is different. An identical repeat is only a **duplicate**: nothing is written. What happens to a conflict is the tenant's **conflict policy**:
+
+| Policy | Result |
+|---|---|
+| **keep first** (default) | The stored reading stays; the later version is saved only for review. |
+| **keep last** | The later version replaces the stored reading; the earlier event stays archived. |
+| **reject** | Nothing is written for the later version. |
+
+Both versions are always kept, and the tenant's **Answer with** setting chooses whether a conflict is answered `200` or `409`.
+
+1. **Create some.** In the sender, tick **Duplicates and conflicts** in a load (or run `go run ./cmd/sender run --scenario duplicates --key <tenant-key>`).
+2. Open **Conflicts** in the console and pick the tenant. Each row is one pair: the device, the reading time (epoch milliseconds), what the policy did (`kept_first`, `kept_last` or `rejected`), the fields that differ with the first value on the left and the later value on the right, and the two event ids (open them under Payloads).
+
+   ![Conflicts of the tenant](img/walk-8-conflicts.png)
+
+3. **Change the policy** on the tenant's card under **Tenants** if the outcome is not what the tenant wants (for example *keep last* for a tenant whose devices correct earlier readings).
+4. **Reprocess what is already stored.** On the Conflicts tab choose how many hours back, then click **Preview (dry run)**: it writes nothing and shows how many events would change and the status changes. If it looks right, click **Apply**: each event's previous outcome is archived, the run is recorded, and raw payloads are never changed.
+
+   ![A replay preview](img/walk-9-replay-preview.png)
+
+   Command-line equivalent: `api replay --tenant globex-pharma --from <date> --to <date>` (dry run) and add `--apply`.
+
+### Part 5. Compare what was received with the PAXAFE payload
+
+The comparison answers: *for this device, how does the PAXAFE payload differ from the Tive payload that came in?*
+
+1. Open **Compare**, choose the tenant, a window and a device (or click **compare** beside a device on the Payloads tab).
+2. Read the **cards**: *Events* in the window, *Changed by the API* (events where a value moved by more than rounding), and *No PAXAFE record* (events that were rejected). **Flags raised** counts each quality flag.
+3. Read the **charts**. The grey line is the Tive payload; the blue dots are the PAXAFE payload. Dots on the line mean the value was kept. A **red ring** is a Tive value far outside the range of the PAXAFE values, such as a sensor fault (`-32768`), drawn at the edge of the chart with its real value in the tooltip.
+4. Read **What changed**: one row per event the API changed, with the field, the value in the Tive payload and the value in the PAXAFE payload, the flags, and an **Open** link.
+
+   ![Compare: charts and what changed](img/walk-11-what-changed.png)
+
+   Here the sensor reported `-32768` (a fault), so the API set the temperature aside, used the probe reading instead (`6.16`), and flagged `SENSOR_FAULT` and `TEMPERATURE_FALLBACK`.
+5. Click **Open** for the full picture of one event: a table of every compared field (Tive payload value, PAXAFE payload value, and the rule that acted), the quality flags, and both JSON documents side by side.
+
+Rounding to the PAXAFE precision (for example `4.625` to `4.63`) is shown but not counted as a change. The sender's own report makes the same comparison from the sender's side (what was sent against what the API stored).
 
 ### Troubleshooting
 
