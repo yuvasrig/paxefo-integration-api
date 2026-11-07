@@ -9,7 +9,7 @@ Two apps work together. The **Mock Tive Sender** pretends to be Tive and sends p
 
 The Integration API is a webhook service, so the page you open in a browser is its **admin view** (the operator console, described below); it asks for the admin token. Tive itself talks to `POST /api/webhook/tive`, which has no page. Free Render services sleep when idle; the first request can take about a minute (the sender's home page wakes the API for you).
 
-Contents: [Tutorial](#tutorial-add-a-tenant-send-load-check-the-results) (tenants, load, results, conflicts, comparison) · [Mock Tive Sender](#mock-tive-sender) · [Integration API console](#integration-api-console) · [Common tasks](#common-tasks)
+Contents: [Tutorial](#tutorial-add-a-tenant-send-load-check-the-results) (tenants, load, results, conflicts, comparison) · [Mock Tive Sender](#mock-tive-sender) · [Integration API console](#integration-api-console) · [Command line](#command-line) · [Common tasks](#common-tasks)
 
 ## The short version
 
@@ -222,6 +222,38 @@ Live rates and latency, recent rejects, conflicts and failures, recent events, t
 ![Notifications](img/admin-notifications.png)
 
 Every operational alert the API has raised, with its severity, tenant, when it started, when it cleared and what it said. Alerts that are still firing are at the top. The alert banners on the Dashboard and Monitoring tabs show only what is firing now; this tab keeps the history. If `ALERT_WEBHOOK_URL` is set (a Slack incoming webhook works) each alert is also posted when it starts and when it clears.
+
+## Command line
+
+Everything the web pages do for load and operations is also available from two command-line tools. Both need Go 1.23 and a clone of the repository.
+
+### Sender CLI (sends load)
+In the `paxafe-mock-sender` repository, pointed at the live or a local API:
+
+```bash
+export API_BASE_URL=https://paxafe-api.onrender.com      # or http://localhost:8080
+export SENDER_API_KEY=<tenant-key>
+
+go run ./cmd/sender list                                  # the scenarios
+go run ./cmd/sender run --scenario route                  # one scenario
+go run ./cmd/sender run --scenario route,fault --rate 10 --duration 15s
+go run ./cmd/sender run --load "scenarios=route,fault rate=10 duration=15s key=<tenant-key> label=Globex"
+```
+The last form is a load plan: `key=A,B` runs the load on several tenants at once and `--load` can be repeated for several loads. It prints the same report as the web page (`--json` prints it as JSON) and exits non-zero if a check fails.
+
+### API admin CLI (`api`)
+This tool talks to the database directly, so it needs `DATABASE_URL`:
+
+```bash
+# local stack (docker compose)
+docker compose exec api /api tenants create --id globex-pharma
+docker compose exec api /api keys create --tenant globex-pharma
+docker compose exec api /api rules show
+
+# the deployed database, from your laptop, using the database's External URL
+DATABASE_URL='<External URL>?sslmode=require' go run ./cmd/api tenants create --id globex-pharma
+```
+Other subcommands: `tenants set-conflict`, `tenants set-workers`, `tenants set-setting`, `rules set --file`, and `replay --tenant T --from DATE --to DATE` (dry run; add `--apply` to write). Run any subcommand with `--help` for its flags. The External URL contains the database password, so keep it out of shared chats and logs. The console's Tenants tab does the same as `tenants create` and `keys create` without a database URL.
 
 ## Common tasks
 
