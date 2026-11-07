@@ -124,6 +124,17 @@ A tenant is **sync** (processed before the answer) or **async** (stored and queu
 
 Raw payloads, outcomes and records are separate so the raw archive stays immutable and a fix can reprocess from it: **replay** re-runs stored payloads through the current rules and records what changed.
 
+### Data retention and TimescaleDB (not built)
+
+Two storage topics are deliberately **not implemented yet**; both are known and sized.
+
+| Topic | Status today | Why it matters | Intended approach |
+|---|---|---|---|
+| **Retention policy** | None. Nothing is ever deleted or archived. | Storage grows about 2.6 to 4.6 KB per event (raw payload as bytes and JSON, outcome, readings, ledger, indexes). At 1,000 trackers reporting every 5 minutes that is about 288,000 events a day, roughly 0.75 to 1.3 GB a day, so the free 1 GB Render database would fill within about a day at that fleet size (`docs/PERFORMANCE.md`). | A scheduled job per tenant that moves raw payloads and outcomes older than a configurable age to cheaper storage and then deletes them, keeping the PAXAFE readings longer. The retention period is a per-tenant setting and must follow the customer's record-keeping obligations, since the raw archive is deliberately immutable. |
+| **TimescaleDB** | Not used. Readings are in ordinary PostgreSQL tables. | Sensor data is time-series: queries are by device and time range, volume is high, and old data is rarely read. | Enable the TimescaleDB extension and convert the readings tables to hypertables with compression and built-in retention policies. This needs no application rewrite, because Timescale is a PostgreSQL extension. One design point to settle first: a unique constraint on a hypertable must include the partition column, so the idempotency key `(tenant, device IMEI, timestamp)` would need the reading time as a proper timestamp column. |
+
+Until retention exists, size the database for the expected fleet, watch its growth on the monitoring page, and plan the retention job before a production fleet size is reached. The free Render database also expires after about 30 days.
+
 ## 6. Multi-tenancy and security
 
 - **One tenant per API key.** The tenant comes from the key, never from the payload (`AccountId` is stored as metadata only).
@@ -214,4 +225,4 @@ If every sensor value is null, no sensor record is produced.
 
 Decisions and their rejected alternatives are recorded as [ADRs](adr/README.md): Go with the standard library, raw-first ingest, a Postgres queue, immutable raw storage, per-tenant conflict handling, a runtime-configurable rules framework, row-level security, per-tenant worker pools, and no rate limiting.
 
-**Designed but not built:** an in-service reconciler, OpenTelemetry tracing, Prometheus alert rules, a local Kubernetes scaling demo, TimescaleDB, data retention, Tive webhook signature verification and source-address allow-listing, and a backfill job using Tive's pull API.
+**Designed but not built:** a data retention policy and TimescaleDB (see section 5), an in-service reconciler, OpenTelemetry tracing, Prometheus alert rules, a local Kubernetes scaling demo, TimescaleDB, data retention, Tive webhook signature verification and source-address allow-listing, and a backfill job using Tive's pull API.

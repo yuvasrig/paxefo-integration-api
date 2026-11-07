@@ -5,6 +5,8 @@ Receives Tive webhook payloads, transforms them to PAXAFE sensor and location re
 **Live:** Integration API admin console https://paxafe-api.onrender.com/admin/ (the live app is the operator's admin view; sign in with the admin token) · API documentation https://paxafe-api.onrender.com/docs · mock sender https://paxafe-sender.onrender.com · see [SUBMISSION.md](SUBMISSION.md) for how to verify it.
 The companion repository is the [mock Tive sender](https://github.com/yuvasrig/paxafe-mock-sender).
 
+**Start here:** [User guide](docs/USER_GUIDE.md) (how to use the apps, step by step, with screenshots) · [Architecture](docs/ARCHITECTURE.md) (tech stack, components, flows, data model, Tive to PAXAFE mapping).
+
 ## Quick start (local)
 
 ```bash
