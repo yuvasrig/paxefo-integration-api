@@ -44,6 +44,8 @@ The console's **Compare** page (`/admin/compare`) sets the Tive payload a device
 
 Built: everything above, the rules framework, per-tenant settings and overrides, async workers with backpressure, conflict handling and replay, the admin console with alerts, the Render deployment, performance tests. Designed but not built (see ADRs and DESIGN.md): the in-service reconciler, OpenTelemetry tracing, Prometheus alert rules, the local k3d/KEDA scaling demo, Timescale, retention, webhook signature verification and source-IP allow-listing.
 
+Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (components, flows, data model, Tive to PAXAFE mapping table).
+
 How to use the apps and what each tab does (with screenshots): [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 Operations: [docs/RUNBOOK.md](docs/RUNBOOK.md) · deployment: [docs/DEPLOY.md](docs/DEPLOY.md) · load results: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
