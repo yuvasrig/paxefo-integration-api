@@ -19,11 +19,14 @@ the API stored. Measured 2026-11-07, after the service had been woken.
 | 15/s | 450 | 14.5/s | 1.1 s | 2.4 s | 2.9 s | 3.5 s | 0 | 0 | 300 of 450 (even sample) |
 | 25/s | 750 | 15.5/s | 1.9 s | 3.2 s | 3.8 s | 4.6 s | 0 | 0 | 300 of 750 (even sample) |
 
+**5-minute soak at 10/s.** 3,000 events sent over 5 minutes (10.0/s sustained), all 3,000 acknowledged, no errors, none missing, and a
+300-event sample all stored correctly. Latency stayed steady rather than growing: p50 80 ms, p95 1.4 s, p99 2.1 s, max 3.1 s.
+
 **What this shows**
 - **Nothing was lost or wrong at any rate.** Every acknowledged event was found again and matched what was sent; there were no
   errors and no rejected requests.
 - **Comfortable up to about 5 events/s.** Acknowledgements take about 90 ms at the median.
-- **Latency degrades from about 10 events/s.** The median is still low but the tail reaches seconds. By 15/s the median is over a
+- **Latency degrades from about 10 events/s.** The median is still low but the tail reaches seconds; the 5-minute soak at 10/s showed it stays steady at that level. By 15/s the median is over a
   second.
 - **The acknowledgement rate tops out near 15 events/s.** At a target of 25/s the sender could only submit 15.5/s because
   acknowledgements slowed down. The same sender kept up with 30/s on localhost with a p95 of 7 ms, so the limit here was the free
@@ -32,7 +35,7 @@ the API stored. Measured 2026-11-07, after the service had been woken.
   minutes, but there is no headroom for bursts on the free plan. For burst capacity, use a paid plan, more CPU, or separate worker
   containers (see ADR 0001).
 
-**Limits of this test.** One 30-second run per rate, from one location. The 15/s and 25/s steps verified a 300-event sample, not
+**Limits of this test.** One 30-second run per rate and one 5-minute soak, from one location. The 15/s and 25/s steps verified a 300-event sample, not
 every event. The queue's drain time after the load stopped was not measured separately. Cold starts after idle add up to about a
 minute to the first request and are not included. Treat the figures as an indication of free-tier capacity, not a guarantee.
 

@@ -41,6 +41,8 @@ func NewDSN(t testing.TB) string {
 	}
 	defer admin.Close(ctx)
 
+	ensureAppRole(ctx, t, admin)
+
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	name := "t_" + hex.EncodeToString(b)
@@ -82,4 +84,29 @@ func startBase() (string, error) {
 		return "", fmt.Errorf("container dsn: %w", err)
 	}
 	return dsn, nil // the container is removed by Ryuk when the test binary exits
+}
+
+// roleLockKey identifies the advisory lock that serialises creating the application role.
+const roleLockKey = 727274
+
+// ensureAppRole creates the cluster-wide application role (and the membership the migration grants) before any test
+// database is migrated. Roles belong to the whole server, not to one database, so test packages that run in parallel
+// processes against one server would otherwise race to create it inside their migrations and fail with a duplicate
+// key error. The advisory lock is taken on the shared admin database, so it also orders separate processes.
+func ensureAppRole(ctx context.Context, t testing.TB, admin *pgx.Conn) {
+	t.Helper()
+	if _, err := admin.Exec(ctx, "SELECT pg_advisory_lock($1)", roleLockKey); err != nil {
+		t.Fatalf("lock for the application role: %v", err)
+	}
+	defer func() { _, _ = admin.Exec(ctx, "SELECT pg_advisory_unlock($1)", roleLockKey) }()
+	_, err := admin.Exec(ctx, `DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'paxafe_app') THEN
+        CREATE ROLE paxafe_app NOLOGIN NOBYPASSRLS;
+    END IF;
+    EXECUTE format('GRANT paxafe_app TO %I', current_user);
+END $$`)
+	if err != nil {
+		t.Fatalf("create the application role: %v", err)
+	}
 }

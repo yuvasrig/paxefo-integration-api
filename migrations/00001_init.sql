@@ -198,7 +198,11 @@ $$;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'paxafe_app') THEN
-        CREATE ROLE paxafe_app NOLOGIN NOBYPASSRLS;
+        BEGIN
+            CREATE ROLE paxafe_app NOLOGIN NOBYPASSRLS;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN
+            NULL; -- another migration (another instance, or another database in the cluster) created it at the same moment
+        END;
     END IF;
     EXECUTE format('GRANT paxafe_app TO %I', current_user);
     GRANT USAGE ON SCHEMA public TO paxafe_app;
