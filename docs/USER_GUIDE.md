@@ -4,10 +4,10 @@ Two apps work together. The **Mock Tive Sender** pretends to be Tive and sends p
 
 | App | Live | Local |
 |---|---|---|
-| Integration API (console at `/admin`) | https://paxafe-api.onrender.com | http://localhost:8080 |
+| Integration API: admin view | https://paxafe-api.onrender.com/admin/ | http://localhost:8080/admin/ |
 | Mock Tive Sender | https://paxafe-sender.onrender.com | `go run ./cmd/sender serve` in the sender repo |
 
-Free Render services sleep when idle; the first request can take about a minute (the sender's home page wakes the API for you).
+The Integration API is a webhook service, so the page you open in a browser is its **admin view** (the operator console, described below); it asks for the admin token. Tive itself talks to `POST /api/webhook/tive`, which has no page. Free Render services sleep when idle; the first request can take about a minute (the sender's home page wakes the API for you).
 
 ## The short version
 

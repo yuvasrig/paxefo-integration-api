@@ -2,7 +2,7 @@
 
 Receives Tive webhook payloads, transforms them to PAXAFE sensor and location records, and stores them in Postgres. Raw payloads are stored first and never changed; everything else (validation, transform, quality flags) is replayable.
 
-**Live:** API https://paxafe-api.onrender.com · mock sender https://paxafe-sender.onrender.com · see [SUBMISSION.md](SUBMISSION.md) for how to verify it.
+**Live:** Integration API admin console https://paxafe-api.onrender.com/admin/ (the live app is the operator's admin view; sign in with the admin token) · mock sender https://paxafe-sender.onrender.com · see [SUBMISSION.md](SUBMISSION.md) for how to verify it.
 The companion repository is the [mock Tive sender](https://github.com/yuvasrig/paxafe-mock-sender).
 
 ## Quick start (local)

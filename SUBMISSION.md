@@ -5,13 +5,13 @@
 - Mock Tive Sender: https://github.com/yuvasrig/paxafe-mock-sender
 
 ## Live (Render, free tier)
-- Integration API: https://paxafe-api.onrender.com (`/readyz`, `/docs`, operator console at `/admin`)
+- Integration API: https://paxafe-api.onrender.com/admin/ . This is the admin view: the app is a webhook service with no end-user pages, so what you open in a browser is the operator console (dashboard, tenants, payloads, compare, conflicts, rules, config, monitoring, notifications). Sign in with the admin token from the submission email. The service itself is at https://paxafe-api.onrender.com (`/readyz`, `/docs`, and the webhook below).
 - Mock Tive Sender: https://paxafe-sender.onrender.com
 - Free services sleep when idle; the first request can take about a minute.
 - Webhook endpoint: `POST https://paxafe-api.onrender.com/api/webhook/tive` with header `x-api-key`.
 
-## Test API key
-Sent in the submission email (not committed to this public repository). It belongs to the `reviewer` tenant, which runs in async ingest mode. Tenants `acme-pharma` and `bioco` are also seeded.
+## Test API key and admin token
+Both are sent in the submission email (not committed to this public repository). The API key belongs to the `reviewer` tenant, which runs in async ingest mode. Tenants `acme-pharma` and `bioco` are also seeded. The admin token signs you in to the admin view; it is the `ADMIN_TOKEN` set on the service.
 
 ## How to see it working
 1. `scripts/smoke.sh https://paxafe-api.onrender.com <key>` posts the 13 provided samples and checks each result against `specs/001-integration-api/expected/` (13 of 13 pass on the live deployment).
