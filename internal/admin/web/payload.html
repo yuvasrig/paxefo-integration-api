@@ -24,6 +24,12 @@
 {{range .Flags}}<tr><td><strong>{{.Code}}</strong></td><td>{{.Severity}}</td><td>{{.Field}}</td><td>{{.Action}}</td><td>{{.RuleID}}</td></tr>{{end}}
 </tbody></table>{{end}}
 
+{{if $.FieldRows}}<h2>Received vs processed</h2>
+<table><thead><tr><th>Field</th><th>Received</th><th>Processed</th><th>What happened</th></tr></thead><tbody>
+{{range $.FieldRows}}<tr><td>{{.Field}}</td><td><code>{{.Received}}</code></td><td><code>{{.Processed}}</code></td><td>{{if .Note}}<strong>{{.Note}}</strong>{{else if .Changed}}changed{{else}}<span class="muted">unchanged</span>{{end}}</td></tr>{{end}}
+</tbody></table>
+<p class="muted">Values are shown as received and as stored. Rounding to the PAXAFE precision is not counted as a change.</p>{{end}}
+
 <div class="two">
   <section>
     <h2>PAXAFE payload</h2>

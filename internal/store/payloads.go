@@ -36,6 +36,7 @@ type PayloadRow struct {
 	Device     string // the device as the payload names it
 	Flags      []string
 	Reasons    []string
+	Raw        json.RawMessage // the Tive payload as received
 	Sensor     json.RawMessage // the PAXAFE sensor record, or nil
 	Location   json.RawMessage // the PAXAFE location record, or nil
 }
@@ -79,7 +80,7 @@ func (s *PGStore) ListPayloads(ctx context.Context, f PayloadFilter) (rows []Pay
 		q, err := tx.Query(ctx, `
 			SELECT r.id, r.received_at, COALESCE(o.status, 'pending'),
 			       COALESCE(r.payload->>'DeviceName', r.payload->>'DeviceId', ''),
-			       o.flags, o.reasons, o.expected_outputs
+			       o.flags, o.reasons, o.expected_outputs, r.payload
 			FROM raw_events r
 			LEFT JOIN event_outcomes o ON o.raw_event_id = r.id
 			LEFT JOIN LATERAL (
@@ -110,10 +111,11 @@ func (s *PGStore) ListPayloads(ctx context.Context, f PayloadFilter) (rows []Pay
 		defer q.Close()
 		for q.Next() {
 			var row PayloadRow
-			var flags, reasons, outputs []byte
-			if err := q.Scan(&row.ID, &row.ReceivedAt, &row.Status, &row.Device, &flags, &reasons, &outputs); err != nil {
+			var flags, reasons, outputs, raw []byte
+			if err := q.Scan(&row.ID, &row.ReceivedAt, &row.Status, &row.Device, &flags, &reasons, &outputs, &raw); err != nil {
 				return fmt.Errorf("store: scan payload: %w", err)
 			}
+			row.Raw = raw
 			var fl []struct {
 				Code string `json:"code"`
 			}

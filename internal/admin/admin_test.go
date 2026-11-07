@@ -1150,3 +1150,47 @@ func TestLiveFiguresAreSharedBetweenViewers(t *testing.T) {
 		t.Fatalf("after the figures go stale they are read again: %d", got)
 	}
 }
+
+// ---- compare page ----
+
+func TestComparePageListsDevicesThenComparesOne(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "cmp-a", "Cmp A", nil))
+	must(t, e.st.CreateTenant(ctx, "cmp-b", "Cmp B", nil))
+	e.send("cmp-a", 2) // GPS shipment from B234567
+	e.send("cmp-a", 0) // sensor fault, flagged
+	e.send("cmp-b", 3)
+
+	list := e.get("/admin/compare?tenant=cmp-a&range=all")
+	has(t, list, "<h2>Devices</h2>", "B234567", "/admin/compare?")
+
+	one := e.get("/admin/compare?tenant=cmp-a&range=all&device=B234567")
+	has(t, one, `class="chart"`, "Changed by the API", "Temperature", "Location")
+	if strings.Contains(one, "<h2>Devices</h2>") {
+		t.Fatal("a chosen device shows its comparison, not the device list")
+	}
+
+	none := e.get("/admin/compare?tenant=cmp-a&range=all&device=nobody")
+	has(t, none, "No events from this device in this window")
+
+	_, body, _ := e.do("GET", "/admin/compare?tenant=nope&range=all", nil)
+	if strings.Contains(body, "B234567") {
+		t.Fatal("an unknown tenant shows nothing")
+	}
+}
+
+func TestPayloadDetailShowsReceivedVersusProcessed(t *testing.T) {
+	e := newEnv(t)
+	e.signIn()
+	must(t, e.st.CreateTenant(ctx, "cmp-c", "Cmp C", nil))
+	e.send("cmp-c", 0) // temperature sentinel
+
+	list := e.get("/admin/payloads?tenant=cmp-c&range=all")
+	m := regexp.MustCompile(`/admin/payloads/(evt_[A-Z0-9]+)\?`).FindStringSubmatch(list)
+	if m == nil {
+		t.Fatalf("no event link in:\n%s", list)
+	}
+	page := e.get("/admin/payloads/" + m[1] + "?tenant=cmp-c")
+	has(t, page, "Received vs processed", "Temperature °C", "Timestamp")
+}

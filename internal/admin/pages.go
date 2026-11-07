@@ -18,6 +18,7 @@ import (
 
 	"github.com/yuvasrig/paxefo-integration-api/internal/alerts"
 	"github.com/yuvasrig/paxefo-integration-api/internal/auth"
+	"github.com/yuvasrig/paxefo-integration-api/internal/compare"
 	"github.com/yuvasrig/paxefo-integration-api/internal/ingest"
 	"github.com/yuvasrig/paxefo-integration-api/internal/rules"
 	"github.com/yuvasrig/paxefo-integration-api/internal/settings"
@@ -68,6 +69,8 @@ type view struct {
 	NextURL       string
 	JSONURL       string
 	PayloadEvent  *store.EventRecord
+	FieldRows     []compare.Row
+	Compare       *compareView
 	PaxafeJSON    string
 	SensorJSON    string
 	LocationJSON  string

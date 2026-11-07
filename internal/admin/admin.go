@@ -133,6 +133,7 @@ func (c *Console) Handler() http.Handler {
 	page("GET /admin/payloads", c.payloadsPage)
 	page("GET /admin/payloads.json", c.payloadsJSON)
 	page("GET /admin/payloads/{id}", c.payloadDetail)
+	page("GET /admin/compare", c.comparePage)
 	page("GET /admin/conflicts", c.conflictsPage)
 	page("POST /admin/conflicts/replay", c.conflictsReplay)
 	page("GET /admin/rules", c.rulesPage)

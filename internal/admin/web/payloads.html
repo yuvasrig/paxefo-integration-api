@@ -43,7 +43,7 @@
   <thead><tr><th>Received (UTC)</th><th>Device</th><th>Status</th><th>PAXAFE record</th><th>Flags / reasons</th><th></th></tr></thead>
   <tbody>
   {{range .Payloads}}<tr>
-    <td>{{ts .ReceivedAt}}</td><td>{{.Device}}</td>
+    <td>{{ts .ReceivedAt}}</td><td>{{.Device}}{{if .Device}} <a class="muted" href="/admin/compare?tenant={{urlquery $.PF.Tenant}}&amp;device={{urlquery .Device}}">compare</a>{{end}}</td>
     <td><span class="tag {{.Status}}">{{.Status}}</span></td>
     <td>{{if or .SensorJSON .LocationJSON}}{{.Summary}}
       <details class="edit"><summary>PAXAFE JSON</summary>

@@ -1,0 +1,73 @@
+{{define "compare"}}{{template "head" .}}
+<p>What a device <strong>sent</strong> beside what this API <strong>produced</strong> from it. Pick a tenant, a time window and a device. The charts overlay the received readings (grey line) and the PAXAFE records the API produced (blue dots); a red ring is a received value outside the produced range, such as a sensor fault or an impossible position. All times are UTC.</p>
+
+<form method="get" action="/admin/compare" class="card filters">
+  <div class="inline">
+    <label>Tenant
+      <select name="tenant" data-autosubmit>
+        {{range .Tenants}}<option value="{{.Info.ID}}" {{if eq .Info.ID $.PF.Tenant}}selected{{end}}>{{.Info.ID}}</option>{{end}}
+      </select>
+    </label>
+    <label>Time is
+      <select name="time">
+        <option value="received" {{if eq .PF.TimeField "received"}}selected{{end}}>when the API received it</option>
+        <option value="event" {{if eq .PF.TimeField "event"}}selected{{end}}>the reading's own time</option>
+      </select>
+    </label>
+    <label>Window
+      <select name="range">
+        {{range .Ranges}}<option value="{{.Value}}" {{if eq .Value $.PF.Range}}selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label>From (UTC, custom) <input type="datetime-local" name="from" value="{{.PF.From}}"></label>
+    <label>To (UTC, custom) <input type="datetime-local" name="to" value="{{.PF.To}}"></label>
+    <label>Device (name or IMEI) <input name="device" value="{{.PF.Device}}" size="20" placeholder="A571992"></label>
+    <button class="primary">Compare</button>
+  </div>
+</form>
+
+{{with .Compare}}
+{{if .Truncated}}<p class="alert">Only the newest 1000 events of this selection were read. Narrow the window to see the rest.</p>{{end}}
+
+{{if $.PF.Device}}
+  <div class="cards">
+    <div class="card"><span class="muted">Events</span><span class="big">{{.Summary.Events}}</span></div>
+    <div class="card"><span class="muted">Changed by the API</span><span class="big">{{.Summary.Changed}}</span></div>
+    <div class="card"><span class="muted">No PAXAFE record</span><span class="big">{{.Summary.NoRecord}}</span></div>
+  </div>
+  {{if .Summary.Flags}}<p>Flags raised: {{range .Summary.Flags}}<span class="tag">{{.Code}} &times; {{.Count}}</span> {{end}}</p>{{end}}
+
+  {{if or .TempChart .PathChart}}
+  <div class="two">
+    <section><h2>Temperature</h2>{{if .TempChart}}{{.TempChart}}{{else}}<p class="muted">No temperature readings.</p>{{end}}</section>
+    <section><h2>Location</h2>{{if .PathChart}}{{.PathChart}}{{else}}<p class="muted">No positions.</p>{{end}}</section>
+  </div>
+  {{else if .Summary.Events}}<p class="muted">These events carry no temperature or position to draw.</p>{{end}}
+
+  <h2>What changed</h2>
+  {{if .Changes}}
+  <p class="muted">Events where the API changed a value by more than rounding, or rejected the event. Newest first{{if eq (len .Changes) 50}}, the latest 50{{end}}.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Received (UTC)</th><th>Status</th><th>Received &rarr; produced</th><th>Flags</th><th></th></tr></thead>
+    <tbody>
+    {{range .Changes}}<tr>
+      <td>{{ts .ReceivedAt}}</td>
+      <td><span class="tag {{.Status}}">{{.Status}}</span></td>
+      <td>{{range .Fields}}{{.Field}}: <code>{{.Received}}</code> &rarr; <code>{{.Processed}}</code><br>{{end}}</td>
+      <td>{{join .Flags ", "}}</td>
+      <td><a href="/admin/payloads/{{.ID}}?tenant={{$.PF.Tenant}}">Open</a></td>
+    </tr>{{end}}
+    </tbody>
+  </table></div>
+  {{else}}<p class="muted">{{if .Summary.Events}}Nothing changed beyond rounding.{{else}}No events from this device in this window.{{end}}</p>{{end}}
+{{else}}
+  <h2>Devices</h2>
+  {{if .Devices}}
+  <table>
+    <thead><tr><th>Device</th><th class="n">Events</th><th></th></tr></thead>
+    <tbody>{{range .Devices}}<tr><td>{{.Name}}</td><td class="n">{{.Events}}</td><td><a href="{{.URL}}">Compare</a></td></tr>{{end}}</tbody>
+  </table>
+  {{else}}<p class="muted">No events from this tenant in this window.</p>{{end}}
+{{end}}
+{{end}}
+{{template "foot" .}}{{end}}

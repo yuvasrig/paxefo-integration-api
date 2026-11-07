@@ -282,6 +282,6 @@ func (c *Console) payloadDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	c.render(w, r, "payload", view{
 		Title: "Payload " + id, Nav: "payloads", Scope: tenant, PayloadEvent: ev,
-		SensorJSON: pretty(ev.Sensor), LocationJSON: pretty(ev.Location), RawJSON: pretty(ev.Raw),
+		SensorJSON: pretty(ev.Sensor), LocationJSON: pretty(ev.Location), RawJSON: pretty(ev.Raw), FieldRows: eventFields(ev),
 	})
 }

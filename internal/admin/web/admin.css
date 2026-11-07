@@ -38,3 +38,4 @@ button.switch { min-width:52px; border-radius:14px; font-weight:600; } button.sw
 .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px; } pre { max-height:420px; }
 .filters .inline { margin:4px 0; } label.check { flex-direction:row; align-items:center; gap:6px; }
 #live.stale { opacity:.55; transition:opacity .2s; }
+.chart { width:100%; max-width:640px; height:auto; background:var(--card); border:1px solid var(--line); border-radius:8px; }
