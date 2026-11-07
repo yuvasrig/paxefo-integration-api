@@ -61,7 +61,7 @@ Open an event to see it in detail:
 
 ![An event: received versus processed, flags, PAXAFE payload beside the Tive payload](img/admin-event.png)
 
-A field-by-field table of the value received and the value processed with the flag and rule behind any change, the quality flags, why it was rejected (if it was), the PAXAFE JSON and the Tive JSON exactly as received (never modified).
+A field-by-field table of the value in the Tive payload (as received) and the value in the PAXAFE payload, with the flag and rule behind any change, the quality flags, why it was rejected (if it was), the PAXAFE JSON and the Tive JSON exactly as received (never modified).
 
 ### Compare
 Choose a tenant and window. With no device chosen it lists the devices that sent events:
@@ -72,7 +72,7 @@ Pick a device:
 
 ![Compare: one device](img/admin-compare-device.png)
 
-You get counts (events, changed by the API, no PAXAFE record), the flags raised, a temperature chart and a location chart (received as a line, produced as blue dots, a received value outside the produced range as a red ring, for example a sensor fault), and below them a list of the events where a value changed by more than rounding.
+You get counts (events, changed by the API, no PAXAFE record), the flags raised, a temperature chart and a location chart (the Tive payload as a grey line, the PAXAFE payload as blue dots, a Tive value outside the range of the PAXAFE values as a red ring, for example a sensor fault), and below them a list of the events where a value changed by more than rounding.
 
 ### Conflicts
 ![Conflicts](img/admin-conflicts.png)
@@ -104,7 +104,7 @@ Every operational alert the API has raised, with its severity, tenant, when it s
 | I want to… | Do this |
 |---|---|
 | Try the exercise samples | Sender, scenario *Provided samples*, Run. Or `scripts/smoke.sh <api> <key>`. |
-| See what a rule did to one reading | Payloads, open the event, read *Received vs processed*. |
+| See what a rule did to one reading | Payloads, open the event, read *Tive payload vs PAXAFE payload*. |
 | Compare a device's readings with what was stored | Compare tab, pick the device. |
 | Test several tenants at once | Sender, Load generator, one load with several keys. |
 | Change a threshold for one tenant only | Rules (pick the tenant) or Config (pick the tenant). |

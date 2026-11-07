@@ -1192,7 +1192,7 @@ func TestPayloadDetailShowsReceivedVersusProcessed(t *testing.T) {
 		t.Fatalf("no event link in:\n%s", list)
 	}
 	page := e.get("/admin/payloads/" + m[1] + "?tenant=cmp-c")
-	has(t, page, "Received vs processed", "Temperature °C", "Timestamp")
+	has(t, page, "Tive payload vs PAXAFE payload", "Temperature °C", "Timestamp")
 }
 
 // ---- notifications page ----

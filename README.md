@@ -38,7 +38,7 @@ Pooled multi-tenancy with Postgres row-level security; one binary with `ROLE=all
 
 ## Compare what was received with what was produced
 
-The console's **Compare** page (`/admin/compare`) sets what a device sent beside what the API produced, per tenant and device and for a time window: temperature and location charts (received as a line, produced as dots, out-of-range received values as red rings), counts of events changed by rules, and a list of what changed. Each event page has a field-by-field table of received versus processed values with the flag and rule behind each change. The mock sender's report does the same from the sender's side.
+The console's **Compare** page (`/admin/compare`) sets the Tive payload a device sent beside the PAXAFE payload the API made, per tenant and device and for a time window: temperature and location charts (Tive payload as a line, PAXAFE payload as dots, out-of-range Tive values as red rings), counts of events changed by rules, and a list of what changed. Each event page has a field-by-field table of Tive payload versus PAXAFE payload values with the flag and rule behind each change. The mock sender's report does the same from the sender's side.
 
 ## Built versus designed
 

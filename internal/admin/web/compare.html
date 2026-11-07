@@ -1,5 +1,5 @@
 {{define "compare"}}{{template "head" .}}
-<p>What a device <strong>sent</strong> beside what this API <strong>produced</strong> from it. Pick a tenant, a time window and a device. The charts overlay the received readings (grey line) and the PAXAFE records the API produced (blue dots); a red ring is a received value outside the produced range, such as a sensor fault or an impossible position. All times are UTC.</p>
+<p>What a device <strong>sent</strong> beside the <strong>PAXAFE payload</strong> this API made from it. Pick a tenant, a time window and a device. The charts overlay the Tive payload as received (grey line) and the PAXAFE payload (blue dots); a red ring is a received value outside the range of the PAXAFE values, such as a sensor fault or an impossible position. All times are UTC.</p>
 
 <form method="get" action="/admin/compare" class="card filters">
   <div class="inline">
@@ -48,7 +48,7 @@
   {{if .Changes}}
   <p class="muted">Events where the API changed a value by more than rounding, or rejected the event. Newest first{{if eq (len .Changes) 50}}, the latest 50{{end}}.</p>
   <div class="scroll"><table>
-    <thead><tr><th>Received (UTC)</th><th>Status</th><th>Received &rarr; produced</th><th>Flags</th><th></th></tr></thead>
+    <thead><tr><th>Received (UTC)</th><th>Status</th><th>Tive &rarr; PAXAFE</th><th>Flags</th><th></th></tr></thead>
     <tbody>
     {{range .Changes}}<tr>
       <td>{{ts .ReceivedAt}}</td>

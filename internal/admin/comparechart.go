@@ -79,7 +79,7 @@ func tempChart(points []compare.Point) template.HTML {
 	yOf := func(v float64) float64 { return y.pos(v, chartH-padB, padT) }
 
 	var b strings.Builder
-	svgOpen(&b, "Temperature received and produced, over time")
+	svgOpen(&b, "Temperature in the Tive and PAXAFE payloads, over time")
 	frame(&b, y, "°C", fmt.Sprintf("reading time, %s to %s UTC", clock(points[0].At), clock(points[len(points)-1].At)))
 	var line []string
 	for _, p := range points {
@@ -93,10 +93,10 @@ func tempChart(points []compare.Point) template.HTML {
 	for _, p := range points {
 		switch {
 		case p.RecTemp != nil && !y.contains(*p.RecTemp):
-			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="5" fill="none" stroke="#dc2626" stroke-width="2"><title>%s: received %g, outside the produced range, produced %s</title></circle>`,
+			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="5" fill="none" stroke="#dc2626" stroke-width="2"><title>%s: received %g, outside the PAXAFE range, PAXAFE %s</title></circle>`,
 				xOf(p.At), yOf(y.clamp(*p.RecTemp)), clock(p.At), *p.RecTemp, optional(p.ProcTemp))
 		case p.ProcTemp != nil:
-			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="3.5" fill="#2563eb"><title>%s: received %s, produced %g</title></circle>`,
+			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="3.5" fill="#2563eb"><title>%s: received %s, PAXAFE %g</title></circle>`,
 				xOf(p.At), yOf(*p.ProcTemp), clock(p.At), optional(p.RecTemp), *p.ProcTemp)
 		}
 	}
@@ -128,7 +128,7 @@ func pathChart(points []compare.Point) template.HTML {
 	yOf := func(v float64) float64 { return y.pos(y.clamp(v), chartH-padB, padT) }
 
 	var b strings.Builder
-	svgOpen(&b, "Route received and produced, latitude against longitude")
+	svgOpen(&b, "Route in the Tive and PAXAFE payloads, latitude against longitude")
 	frame(&b, y, "lat", fmt.Sprintf("longitude %.4f to %.4f", x.lo, x.hi))
 	var line []string
 	for _, p := range points {
@@ -143,10 +143,10 @@ func pathChart(points []compare.Point) template.HTML {
 		recOut := p.RecLat != nil && p.RecLon != nil && !(y.contains(*p.RecLat) && x.contains(*p.RecLon))
 		switch {
 		case recOut:
-			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="5" fill="none" stroke="#dc2626" stroke-width="2"><title>%s: received %g, %g, outside the produced range; produced %s, %s</title></circle>`,
+			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="5" fill="none" stroke="#dc2626" stroke-width="2"><title>%s: received %g, %g, outside the PAXAFE range; PAXAFE %s, %s</title></circle>`,
 				xOf(*p.RecLon), yOf(*p.RecLat), clock(p.At), *p.RecLat, *p.RecLon, optional(p.ProcLat), optional(p.ProcLon))
 		case p.ProcLat != nil && p.ProcLon != nil:
-			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="3.5" fill="#2563eb"><title>%s: produced %g, %g</title></circle>`,
+			fmt.Fprintf(&b, `<circle cx="%.1f" cy="%.1f" r="3.5" fill="#2563eb"><title>%s: PAXAFE %g, %g</title></circle>`,
 				xOf(*p.ProcLon), yOf(*p.ProcLat), clock(p.At), *p.ProcLat, *p.ProcLon)
 		}
 	}
@@ -172,10 +172,10 @@ func frame(b *strings.Builder, y axis, unit, xcap string) {
 }
 
 func legend(b *strings.Builder) {
-	fmt.Fprintf(b, `<g font-size="10" fill="#667085"><line x1="%d" y1="10" x2="%d" y2="10" stroke="#9aa4b2" stroke-width="2"/><text x="%d" y="13">received</text>`+
-		`<circle cx="%d" cy="10" r="3.5" fill="#2563eb"/><text x="%d" y="13">produced by the API</text>`+
-		`<circle cx="%d" cy="10" r="4.5" fill="none" stroke="#dc2626" stroke-width="2"/><text x="%d" y="13">received, out of range</text></g>`,
-		chartW-330, chartW-310, chartW-306, chartW-250, chartW-242, chartW-130, chartW-120)
+	fmt.Fprintf(b, `<g font-size="10" fill="#667085"><line x1="%d" y1="10" x2="%d" y2="10" stroke="#9aa4b2" stroke-width="2"/><text x="%d" y="13">Tive (received)</text>`+
+		`<circle cx="%d" cy="10" r="3.5" fill="#2563eb"/><text x="%d" y="13">PAXAFE payload</text>`+
+		`<circle cx="%d" cy="10" r="4.5" fill="none" stroke="#dc2626" stroke-width="2"/><text x="%d" y="13">Tive out of range</text></g>`,
+		chartW-400, chartW-380, chartW-376, chartW-278, chartW-270, chartW-170, chartW-160)
 }
 
 func clock(ms int64) string {
