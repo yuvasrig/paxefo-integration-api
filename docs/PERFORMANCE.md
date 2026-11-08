@@ -19,6 +19,20 @@ the API stored. Measured 2026-11-07, after the service had been woken.
 | 15/s | 450 | 14.5/s | 1.1 s | 2.4 s | 2.9 s | 3.5 s | 0 | 0 | 300 of 450 (even sample) |
 | 25/s | 750 | 15.5/s | 1.9 s | 3.2 s | 3.8 s | 4.6 s | 0 | 0 | 300 of 750 (even sample) |
 
+**Second run (2026-11-08), same method, repeated to check the figures.**
+
+| Target rate | Sent | Achieved rate | p50 | p95 | p99 | max | Errors | Missing | Sample stored correctly |
+|---|---|---|---|---|---|---|---|---|---|
+| 5/s | 150 | 5.0/s | 104 ms | 2.4 s | 3.5 s | 4.3 s | 0 | 0 | 150 of 150 |
+| 10/s | 300 | 9.8/s | 95 ms | 0.8 s | 1.3 s | 1.6 s | 0 | 0 | 300 of 300 |
+| 15/s | 450 | 13.0/s | 2.0 s | 4.1 s | 5.0 s | 5.4 s | 0 | 0 | 300 of 450 (even sample) |
+| 25/s | 750 | 14.2/s | 1.9 s | 4.0 s | 4.7 s | 5.8 s | 0 | 0 | 300 of 750 (even sample) |
+
+The two runs agree on the main findings: no errors, nothing missing or wrong at any rate, and acknowledgements topping out at about
+13 to 15 events/s. The tails are noisier than the medians: the first step of the second run (5/s) had a p95 of 2.4 s against 0.4 s in
+the first run, most likely because the service and its database connections had just been woken, so treat tail latencies as
+indicative, not exact.
+
 **5-minute soak at 10/s.** 3,000 events sent over 5 minutes (10.0/s sustained), all 3,000 acknowledged, no errors, none missing, and a
 300-event sample all stored correctly. Latency stayed steady rather than growing: p50 80 ms, p95 1.4 s, p99 2.1 s, max 3.1 s.
 
@@ -35,7 +49,7 @@ the API stored. Measured 2026-11-07, after the service had been woken.
   minutes, but there is no headroom for bursts on the free plan. For burst capacity, use a paid plan, more CPU, or separate worker
   containers (see ADR 0001).
 
-**Limits of this test.** One 30-second run per rate and one 5-minute soak, from one location. The 15/s and 25/s steps verified a 300-event sample, not
+**Limits of this test.** Two 30-second runs per rate and one 5-minute soak, from one location. The 15/s and 25/s steps verified a 300-event sample, not
 every event. The queue's drain time after the load stopped was not measured separately. Cold starts after idle add up to about a
 minute to the first request and are not included. Treat the figures as an indication of free-tier capacity, not a guarantee.
 
